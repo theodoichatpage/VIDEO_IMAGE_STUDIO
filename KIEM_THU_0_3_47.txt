@@ -1,0 +1,107 @@
+KIỂM THỬ 0.3.47
+Tất cả kiểm thử mới đạt, trong đó có MP4 có audio, đúng màu/thứ tự ảnh, đúng thời lượng,
+chặn cắt mất voice và hủy xuất; kiểm tra API, nhận JSON và hàng đợi tự nhận ảnh.
+Các lỗi đã tồn tại từ gói gốc 0.3.45:
+- test_ready.Ready.test_detected_image_stops_timer_then_save_completes
+- test_studio.Checks.test_bridge_claim_pause_and_completion
+- test_capture.cjs
+- test_handshake.cjs
+- test_picker.cjs
+Giao diện chính qua kiểm thử mô phỏng; cú pháp JS cả hai giao diện hợp lệ.
+Chưa kiểm thử hình ảnh giao diện trên trình duyệt thật: môi trường không tải được Chromium.
+Chưa kiểm thử trên Windows và phiên ChatGPT thật.
+
+Python suite exit 1
+.............................................F............../workspace/scratch/9b7dfac619ca/work/VIDEO_IMAGE_STUDIO/server.py:818: ResourceWarning: unclosed file <_io.FileIO name='/workspace/scratch/9b7dfac619ca/work/VIDEO_IMAGE_STUDIO/split_ui.html' mode='rb' closefd=True>
+  if any(c['status'] in ('sending','sent','waiting','saving') for c in p['commands']) and running:raise ValueError('Dừng hàng đợi trước khi xuất để có kết quả nhất quán.')
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+.F...............
+======================================================================
+FAIL: test_detected_image_stops_timer_then_save_completes (test_ready.Ready.test_detected_image_stops_timer_then_save_completes)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/9b7dfac619ca/work/VIDEO_IMAGE_STUDIO/test_ready.py", line 13, in test_detected_image_stops_timer_then_save_completes
+    self.assertEqual(report('image_ready').status_code,200);self.assertEqual(target['status'],'image_ready');stopped=target['stopped_at'];self.assertFalse(server.running)
+                                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'queued' != 'image_ready'
+- queued
++ image_ready
+
+
+======================================================================
+FAIL: test_bridge_claim_pause_and_completion (test_studio.Checks.test_bridge_claim_pause_and_completion)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/9b7dfac619ca/work/VIDEO_IMAGE_STUDIO/test_studio.py", line 57, in test_bridge_claim_pause_and_completion
+    self.post('/api/run',{'project':p['id'],'scene':s['id']});nextclaim=self.post('/bridge/poll',d).json['command'];self.assertEqual(nextclaim['id'],claim['id']);self.assertEqual(nextclaim['status'],'waiting')
+                                                                                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '247a2b30c6114623bc7b066be08599aa' != '241811c49dc54201b2b065898c0a8f50'
+- 247a2b30c6114623bc7b066be08599aa
++ 241811c49dc54201b2b065898c0a8f50
+
+
+----------------------------------------------------------------------
+Ran 77 tests in 1.780s
+
+FAILED (failures=2)
+
+test_capture.cjs exit 1
+AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+
+  assert(phases.includes('done'))
+
+    at /workspace/scratch/9b7dfac619ca/work/VIDEO_IMAGE_STUDIO/test_capture.cjs:9:65 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}
+
+test_compact_ui.cjs exit 0
+PASS: project switching, scene review, templates and live checkpoint preview with generation blocked
+
+test_connection.cjs exit 0
+PASS: missing receiver recovers; live receiver reused; unready and denied tabs do not bind
+
+test_extension.cjs exit 0
+PASS: image send-once regression; plan recovery never sends; non-JSON responses reported for validation
+Video Image Studio: Đã điền prompt nhưng chưa xác nhận gửi thành công. Kiểm tra nút mũi tên Gửi trong ChatGPT; hàng đợi đã dừng, không tự điền yêu cầu tiếp theo. Nếu prompt còn trong ô, bấm Gửi một lần rồi tải ảnh và dùng Nhập ảnh cho đúng dòng.
+
+test_handshake.cjs exit 1
+evalmachine.<anonymous>:21
+chrome.downloads.onChanged.addListener(delta=>{if(delta.state?.current!=='complete')return;(async()=>{
+                 ^
+
+TypeError: Cannot read properties of undefined (reading 'onChanged')
+    at evalmachine.<anonymous>:21:18
+    at Script.runInContext (node:vm:149:12)
+    at Script.runInNewContext (node:vm:154:17)
+    at Object.runInNewContext (node:vm:310:38)
+    at run (/workspace/scratch/9b7dfac619ca/work/VIDEO_IMAGE_STUDIO/test_handshake.cjs:5:4)
+    at /workspace/scratch/9b7dfac619ca/work/VIDEO_IMAGE_STUDIO/test_handshake.cjs:6:24
+    at Object.<anonymous> (/workspace/scratch/9b7dfac619ca/work/VIDEO_IMAGE_STUDIO/test_handshake.cjs:6:336)
+    at Module._compile (node:internal/modules/cjs/loader:1872:14)
+    at Object..js (node:internal/modules/cjs/loader:2003:10)
+    at Module.load (node:internal/modules/cjs/loader:1594:32)
+
+test_new_image.cjs exit 0
+PASS: new image detected without message markers; ready reported before selection; existing image excluded
+
+test_picker.cjs exit 1
+AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+
+  assert(done)
+
+    at /workspace/scratch/9b7dfac619ca/work/VIDEO_IMAGE_STUDIO/test_picker.cjs:6:96 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}
+
+test_plan_capture.cjs exit 0
+PASS: capture matching JSON with missing marker and interrupted send; reject old run and streaming

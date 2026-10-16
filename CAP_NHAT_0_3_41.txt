@@ -1,0 +1,28 @@
+VIDEO IMAGE STUDIO 0.3.41 — XÓA DỰ ÁN VÀ LÝ DO TÁC VỤ DỪNG/CHỜ
+
+Cập nhật như cũ: đóng Studio, chạy 0_CAP_NHAT_BAN_CU.bat trong gói mới,
+chọn thư mục bản cũ, mở lại và Ctrl+F5.
+
+XÓA DỰ ÁN
+Vào tab Dự án > Xóa dự án > kiểm tra tên/số cảnh/số ảnh > Xác nhận xóa.
+Dự án được gỡ khỏi danh sách và ngừng nhận ảnh; tác vụ của dự án ngừng theo dõi.
+Dữ liệu được chuyển vào projects/_deleted/<mã dự án>_<mã lưu trữ>, không xóa vĩnh viễn.
+Nếu cần phục hồi: đóng Studio, chuyển thư mục lưu trữ trở về projects/<id ghi trong project.json>,
+rồi mở lại. Không ghi đè một thư mục dự án đã tồn tại.
+Đợi tách ảnh xong trước khi xóa dự án. ChatGPT đang chạy phải dừng tại tab ChatGPT.
+
+LÝ DO DỪNG / CHỜ
+Bấm Lý do dừng / chờ cạnh trạng thái hàng đợi, hoặc Xử lý tác vụ chặn ở bước 2.
+Danh sách ghi tên dự án, tên cảnh và lý do: chờ tải ảnh, chưa bật theo dõi thư mục,
+chưa kết nối ChatGPT, hàng đợi tạm dừng, lỗi tác vụ hoặc đang chờ phản hồi.
+- Mở đúng dự án / tác vụ: mở kết quả và cuộn đến cảnh liên quan, viền xanh đánh dấu.
+- Kết thúc tác vụ này: chọn riêng tác vụ đó để kiểm tra; bấm Ngừng theo dõi
+  các tác vụ trong danh sách để xác nhận. Ảnh đã lưu giữ nguyên.
+- Có thể xác nhận ngừng theo dõi toàn bộ danh sách nếu muốn kết thúc hết.
+Sau đó dừng ChatGPT nếu còn chạy, và bấm phân tích hoặc tiếp tục theo nhu cầu.
+
+KIỂM TRA
+47 test Python: 45 đạt, hai lỗi cũ từ 0.3.36 giữ nguyên.
+Bốn test mới cho xác nhận xóa, lưu trữ dữ liệu, cách ly dự án, chặn xóa khi tách ảnh,
+và thông tin lý do. Test tiện ích, tải ảnh và giao diện mô phỏng đạt.
+Chưa kiểm thử trực tiếp trên Windows và phiên ChatGPT thật.

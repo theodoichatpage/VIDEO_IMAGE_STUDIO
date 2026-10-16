@@ -1,0 +1,3 @@
+Bản 0.3.35: chỉ gửi một yêu cầu tạo ảnh. Nhận ảnh tải về thành công mới hoàn tất và gửi yêu cầu tiếp theo. Chờ tải ảnh được giữ nguyên khi bấm chạy tiếp.
+Cập nhật: đóng Studio, chạy 0_CAP_NHAT_BAN_CU.bat, tải lại tiện ích tại edge://extensions, làm mới tab ChatGPT và kết nối lại.
+Đã kiểm tra 12 kiểm thử Python và mô phỏng tiện ích; chưa kiểm tra trực tiếp trên Edge của người dùng.

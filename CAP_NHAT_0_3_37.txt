@@ -1,0 +1,30 @@
+VIDEO IMAGE STUDIO 0.3.37 — PHƯƠNG ÁN TỪNG CẢNH
+
+1. Nhập nội dung thumbnail và từng dòng content như bản 0.3.36.
+2. Kết nối ChatGPT qua tiện ích. Bấm “Phân tích các cảnh”.
+   Một yêu cầu văn bản phân tích tất cả dòng được gửi qua tiện ích, không dùng API.
+   Chờ hoàn thành trong ChatGPT; Studio nhận JSON và lưu riêng trong dự án.
+3. Bấm “Xem / sửa phương án”: kiểm tra trọng tâm, chủ thể, hành động,
+   bối cảnh, cỡ cảnh, góc máy, bố cục và khác biệt với các cảnh khác.
+   Sửa rồi bấm “Lưu và duyệt phương án” cho từng dòng cần tạo.
+4. Bấm Tạo ảnh hoặc Tạo tất cả. Chỉ sau bước này mới xếp hàng tạo ảnh.
+   Mẫu chung giữ phong cách, phương án riêng được ưu tiên cho bố cục/góc nhìn.
+5. Tải ảnh về thư mục đang theo dõi như cũ để tiếp tục hàng đợi.
+
+Nội dung đã đổi sau phân tích: bấm phân tích lại, duyệt lại phương án.
+Phân tích lại thay thế các phương án trước đó, không thay ảnh đã tạo.
+Nếu ChatGPT lỗi hoặc trả thiếu dữ liệu: xem trạng thái; xử lý/dừng tác vụ
+đang chờ trước khi phân tích lại. Không xếp ảnh khi phân tích còn chờ.
+Dự án cũ chưa phân tích vẫn dùng được cơ chế tạo ảnh cũ.
+Phương án được lưu trong project.json và phuong_an_canh.json trong ZIP xuất.
+
+CẬP NHẬT: Đóng Studio cũ; dùng 0_CAP_NHAT_BAN_CU.bat, chọn đúng
+thư mục bản cũ để giữ projects và môi trường đã cài. Mở lại, Ctrl+F5.
+Tiện ích và download_watch.py không thay đổi so với 0.3.36.
+
+KIỂM TRA:
+33 test Python: 31 đạt; 2 lỗi đã tái hiện trên nguyên bản 0.3.36
+(test_ready và test_studio.test_bridge_claim_pause_and_completion).
+Các test mới về phân tích, duyệt, prompt và nội dung lỗi thời đều đạt.
+Test giao diện bằng mô phỏng DOM và kiểm tra cú pháp JavaScript đạt.
+Chưa kiểm thử thực tế trình duyệt ChatGPT/Windows trong môi trường này.

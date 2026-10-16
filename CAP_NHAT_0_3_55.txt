@@ -1,0 +1,7 @@
+VIDEO IMAGE STUDIO 0.3.55
+
+- Sửa lỗi ChatGPT đã trả JSON nhưng Studio dừng ở trạng thái “chưa xác nhận gửi”.
+- Với analysis_text, sau khi bấm nút Gửi thành công, extension tiếp tục theo dõi JSON theo job_id/run_id dù DOM ChatGPT không hiển thị được user turn.
+- Không còn hướng dẫn tải/nhập ảnh trong lỗi phân tích văn bản.
+- Nút “Nhận phản hồi Phần hiện tại từ ChatGPT” luôn khả dụng khi pipeline đang chờ và phần chưa được lưu.
+- Khi nhận JSON hợp lệ, Studio lưu Phần N và tự xếp Phần N+1; giao diện hiển thị các phần/cảnh đã nhận.

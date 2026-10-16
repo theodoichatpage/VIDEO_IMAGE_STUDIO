@@ -1,0 +1,48 @@
+VIDEO IMAGE STUDIO 0.3.47 — PHÂN TÍCH, ẢNH HÀNG LOẠT, VIDEO ẢNH
+
+MỞ BẰNG 0_VIDEO_IMAGE_STUDIO.bat
+Giữ nguyên prompt phong cách đã lưu. Không dùng AI tạo video.
+
+CẬP NHẬT
+1. Đóng Studio cũ. Giải nén toàn bộ gói và chạy 0_VIDEO_IMAGE_STUDIO.bat.
+   Bộ khởi động cập nhật thư mục đã cài; không chép đè projects, cấu hình kết nối hoặc .venv.
+   Nếu thiếu, trình khởi động cài imageio-ffmpeg để dựng MP4 (cần Internet lần cài này).
+2. Tải lại tiện ích tại edge://extensions hoặc chrome://extensions, kiểm tra 0.3.47.
+3. Tải lại trang ChatGPT và Studio (Ctrl+F5), kết nối đúng tab ChatGPT.
+   Trong khu vực phân tích, dòng chẩn đoán phải hiện Tiện ích trên tab: 0.3.47.
+
+PHÂN TÍCH
+- Sửa lỗi: send_unconfirmed của tác vụ phân tích từng bị máy chủ bỏ qua, để trạng thái
+  Đang gửi. Nay chuyển sang lỗi rõ ràng và giữ phần đang chờ để nhận lại.
+- Giữ cách nhận JSON đúng job_id, run_id, stage và part của 0.3.46.
+- Nếu ChatGPT đã trả lời nhưng tiện ích không nhận, mở Khôi phục khi tiện ích không
+  nhận kết quả, sao chép toàn bộ JSON trả lời vào đó, bấm Nhận kết quả đã dán.
+  Máy chủ kiểm tra đầy đủ, chỉ lưu phần hợp lệ và tiếp tục phần kế tiếp.
+- Chẩn đoán hiển thị phiên bản script trên tab, số tin nhắn nhận diện và lỗi gần nhất.
+- Phân tích vẫn dùng ChatGPT; không có API hoặc AI chạy cục bộ mới trong bản này.
+
+ẢNH HÀNG LOẠT
+- Giữ prompt chung, ghép nội dung và phương án góc nhìn riêng của cảnh đã duyệt.
+- Tùy chọn Tự nhận ảnh từ tab ChatGPT gửi yêu cầu nhận ảnh ngay từ phản hồi tương ứng.
+  Chỉ chuyển cảnh sau khi máy chủ lưu được ảnh. Tạo tất cả vẫn chạy tuần tự.
+- Nếu trình duyệt không cho đọc ảnh, dùng Tải xuống/Nhập ảnh; không tự gửi lại prompt.
+- Có thể bỏ chọn Tự nhận ảnh để dùng cơ chế nhận file tải về cũ.
+- Vẫn cần tài khoản ChatGPT hoạt động; tiện ích không bỏ qua giới hạn của dịch vụ.
+
+DỰNG VIDEO ẢNH (TAB 5)
+- Lấy các ảnh nội dung đã chọn trong dự án, bỏ thumbnail.
+- Đổi thứ tự bằng mũi tên; bỏ ảnh khỏi bản dựng; đặt 0,5–600 giây cho từng ảnh.
+- Chọn đứng yên hoặc phóng gần nhẹ. Chuyển cảnh bằng cắt trực tiếp.
+- Nhập voice WAV/MP3/M4A/AAC/FLAC/OGG dưới 39 MB, hoặc xuất video không tiếng.
+- Chia đều theo voice chỉ là căn sơ bộ; chưa nhận dạng/căn lời tự động.
+- Chọn ngang 1080p/720p hoặc dọc 1080p. Ảnh khác tỷ lệ có viền để giữ đủ ảnh.
+- Lưu bản dựng; Dựng MP4; xem kết quả và tải xuống ngay trên phần mềm.
+- Hủy dựng không xóa file MP4 đã hoàn tất trước đó.
+- Chưa có nhạc nền, phụ đề, timeline kéo thả hoặc hiệu ứng chuyển cảnh nâng cao.
+
+KIỂM CHỨNG
+Các kiểm thử mới: khôi phục JSON, trạng thái gửi, tự lưu ảnh/chuyển cảnh,
+API dựng video và dựng MP4 thực tế bằng FFmpeg đều đạt.
+Chưa xác nhận trên Windows và phiên ChatGPT thật của người dùng.
+Có 5 bài kiểm thử cũ vẫn lỗi, đã có từ gói 0.3.45; xem KIEM_THU_0_3_47.txt.
+Đây không phải tuyên bố toàn bộ phần mềm đã hoàn thiện hoặc tạo ảnh chắc chắn thành công.

@@ -1,0 +1,7 @@
+VIDEO IMAGE STUDIO 0.3.56
+- Tab 1 Phân tích và Tab 2 Tạo ảnh được tách riêng.
+- Mỗi Phần 1..N có trạng thái độc lập và tab kết quả riêng.
+- Extension nhận JSON theo job_id/run_id/stage/part bằng quét protocol, không phụ thuộc selector tin nhắn ChatGPT.
+- Nút Nhận kết quả phần này đọc lại JSON đã có, không gửi prompt mới.
+- Chỉ khi JSON phần hiện tại được parse/lưu thành công mới tự chuyển phần tiếp theo.
+- Prompt phong cách ảnh được chuyển sang Tab 2 bằng giao diện, không dùng trong phân tích văn bản.

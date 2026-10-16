@@ -1,0 +1,6 @@
+VIDEO IMAGE STUDIO 0.3.54
+
+- Sửa nhận phản hồi phân tích từ ChatGPT theo job_id trong JSON, không phụ thuộc data-message-author-role.
+- Có thể nhận JSON ngay cả khi chẩn đoán DOM báo 0 tin nhắn / 0 phản hồi.
+- Nút Nhận lại kết quả phân tích dùng cùng cơ chế quét JSON theo job_id, không gửi lại prompt.
+- Khi lưu xong phần N, pipeline tự xếp phần N+1; số phần do kết quả phần 1 quyết định.

@@ -1,0 +1,4 @@
+VIDEO IMAGE STUDIO 0.3.60
+- Refactor trực tiếp Tab 1 Phân tích theo ảnh tham chiếu.
+- Không thay đổi logic backend phân tích.
+- Phong cách ảnh nằm ở Tab 2 Tạo ảnh.

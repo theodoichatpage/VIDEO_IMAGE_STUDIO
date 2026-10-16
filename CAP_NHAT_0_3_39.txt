@@ -1,0 +1,39 @@
+VIDEO IMAGE STUDIO 0.3.39 — GIAO DIỆN THEO QUY TRÌNH
+
+CẬP NHẬT
+Đóng Studio cũ, giải nén gói mới, chạy 0_CAP_NHAT_BAN_CU.bat và chọn
+đúng thư mục bản cũ. Mở lại 2_MO_UNG_DUNG.bat, Ctrl+F5. Dữ liệu dự án giữ nguyên.
+
+TAB TẠO ẢNH
+1. Đầu vào: tên dự án, phong cách và kịch bản hiện trực tiếp.
+   Chọn Dán toàn bộ kịch bản hoặc Nhập các cảnh có sẵn.
+   Nếu nhập các cảnh sẵn, điền bảng nội dung ở bước 3 rồi phân tích bước 2.
+   Hai mẫu thumbnail/content nằm trong Mẫu prompt nâng cao (thu gọn).
+2. Phân tích và duyệt: chạy hai lượt như 0.3.38. Có bảng tóm tắt từng
+   cảnh, trọng tâm, cỡ cảnh, góc máy, bố cục và trạng thái duyệt.
+   Bấm Xem / sửa trên từng cảnh để sửa và lưu duyệt.
+   Tạo tất cả chỉ bật khi toàn bộ phương án đã duyệt và đầu vào còn phù hợp.
+   Nút tự chia kịch bản khóa khi đã có cảnh/ảnh; phân tích các dòng để giữ kết quả.
+3. Tạo ảnh: giữ nội dung, trạng thái và đồng hồ từng dòng.
+   Hiện nút phù hợp trạng thái: Tạo ảnh / Làm lại / Dừng.
+   Có nút thêm cảnh nhập tay (tối đa 100). Tạm dừng/Tiếp tục hàng đợi như cũ.
+
+Tên dự án hiện nổi bật, nút Đổi dự án dẫn đến tab Dự án.
+Kết nối ChatGPT và theo dõi thư mục vẫn là hai trạng thái độc lập.
+Mẫu có nội dung cụ thể trong {{…}} có cảnh báo tại mục nâng cao.
+Bấm Chuẩn hóa để thay bằng {{noi_dung}}; kiểm tra trước khi tạo ảnh.
+Lỗi phát sinh trong cửa sổ đang mở cũng hiện ngay trong cửa sổ đó.
+Thông báo mất phản hồi được thay khi máy chủ kết nối lại.
+
+PHẠM VI
+Chỉ đổi giao diện và số phiên bản máy chủ. Không đổi logic phân tích,
+hàng đợi, tiện ích hoặc bộ theo dõi ảnh so với 0.3.38.
+Bốn tab và hai mẫu riêng giữ nguyên. Dự án cũ chưa có phân tích vẫn dùng được.
+
+KIỂM TRA
+41 test Python: 39 đạt; 2 lỗi cũ đã có từ 0.3.36 (test_ready,
+test_studio.test_bridge_claim_pause_and_completion).
+Test tiện ích và giao diện mô phỏng đạt, gồm chuyển dự án, bản nháp,
+tóm tắt phương án, khóa khi chưa duyệt và chuẩn hóa mẫu.
+Chưa kiểm tra trực quan bằng trình duyệt thật hoặc Windows: môi trường
+kiểm tra không tải được Chromium. Chưa chạy phiên ChatGPT thực tế.

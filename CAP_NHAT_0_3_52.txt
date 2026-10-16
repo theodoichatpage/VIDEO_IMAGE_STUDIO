@@ -1,0 +1,7 @@
+VIDEO IMAGE STUDIO 0.3.52
+
+SỬA TRIỆT ĐỂ LUỒNG PHÂN TÍCH VĂN BẢN
+- Tách tác vụ phân tích 5 phần sang kind analysis_text riêng, không dùng kind plan của pipeline hình ảnh cũ.
+- Khi bắt đầu phân tích kịch bản mới, mọi tác vụ phân tích cũ chưa hoàn tất của dự án bị hủy để prompt stage=plan cũ không thể lọt sang ChatGPT.
+- Prompt phân tích 5 phần không đọc Phong cách ảnh xuyên suốt, không có style_rules/shot/angle/composition/image_prompt.
+- Extension 0.3.52 xử lý analysis_text như phản hồi JSON văn bản và dừng nếu ChatGPT bắt đầu tạo ảnh.

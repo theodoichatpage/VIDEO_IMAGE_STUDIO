@@ -1,0 +1,28 @@
+VIDEO IMAGE STUDIO 0.3.42 — MỘT FILE CHẠY VÀ GIỮ MÃ KẾT NỐI
+
+CHỈ CHẠY: MO_VIDEO_IMAGE_STUDIO.bat
+- Khi chưa cài: hỏi đã có bản cũ hay chưa. Chọn Yes và thư mục cũ để giữ dữ liệu;
+  chọn No để cài mới ở thư mục đang giải nén (cần Python 3.11/Python Launcher).
+- Nhớ thư mục cài tại LOCALAPPDATA/VIDEO_IMAGE_STUDIO/install_path.txt.
+- Khi giải nén bản mới: chạy cùng file đó để tự chép vào thư mục cài đã nhớ,
+  dừng máy chủ cũ ở đúng thư mục và mở bản mới. Không phải chạy 3 file.
+- Mở dùng hằng ngày: chạy file đó trong thư mục đã cài. Nếu cùng phiên bản
+  đang chạy, chỉ mở trang Studio, không tạo máy chủ thứ hai.
+- Tự kiểm tra thư viện; chỉ cài khi thiếu. Vẫn cần tải và giải nén gói cập nhật.
+- Giữ nguyên projects, .venv, browser_profile và studio_connection.json.
+- Ba file BAT cũ vẫn có để tương thích, nhưng đều chuyển đến file chạy chung.
+- Chỉ một cửa sổ chạy chính; giữ cửa sổ đó mở trong khi dùng Studio.
+- Lần đầu chuyển sang bản này: nên đóng các cửa sổ Studio cũ trước.
+
+KẾT NỐI CHATGPT
+Mã ghép được lưu tại studio_connection.json trong thư mục cài.
+Lần đầu nâng từ bản cũ: ghép tiện ích lại một lần. Sau đó giữ file cấu hình,
+cùng hồ sơ trình duyệt và tab ChatGPT để tiện ích có thể tự kết nối lại
+khi Studio khởi động. Có thể phải tải lại tab ChatGPT nếu tab bị ngủ.
+Đổi tab, ngắt kết nối, xóa cấu hình hoặc đổi máy vẫn có thể cần ghép lại.
+Không chia sẻ studio_connection.json; bản cập nhật không chứa mã kết nối mẫu.
+
+KIỂM TRA
+49 test Python: 47 đạt, hai lỗi cũ từ 0.3.36 giữ nguyên.
+Hai test mới về giữ mã và phát hiện cấu hình hỏng đạt. Test tiện ích và giao diện
+mô phỏng đạt. Chưa thử trực tiếp PowerShell/Windows hoặc phiên ChatGPT thật.

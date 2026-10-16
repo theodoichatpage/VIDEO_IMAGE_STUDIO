@@ -1,0 +1,53 @@
+VIDEO IMAGE STUDIO 0.3.38 — PHÂN TÍCH HAI LƯỢT
+
+CÁCH DÙNG
+1. Đóng Studio cũ. Chạy 0_CAP_NHAT_BAN_CU.bat từ thư mục bản mới,
+   chọn đúng thư mục Studio cũ để giữ projects và môi trường đã cài.
+   Mở lại bằng 2_MO_UNG_DUNG.bat, Ctrl+F5, ghép kết nối ChatGPT.
+2. Trong tab Tạo ảnh, bấm Phong cách dự án / Kịch bản.
+   Nhập prompt về hình ảnh, màu sắc, nét vẽ, chất liệu, ánh sáng.
+   Bố cục và góc máy để bộ phân tích lựa chọn theo từng cảnh.
+   Hai mẫu thumbnail/content vẫn là hai mẫu riêng của dự án.
+3a. Nếu có toàn bộ kịch bản: dán vào ô Kịch bản, bấm Tự chia cảnh
+    và phân tích. Dùng trên dự án chưa có cảnh/ảnh. Tối đa 49 cảnh content.
+3b. Nếu đã chia các dòng: lưu phong cách, đóng hộp thoại, nhập nội dung
+    vào các dòng và bấm Phân tích các dòng.
+4. Studio gửi một yêu cầu văn bản ở lượt 1 để lập phương án, đợi kết quả,
+   rồi tự gửi lượt 2 để rà soát bố cục, cỡ cảnh, góc máy và sự nhất quán.
+   Chưa tạo ảnh. Không dùng API trả phí.
+5. Sau khi xong hai lượt, bấm Xem / sửa phương án. Đọc quy tắc phong cách,
+   nhận dạng xuyên suốt, các cảnh báo trùng; sửa các trường nếu cần.
+   Bấm Lưu và duyệt phương án cho từng cảnh muốn tạo.
+6. Bấm Tạo ảnh hoặc Tạo tất cả. Mỗi lần vẫn chỉ gửi một prompt ảnh;
+   tải ảnh về thư mục đang theo dõi để hoàn thành cảnh và chạy tiếp.
+   Không cần trở về tab Studio để hàng đợi chạy.
+
+GIỮ DỮ LIỆU VÀ TÍNH NHẤT QUÁN
+- Phong cách, kịch bản, hai mẫu, phương án và kết quả riêng từng dự án.
+- Thay đổi phong cách, mẫu hoặc nội dung sau phân tích cần phân tích lại.
+  Khi đã có cảnh/ảnh, dùng Phân tích các dòng để giữ nguyên kết quả.
+- Tự chia kịch bản phải giữ đủ nội dung gốc, chỉ được khác khoảng trắng.
+  Nếu ChatGPT bỏ/đổi/lặp đoạn, Studio báo lỗi thay vì nhận phương án đó.
+- Sau phân tích kịch bản, các dòng được điền tự động, kể cả hơn 10 dòng.
+- Dự án cũ chưa dùng phân tích vẫn tạo ảnh theo luồng cũ.
+- Phân tích lại thay phương án, không thay ảnh cũ hoặc tự tạo lại ảnh.
+- ZIP xuất bổ sung phong_cach_du_an.txt và quy_tac_nhat_quan.json.
+
+LỖI / HỦY
+- Kết quả JSON thiếu trường hoặc sai nội dung được báo lỗi; có thể bấm
+  Phân tích lại sau khi kiểm tra ChatGPT. Không tự lặp yêu cầu vô hạn.
+- Hủy phân tích chỉ ngừng theo dõi yêu cầu phân tích trong Studio.
+  Nếu ChatGPT còn trả lời, dừng trong tab ChatGPT trước khi gửi yêu cầu mới.
+- Mở lại Studio sau gián đoạn: kiểm tra ChatGPT và phân tích lại nếu cần.
+
+PHẠM VI KIỂM TRA
+- 41 test Python: 39 đạt, 2 lỗi cũ nêu dưới. 10 test phân tích mới đạt.
+- Test tự động cho chia cảnh, hai lượt, duyệt, chống thay đổi đầu vào,
+  hủy và phản hồi muộn, lỗi JSON/nội dung và dữ liệu riêng theo dự án.
+- Test nhận ảnh, tiện ích và giao diện mô phỏng đã chạy.
+- Hai test lỗi cũ từ 0.3.36 vẫn còn: test_ready và
+  test_studio.test_bridge_claim_pause_and_completion; không sửa cơ chế cũ.
+- Chưa thử trực tiếp trên Windows và phiên ChatGPT thật.
+- Rà soát chống lặp do ChatGPT thực hiện; cảnh báo cục bộ chỉ bắt các
+  trường cỡ cảnh/góc máy/bố cục trùng hệt. Không bảo đảm ảnh sinh ra
+  luôn tuân thủ hoàn toàn phương án hoặc đồng nhất hoàn toàn nhân vật.

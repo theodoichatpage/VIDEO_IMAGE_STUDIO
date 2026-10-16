@@ -1,0 +1,58 @@
+VIDEO IMAGE STUDIO 0.3.45 — PHÂN TÍCH THEO NHÓM, LƯU TIẾN TRÌNH
+
+CẬP NHẬT
+Hủy phân tích cũ trong Studio, dừng ChatGPT nếu còn chạy. Giải nén gói mới,
+chạy MO_VIDEO_IMAGE_STUDIO.bat. Bản này thêm analysis_pipeline.py (file bắt buộc).
+Tải lại tiện ích tại edge://extensions/chrome://extensions, xác nhận tiện ích
+được nạp từ extension của thư mục cài vừa cập nhật. Tải lại tab ChatGPT và
+Studio (Ctrl+F5). Chọn chat văn bản trống, chuyển kết nối sang đúng tab.
+
+QUY TRÌNH MỚI
+1. Nhập toàn bộ kịch bản và phong cách. Bấm Tự chia cảnh và phân tích.
+2. Giai đoạn 1/3: Studio chia văn bản thành các đơn vị có mã cố định, đóng
+   thành phần tối đa khoảng 4.500 ký tự/20 đơn vị. ChatGPT chỉ nhóm các mã
+   theo ý nghĩa. KHÔNG gửi phong cách, thumbnail, mẫu prompt ảnh trong bước này.
+   Studio giữ nguyên chữ gốc, kiểm tra đủ các mã, không lặp/đảo/bỏ sót.
+3. Giai đoạn 2/3: lập phương án từng nhóm tối đa 4 cảnh, có thêm giới hạn
+   độ dài nguồn theo nhóm. Chỉ gửi mô tả phong cách; không gửi mẫu lệnh ảnh.
+   Thumbnail được lập riêng sau các cảnh content, dựa trên trọng tâm đã lập.
+4. Giai đoạn 3/3: rà soát từng nhóm với bản tóm tắt bố cục/trọng tâm toàn bài,
+   giảm lặp và giữ phong cách. Không gửi lại toàn bộ nguồn và toàn bộ phương án dài.
+5. Sau mỗi phần hợp lệ: lưu project.json, cập nhật số phần đã lưu rồi mới
+   xếp yêu cầu tiếp theo. Chỉ một yêu cầu văn bản được gửi mỗi lần.
+6. Sau khi xong, xem/sửa và duyệt phương án, rồi mới tạo ảnh như cũ.
+Nếu đã nhập các dòng sẵn, bỏ qua giai đoạn chia văn bản, giữ nguyên các dòng.
+
+TIẾN TRÌNH
+Bước 2 ghi giai đoạn 1/3, 2/3 hoặc 3/3; đã lưu X/Y phần của giai đoạn;
+số đoạn, số phương án, số cảnh rà soát, số ký tự và lần liên lạc cuối.
+Các đoạn/phương án nháp được hiển thị khi đã lưu. Chưa cho duyệt/tạo ảnh
+trong khi tiến trình chưa hoàn tất. Hỗ trợ tối đa 200 cảnh content + thumbnail;
+không còn ép tối đa 49 cảnh. Quá giới hạn sẽ báo lỗi, không cắt bỏ kịch bản.
+
+KHI BỊ NGẮT
+- Nếu ChatGPT đã trả lời: mở đúng cuộc chat, bấm Nhận lại kết quả phân tích.
+  Không gửi lại prompt. Dùng đúng mã yêu cầu để tránh lấy nhầm phản hồi.
+- Nếu phần hiện tại lỗi/mất phản hồi: dừng ChatGPT nếu còn chạy, bấm
+  Gửi lại phần chưa xong và xác nhận. Chỉ gửi một yêu cầu mới cho phần đó;
+  các phần đã lưu không làm lại. Lần gửi lại dùng tab đang kết nối.
+- Có thể mở lại Studio rồi tiếp tục từ checkpoint. Nếu thay đầu vào,
+  phải bắt đầu lần phân tích mới, không gắn kết quả cũ vào nội dung mới.
+- Phản hồi phải khớp mã công việc, lần chạy, giai đoạn và số phần.
+  JSON lỗi không được coi là đã xong; không tự lặp vô hạn.
+- Nếu tiện ích nhận diện Creating image hoặc ảnh kết quả ở tác vụ phân tích,
+  phân tích sẽ báo lỗi để bạn dừng ChatGPT. Không coi ảnh là kết quả JSON.
+
+PHẠM VI
+Không đổi cơ chế ảnh: mỗi lần một prompt, nhận file tải về mới hoàn thành
+và chuyển tiếp. Dữ liệu, checkpoint và kết quả giữ riêng theo dự án.
+Bản sửa không bảo đảm ChatGPT luôn tuân thủ yêu cầu văn bản hoặc bố cục;
+đã giảm dữ liệu/câu lệnh dễ gây nhầm và bổ sung báo lỗi khi lệch luồng.
+
+KIỂM TRA
+66 test Python: 64 đạt; hai test luồng ảnh cũ từ 0.3.36 giữ nguyên.
+9 test pipeline mới: tách dữ liệu chia văn bản, lưu theo nhóm, chống callback
+trùng, sai mã/sai phần, thiếu đơn vị, tiếp tục phần lỗi, kịch bản 60 cảnh,
+giới hạn phần và tiếp tục từ checkpoint đã đọc lại từ JSON.
+Test tiện ích, giao diện mô phỏng và 6 test tải ảnh đạt.
+Chưa kiểm thử Windows/PowerShell hoặc ChatGPT thật trong môi trường này.

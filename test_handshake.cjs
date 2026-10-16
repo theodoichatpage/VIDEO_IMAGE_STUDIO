@@ -1,0 +1,6 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const source=fs.readFileSync(__dirname+'/extension/background.js','utf8');
+async function run(mode){let listener,saved=null,heartbeat=0;const chrome={runtime:{onMessage:{addListener:f=>listener=f}},storage:{local:{async get(){return{}},async set(v){saved=v}}},tabs:{async query(){return[{id:7,url:'https://chatgpt.com/'}]},async sendMessage(){return{ready:true}}}};
+const fetch=async(url,options)=>{heartbeat++;assert.equal(url,'http://127.0.0.1:7871/bridge/heartbeat');assert.equal(options.headers['X-Studio-Token'],'token');if(mode==='offline')throw Error('Failed to fetch');return{ok:mode!=='bad-token',async json(){return mode==='bad-token'?{error:'Kết nối chưa được ghép mã.'}:{ok:true}}}};
+vm.runInNewContext(source,{chrome,fetch,AbortSignal,crypto:{randomUUID:()=> 'client'}});const result=await new Promise(resolve=>listener({type:'bind',token:'token',browser:'Edge'},{},resolve));return{result,saved,heartbeat}}
+(async()=>{let r=await run('ok');assert(r.result.connected);assert(r.saved);assert.equal(r.heartbeat,1);for(const mode of ['offline','bad-token']){r=await run(mode);assert(r.result.error);assert.equal(r.saved,null)}console.log('PASS: confirmed server heartbeat required; offline server and bad token never report successful binding')})().catch(e=>{console.error(e);process.exit(1)});

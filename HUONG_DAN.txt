@@ -1,0 +1,94 @@
+BẢN 0.3.47 — MỞ BẰNG 0_VIDEO_IMAGE_STUDIO.bat
+Đọc CAP_NHAT_0_3_47.txt trước khi cập nhật. Tab 5: dựng video từ ảnh và voice.
+
+BẢN 0.3.46 — MỞ BẰNG 0_VIDEO_IMAGE_STUDIO.bat
+Xem CAP_NHAT_0_3_46.txt để cập nhật tiện ích và nhận lại phần đã trả lời.
+
+BẢN 0.3.35 — CHƯA XÁC NHẬN GỬI VẪN NHẬN FILE
+Nếu chưa nhận diện tin nhắn gửi, phần mềm chờ file thay vì hủy tác vụ. Khi tải ảnh đúng thư mục, tự hoàn tất và tiếp tục hàng đợi nếu trước đó đang chạy. Nếu bạn chủ động tạm dừng, không tự tiếp tục. Nhiều file mới chưa xác định được vẫn cần chọn đúng file. Reload tiện ích sau cập nhật.
+
+BẢN 0.3.33 — XÁC NHẬN GỬI VÀ NHẬN ĐÚNG FILE
+Sau cập nhật Reload tiện ích tại edge://extensions rồi tải lại ChatGPT và ghép mã. Lệnh chỉ báo đã gửi khi tin nhắn có mã tác vụ hiện trong cuộc chat. Nếu click không gửi được, hàng đợi dừng và hiện lỗi, không tự xếp prompt tiếp theo vào ô. File ảnh mới phải có thời điểm ghi sau lúc bắt đầu chờ tải để tự hoàn tất.
+Nếu prompt đang còn trong ô: tạm dừng hàng đợi, bấm mũi tên Gửi thủ công một lần, tải ảnh rồi Nhập ảnh cho đúng dòng. Không bấm Làm lại khi ô còn prompt để tránh tạo trùng.
+
+BẢN 0.3.32 — CHUYỂN TAB KẾT NỐI
+Sau cập nhật tải lại tiện ích và ChatGPT. Mở tab ChatGPT mới > tiện ích > dán mã Studio > Chuyển kết nối sang tab này. Không cần tìm tab cũ. Máy chủ thay kết nối ngay và chặn tab cũ giành lại. Tác vụ đã gửi ở tab cũ ngừng theo dõi, không tự gửi trùng; các yêu cầu chưa gửi tiếp tục ở tab mới.
+
+BẢN 0.3.31 — KIỂM TRA NHẬN LỆNH
+Sau cập nhật tải lại tiện ích tại edge://extensions, tải lại ChatGPT và kết nối mã mới. Kết nối sẽ kích hoạt lấy lệnh ngay. Studio phân biệt Có kết nối/chưa nhận lệnh và Đang nhận lệnh. Dòng hàng đợi hiện dự án/tác vụ đang giữ hàng đợi. Nếu tác vụ cũ chờ tải ảnh, mở dự án đó nhận ảnh hoặc dừng tác vụ; không tự gửi trùng yêu cầu.
+
+BẢN 0.3.30 — NGUYÊN NGƯỜI + CỤM CHỮ
+Tách ảnh mặc định nhận diện người bằng Mask R-CNN và cụm chữ bằng OCR; không chia quần áo thành mảnh nhỏ. Cụm chữ là nguyên vùng ảnh chữ, còn nền bên trong vùng để giữ đủ ký tự và dấu. Không tái tạo phần bị che; mô hình có thể nhận diện thiếu, cần xem lớp trước khi dùng.
+Đóng cửa sổ SAM2 cũ trước cập nhật, sau đó Cài và khởi động SAM2 trong Studio để cài bổ sung OCR. Có thể mất thời gian tải thêm mô hình nhận diện. Chế độ Vùng nhỏ SAM2 vẫn nằm trong danh sách riêng.
+Nhận ảnh tự bật khi chọn hoặc nhập thư mục. Khi mở lại Studio, khôi phục nhận ảnh theo dự án có thư mục đã lưu; file cũ được bỏ qua. Bấm Tắt nhận ảnh sẽ ghi nhớ tắt. Nếu nhiều dự án dùng cùng thư mục, chỉ dự án mới nhất được khôi phục để tránh nhận nhầm.
+
+BẢN 0.3.29 — TÍN HIỆU TẢI XONG TỪ TIỆN ÍCH
+Sau cập nhật phải mở edge://extensions hoặc chrome://extensions, bấm Reload/Tải lại tiện ích Studio (quyền downloads), tải lại ChatGPT và ghép mã mới. Bật nhận ảnh đúng thư mục, hàng đợi đang chạy. Tiện ích báo file tải xong; Studio chờ file ổn định rồi nhận và cho gửi tiếp. Không tự tải ảnh hoặc đọc cookie.
+
+BẢN 0.3.28 — SAM2 TÍCH HỢP
+Không cần tìm thư mục SAM2 cũ. Tab Tách ảnh > Cài và khởi động SAM2. Lần đầu tự tạo môi trường, cài thư viện và tải mô hình qua Internet; giữ cửa sổ mở. Khi báo SAM2 đã sẵn sàng, chọn ảnh và tách. Những lần sau dùng lại bản đã cài.
+Cài tích hợp dùng Python đang chạy Studio (yêu cầu 3.10–3.12). Nếu cài lỗi, xem cửa sổ cài đặt.
+
+BẢN 0.3.27 — KHÔI PHỤC TÁCH ẢNH
+Tab Tách ảnh ngay sau Dự án. Dùng lại giao diện SAM2 cuối: chọn ảnh, Nhanh/Cân bằng/Chi tiết, tách tất cả, PNG từng lớp, nền còn lại, kiểm tra ghép lại, ZIP chứa vi_tri.json. Không vẽ thêm vùng bị che.
+Bấm Mở SAM2 đã cài và chọn thư mục SAM2 cũ có .venv và app.py. Nếu chưa cài: mở SAM2_Tach_Anh/1_CAI_DAT.bat trong gói mới một lần. Giữ cửa sổ chạy SAM2 mở.
+Ảnh từ dự án: trong Tiến trình và kết quả, bấm Tách ảnh cạnh Tải xuống để nạp ảnh vào tab Tách ảnh; sau đó bấm Tách tất cả bằng AI. Có thể chọn ảnh khác từ máy. Kết quả SAM2 lưu trong thư mục outputs của ứng dụng SAM2; tải ZIP để lưu bộ lớp tại nơi mong muốn.
+
+BẢN 0.3.26
+Dán nội dung thumbnail và từng ảnh bên phải; không cần dán lại vào prompt mẫu. {{noi_dung}} hoặc {{nội dung cũ}} được thay bằng nội dung bên phải khi gửi. Khối VIETNAMESE SCRIPT cũng được thay.
+Mở thư mục: gọi Windows Explorer vào thư mục dự án riêng. Đường dẫn đầy đủ hiện trong tab Dự án.
+
+BẢN 0.3.25 — DỰ ÁN
+Tab Dự án chứa các bộ ảnh riêng. Bấm Xem kết quả, Mở để tạo ảnh, Mở thư mục hoặc Tải bộ ảnh ZIP.
+Dự án mới: các dòng nội dung trống, giữ hai prompt mẫu của dự án đang mở. Tên đổi tại ô Tên bộ ảnh.
+Mỗi bộ lưu trong projects/<mã dự án>; đổi tên không di chuyển dữ liệu.
+Tab Tiến trình hiện tên và thư mục của dự án đang xem. Dự án cũ tiếp tục xử lý nếu hàng đợi chưa tạm dừng.
+
+BẢN 0.3.24 — NHẬN ẢNH TRONG NỀN
+Ảnh tải xong vào thư mục đã chọn sẽ tự hoàn tất sau khoảng 3–5 giây. Không cần quay lại tab Studio. Hàng đợi tiếp tục khi tiện ích ChatGPT đang kết nối và hàng đợi đang chạy.
+Giữ cửa sổ chạy Studio mở, bật nhận ảnh, tải mỗi ảnh đúng thư mục.
+Cập nhật: đóng Studio cũ, chạy CAP_NHAT_BAN_CU.bat trong bản mới và chọn thư mục cũ. Mở lại Studio, Ctrl+F5, bật nhận ảnh và kết nối ChatGPT.
+
+VIDEO IMAGE STUDIO 0.3.23 — NHẬN FILE TẢI XUỐNG, GIAO DIỆN 10 DÒNG
+
+CẬP NHẬT:
+Đóng Studio cũ. Chạy CAP_NHAT_BAN_CU.bat trong bản này và chọn thư mục đã cài. Bộ cập nhật sao chép cả download_watch.py. Tải lại tiện ích trong edge://extensions, tải lại tab ChatGPT, ghép mã mới nếu dùng chức năng gửi prompt. Ctrl+F5 Studio, kiểm tra Bản 0.3.23. Giữ thư mục projects.
+
+THIẾT LẬP NHẬN ẢNH:
+1. Tạo một thư mục riêng, ví dụ D:\AnhChatGPT.
+2. Trong Studio chọn thư mục đó ở thanh Thư mục ảnh tải về, bấm Bật nhận ảnh.
+3. Khi bấm Download trong ChatGPT, lưu ảnh vào đúng thư mục này. Có thể bật tùy chọn hỏi nơi lưu file của trình duyệt.
+4. Ảnh có sẵn trước lúc bật nhận được bỏ qua; chỉ file tải mới được theo dõi.
+5. Khi mở lại Studio, bật nhận ảnh lại. Đường dẫn thư mục được nhớ; phần theo dõi không tự bật sau khởi động để tránh nhập nhầm file cũ.
+
+SỬ DỤNG:
+- Khi yêu cầu đã gửi, dòng chuyển sang Chờ tải file. Studio không dò ảnh trên trang ChatGPT để hoàn thành nữa.
+- Bạn bấm Download trong ChatGPT. File hoàn chỉnh, ổn định ít nhất 3 giây và đọc được ảnh mới được lưu vào Studio. Khi đó hiện ảnh, báo Hoàn thành, xóa lỗi cũ và dừng đồng hồ.
+- Ảnh cũ đang báo lỗi: tab Tiến trình và kết quả, bấm Nhận file tiếp theo ở đúng dòng rồi tải ảnh đó về thư mục đã chọn.
+- Nếu nhiều file mới cùng xuất hiện: không tự gắn nhầm. Bấm Chọn file mới ở đúng dòng và chọn tên file.
+- Một lần chỉ nhận tự động cho một dòng. Nhận xong mới chuyển sang dòng tiếp theo.
+- Chức năng gửi prompt qua tiện ích vẫn cần kết nối nếu sử dụng. Nhận file tải trên máy không cần ChatGPT API hoặc quyền đọc kết quả trên trang.
+- Có thể dùng Nhập ảnh cho các file đã tải trước khi bật theo dõi.
+
+GIAO DIỆN:
+Hai tab Tạo ảnh và Tiến trình và kết quả nằm cạnh tên VIDEO IMAGE STUDIO. Khung 10 dòng co theo chiều cao màn hình desktop; trạng thái một dòng, không đẩy dòng kế tiếp. Bấm trạng thái để xem lỗi chi tiết. Nội dung dài cuộn bên trong từng ô. Màn hình hẹp dùng bố cục đáp ứng.
+
+KIỂM TRA:
+Đã kiểm thử file cũ, file tải dở, file ổn định, tránh nhập lặp, nhiều file cần lựa chọn, hoàn thành sau lưu ảnh; khởi tạo giao diện đủ 10 dòng và lỗi dài không nằm trong nội dung trạng thái. Chưa kiểm thử render trên trình duyệt Windows thực tế của người dùng.
+
+
+BẢN 0.3.38: Xem CAP_NHAT_0_3_38.txt để dùng phong cách dự án, tự chia kịch bản và phân tích hai lượt.
+
+BẢN 0.3.39: Xem CAP_NHAT_0_3_39.txt cho giao diện mới theo ba bước.
+
+BẢN 0.3.40: Xem CAP_NHAT_0_3_40.txt nếu phân tích bị tác vụ cũ chặn.
+
+BẢN 0.3.41: Xem CAP_NHAT_0_3_41.txt về xóa dự án và xem lý do tác vụ dừng/chờ.
+
+BẢN 0.3.42: Chỉ chạy MO_VIDEO_IMAGE_STUDIO.bat. Xem CAP_NHAT_0_3_42.txt.
+
+BẢN 0.3.43: Xem CAP_NHAT_0_3_43.txt. Cần tải lại tiện ích và tab ChatGPT cho phần nhận lại phân tích.
+
+BẢN 0.3.44: Xem CAP_NHAT_0_3_44.txt; tải lại tiện ích, chọn tab chat mới và bắt đầu phân tích mới.
+
+BẢN 0.3.45: Xem CAP_NHAT_0_3_45.txt. Phân tích theo nhóm và lưu tiến trình; cần tải lại tiện ích.

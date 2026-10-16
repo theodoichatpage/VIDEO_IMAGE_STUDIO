@@ -1,0 +1,26 @@
+VIDEO IMAGE STUDIO 0.3.46
+
+FILE CHẠY: 0_VIDEO_IMAGE_STUDIO.bat
+Sắp xếp thư mục theo Tên tăng dần để thấy file chạy ở đầu danh sách file.
+
+CẬP NHẬT
+1. Giải nén toàn bộ gói; đóng cửa sổ chạy Studio cũ.
+2. Chạy 0_VIDEO_IMAGE_STUDIO.bat. Nếu được hỏi, chọn thư mục Studio cũ để giữ dự án.
+3. Trong edge://extensions hoặc chrome://extensions, tải lại tiện ích Video Image Studio.
+   Kiểm tra tiện ích hiển thị phiên bản 0.3.46. Nếu tiện ích dùng đường dẫn khác,
+   tải tiện ích chưa đóng gói từ thư mục extension của bản đã cập nhật.
+4. Tải lại tab ChatGPT có câu trả lời, tải lại trang Studio (Ctrl+F5).
+5. Kết nối đúng tab ChatGPT nếu cần, rồi bấm Nhận lại kết quả phân tích.
+   Không bấm phân tích mới hoặc gửi lại prompt khi câu trả lời đã có.
+
+THAY ĐỔI
+- Nhận JSON bằng bộ mã job_id + run_id + stage + part chính xác, ngay cả khi
+  không tìm lại được dấu VIS_JOB trong tin nhắn người dùng hoặc gửi bị gián đoạn.
+- Chỉ nhận kết quả đúng phần đang chờ; đợi phản hồi ổn định và hết trạng thái tạo.
+- Giữ cách chia tự động theo độ dài, lưu từng phần và kiểm tra dữ liệu ở máy chủ.
+- File chạy chính: 0_VIDEO_IMAGE_STUDIO.bat. Các lối mở cũ vẫn dùng được.
+
+KIỂM CHỨNG
+Đã tái hiện lỗi bỏ qua JSON khi thiếu dấu tin nhắn bằng kiểm thử mô phỏng trình duyệt.
+Chưa kiểm chứng trực tiếp trên tab ChatGPT và Windows của người dùng.
+Nếu vẫn nhận 0 ký tự, cần thu thập lỗi từ tiện ích để kiểm tra tiếp.

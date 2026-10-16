@@ -1,0 +1,36 @@
+VIDEO IMAGE STUDIO 0.3.44 — ĐÚNG CUỘC CHAT VÀ CHỈ DỮ LIỆU PHÂN TÍCH
+
+NGUYÊN NHÂN ĐÃ XÁC ĐỊNH TRONG MÃ
+Yêu cầu phân tích kế thừa conversation cũ của dự án, trong khi tiện ích
+chuyển trang theo URL của yêu cầu. Vì vậy mở chat mới vẫn bị đưa về chat cũ.
+Ngoài ra dữ liệu phân tích chứa nguyên hai mẫu lệnh tạo ảnh.
+
+SỬA
+- Lượt phân tích mới không kế thừa URL cũ; dùng tab ChatGPT đang kết nối.
+- Lượt rà soát dùng analysis_conversation riêng từ phản hồi lượt đầu.
+- Không ghi đè conversation của tạo ảnh khi phân tích trả dữ liệu.
+- Không gửi mẫu lệnh thumbnail/content trong dữ liệu phân tích.
+- Yêu cầu lập bản ghi JSON, không dùng câu “Tạo thumbnail”.
+- Lời dẫn mã theo dõi cho phân tích chỉ nói xử lý văn bản và xuất JSON.
+- Yêu cầu phân tích bản cũ còn xếp hàng được ngừng khi khởi động;
+  không tự phát lại prompt cũ có địa chỉ và nội dung chưa sửa.
+
+CÁCH LÀM
+1. Hủy phân tích cũ trong Studio; nếu ChatGPT còn chạy thì dừng bên ChatGPT.
+2. Giải nén và chạy MO_VIDEO_IMAGE_STUDIO.bat để cập nhật.
+3. Tải lại tiện ích tại edge://extensions hoặc chrome://extensions.
+   Tiện ích phải được nạp từ thư mục extension của bản cài đã cập nhật.
+4. Mở một cuộc chat mới trống. Không gửi trước câu “chỉ nhận thông tin,
+   không cần phản hồi”. Tải lại trang nếu cần để dùng tiện ích mới.
+5. Trong tiện ích, bấm Chuyển kết nối sang tab này.
+6. Studio Ctrl+F5, bấm Tự chia cảnh và phân tích để bắt đầu yêu cầu mới.
+   Không dùng Nhận lại cho yêu cầu cũ đã chuyển sang tạo ảnh.
+
+Giữ nguyên quy trình hai lượt và cơ chế nhận file để chạy ảnh tiếp theo.
+Không thể bảo đảm ChatGPT luôn tuân thủ; bản này loại bỏ các chỉ dẫn tạo ảnh
+mâu thuẫn do phần mềm ghép vào và lỗi tự chuyển về cuộc chat cũ.
+
+KIỂM TRA
+57 test Python: 55 đạt; hai test luồng ảnh cũ chưa đạt giữ nguyên.
+Ba test mới xác nhận URL lượt đầu/lượt rà soát, cách ly mẫu ảnh và câu lệnh JSON.
+Test tiện ích và giao diện mô phỏng đạt. Chưa thử Windows/ChatGPT thực tế.

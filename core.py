@@ -11,6 +11,7 @@ def scene(title='Cảnh mới',source='',prompt='',kind='scene'):
     return dict(id=uuid.uuid4().hex,title=title,source=source,prompt=prompt,kind=kind,status='pending',error='',versions=[],selected=None,command=None,split={})
 PLACEHOLDERS=re.compile(r'\{\{\s*(?:noi_dung|nội_dung|content|script)\s*\}\}|\{(?:script|content)\}|\[(?:DÁN NỘI DUNG TIẾNG VIỆT VÀO ĐÂY|DÁN NỘI DUNG VÀO ĐÂY|NỘI DUNG|KỊCH BẢN|SCRIPT|CONTENT)\]',re.I)
 def fill_template(template,content):
+    # Legacy templates sometimes contain an actual script inside {{...}}.
     if re.search(r'\{\{[\s\S]*?\}\}',template):return re.sub(r'\{\{[\s\S]*?\}\}',lambda m:content,template)
     if PLACEHOLDERS.search(template):return PLACEHOLDERS.sub(lambda m:content,template)
     script_block=re.compile(r'((?:VIETNAMESE SCRIPT(?: FOR THIS IMAGE)?|KỊCH BẢN|NỘI DUNG TIẾNG VIỆT)\s*:\s*\n)(.*?)(?=\n\s*\n|\Z)',re.I|re.S)
@@ -121,7 +122,7 @@ def split_local(text,target=350):
     if not text:raise ValueError('Nhập kịch bản trước.')
     target=max(100,min(1500,int(target)));chunks=[];buffer=''
     for paragraph in re.split(r'\n\s*\n',text):
-        for sentence in re.split(r'(?<=[.!?…])\s+(?=[A-ZĐÀ-Ỹ“"]',paragraph.strip()):
+        for sentence in re.split(r'(?<=[.!?…])\s+(?=[A-ZĐÀ-Ỹ“"])',paragraph.strip()):
             if not sentence:continue
             if buffer and len(buffer)+len(sentence)+1>target:chunks.append(buffer);buffer=''
             buffer=(buffer+' '+sentence).strip()

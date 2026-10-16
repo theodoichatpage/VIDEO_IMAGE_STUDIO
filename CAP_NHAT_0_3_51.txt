@@ -1,0 +1,8 @@
+VIDEO IMAGE STUDIO 0.3.51
+
+- Thay luồng tự cắt theo ký tự bằng phân tích ngữ nghĩa 5 phần.
+- ChatGPT đọc toàn bộ kịch bản ở lượt đầu, lập bản đồ đúng 5 phần và chỉ phân tích phần 1.
+- Sau mỗi phần Studio dừng để người dùng Duyệt hoặc Phân tích lại; không tự chạy phần kế tiếp.
+- Giai đoạn này chỉ phân tích văn bản: không tạo ảnh, không góc máy/cỡ cảnh/bố cục/prompt ảnh.
+- source của từng cảnh và từng phần phải khôi phục nguyên văn kịch bản; phản hồi bỏ sót/lặp/viết lại bị từ chối.
+- Sau khi duyệt phần 5, danh sách cảnh được đưa vào Studio. Bước phân tích các dòng hiện có mới dùng để lập phương án hình ảnh.

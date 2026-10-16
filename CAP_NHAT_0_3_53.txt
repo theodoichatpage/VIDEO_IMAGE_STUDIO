@@ -1,0 +1,8 @@
+VIDEO IMAGE STUDIO 0.3.53
+- Sửa nhận diện giao diện ChatGPT mới: đọc conversation-turn không phụ thuộc thẻ article.
+- Đọc trực tiếp JSON trong khối pre/code của phản hồi ChatGPT.
+- Studio lưu và hiển thị ngay các cảnh đã nhận của từng phần.
+- ChatGPT tự chọn số phần phù hợp; không còn cố định 5 phần.
+- Sau khi nhận xong một phần, Studio tự gửi phần kế tiếp cho tới khi hoàn tất.
+- Nếu luồng tự động bị ngắt, vẫn giữ các phần đã lưu và có thể tiếp tục/khôi phục.
+- Giai đoạn này chỉ phân tích văn bản; phong cách ảnh, góc máy và bố cục chỉ dùng ở bước sau.

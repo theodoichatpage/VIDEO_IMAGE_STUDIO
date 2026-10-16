@@ -1,0 +1,8 @@
+VIDEO IMAGE STUDIO 0.3.50
+
+Sửa luồng phân tích kịch bản:
+- Bỏ lượt ChatGPT nội bộ chỉ trả groups/unit_ids khi bắt đầu phân tích mới.
+- Studio tự chia sơ bộ kịch bản cục bộ theo ranh giới câu, giữ đủ nội dung và tối đa 49 cảnh nội dung.
+- Câu trả lời đầu tiên từ ChatGPT giờ là phương án cảnh thật (scenes) gồm focus/subject/action/setting/shot/angle/composition/difference.
+- Giữ khả năng đọc checkpoint split cũ để không làm hỏng dữ liệu đã lưu.
+- Extension 0.3.50.

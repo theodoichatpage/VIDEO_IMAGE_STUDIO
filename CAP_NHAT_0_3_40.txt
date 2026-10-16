@@ -1,0 +1,27 @@
+VIDEO IMAGE STUDIO 0.3.40 — XỬ LÝ TÁC VỤ CHẶN PHÂN TÍCH
+
+NGUYÊN NHÂN
+Kết nối ChatGPT có thể hoạt động nhưng một ảnh ở dự án cũ đang chờ tải
+vẫn giữ hàng đợi chung. Phân tích không được gửi để tránh gửi chồng prompt.
+
+CÁCH DÙNG
+Đóng Studio, cập nhật bằng 0_CAP_NHAT_BAN_CU.bat, mở lại và Ctrl+F5.
+1. Ở bước 2, bấm Xử lý tác vụ chặn. Khi phân tích bị chặn, danh sách
+   cũng tự mở, ghi tên dự án, cảnh và trạng thái.
+2. Nếu muốn giữ tác vụ cũ đang chờ, hoàn thành bằng tải/nhập ảnh đúng dự án.
+3. Nếu muốn bỏ theo dõi các yêu cầu cũ, kiểm tra toàn bộ danh sách rồi
+   bấm Ngừng theo dõi các tác vụ trong danh sách. Đây là xác nhận chủ động.
+   Ảnh và dữ liệu đã lưu giữ nguyên. Hàng đợi tạm dừng; không tự gửi lại.
+4. Nếu ChatGPT còn tạo ảnh hoặc trả lời, dừng trong tab ChatGPT.
+5. Quay về dự án mới, bấm Tự chia cảnh và phân tích để bắt đầu hai lượt.
+
+Bản sửa không tự bỏ tác vụ chờ tải, không bỏ qua rào chắn nhận ảnh,
+không tự gửi phân tích chồng lên yêu cầu ảnh chưa rõ kết quả.
+Không thay đổi tiện ích, bộ theo dõi thư mục hoặc logic tạo ảnh cũ.
+
+KIỂM TRA
+43 test Python: 41 đạt; 2 lỗi cũ từ 0.3.36 giữ nguyên.
+Hai test mới xác nhận không bỏ theo dõi khi chưa xác nhận, giữ phiên bản ảnh,
+chặn danh sách tác vụ lỗi thời và cho phép phân tích sau khi xử lý.
+Test tiện ích và giao diện mô phỏng đạt.
+Chưa kiểm thử trực tiếp trên máy Windows và phiên ChatGPT thật.

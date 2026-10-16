@@ -1,0 +1,31 @@
+VIDEO IMAGE STUDIO 0.3 - PHAM VI KIEM TRA
+
+DA QUA KIEM TRA MO PHONG:
+- Mau thumbnail va mau anh video duoc chon dung.
+- Gui / dung / tiep tuc giu cung ma yeu cau, khong gui lai tu dong.
+- Tien ich tai lai tab co the cho tiep ma cu trong sessionStorage, khong click gui lai.
+- Phan hoi anh gan voi user-message co ma VIS_JOB, chi nhan anh sau yeu cau do.
+- Ket qua lap lai khong tao them phien ban.
+- Tao lai luu phien ban anh cu.
+- Doi thu tu canh, ZIP danh so theo thu tu moi va giu dung lop.
+- ZIP khong long archive; loai bo duong dan vuot thu muc.
+- Xuat mot phan va ghi de can xac nhan.
+- Nhap du an cu thanh ban sao, giu file cu, canh da gui khong tu gui lai.
+- Nhap anh thu cong; loi bo tach khong lam mat anh.
+- Ma ghep sai bi tu choi.
+- Cu phap Python va JavaScript da duoc kiem tra.
+
+CHUA KIEM CHUNG:
+- Dang nhap va thao tac tao anh that tren tai khoan ChatGPT cua nguoi dung.
+- DOM cua giao dien ChatGPT thuc te va quyen tai anh tu may chu anh.
+- Cai dat, native folder picker va updater PowerShell tren Windows.
+- Render bo cuc trong trinh duyet thuc: moi truong xay dung khong tai duoc Chromium.
+- Chay suy luan SAM2 trong bo tach tren may nguoi dung.
+
+GUI LOI:
+Chup trang thai the canh va thong bao loi (khong gui mat khau/ma xac minh).
+Khong bam Tao lai nhieu lan neu yeu cau cu van dang chay.
+0.3.31: kiểm tra kết nối tiện ích mô phỏng, giao diện, cú pháp JS/Python và 9 kiểm tra Python đạt. Chưa thử gửi trực tiếp trên Edge máy người dùng.
+0.3.32: 10 kiểm tra Python đạt, giao diện và kết nối mô phỏng đạt. Có kiểm tra chuyển tab, chặn client cũ sau thời gian chờ và giữ yêu cầu queued.
+0.3.33: kiểm tra tiện ích gửi thành công và click không tạo tin nhắn đạt; không báo sent khi chưa có tin nhắn. Kiểm tra giao diện/kết nối và 10 kiểm tra Python đạt. Chưa kiểm tra trực tiếp trên Edge người dùng.
+0.3.35: 11 kiểm tra Python đạt, gồm chưa xác nhận gửi -> chờ file -> hoàn tất -> tiếp tục. Kiểm tra JS gửi không xác nhận đạt. Chưa kiểm tra trên Edge thật.

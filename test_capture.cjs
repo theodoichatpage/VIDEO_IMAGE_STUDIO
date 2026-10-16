@@ -1,0 +1,9 @@
+const vm=require('vm'),fs=require('fs'),assert=require('assert');
+const source=fs.readFileSync(__dirname+'/extension/content.js','utf8');
+(async()=>{let tick,phases=[],drawn=null;const img={complete:true,naturalWidth:640,naturalHeight:360,currentSrc:'blob:correct'};
+const user={dataset:{},textContent:'collapsed prompt',getAttribute:k=>k==='data-turn'?'user':null,querySelector:()=>null,querySelectorAll:q=>q==='button'?[{dataset:{},textContent:'Show more',click(){user.textContent='[VIS_JOB:old-request] Original prompt'}}]:[],closest(){return this}};
+const assistant={dataset:{},textContent:'',innerText:'',getAttribute:k=>k==='data-turn'?'assistant':null,querySelector:q=>q==='img'?img:null,querySelectorAll:q=>q==='img'?[img]:[],closest(){return this}};
+const command={id:'recovery',kind:'image',status:'queued',receive_only:true,candidate_job_ids:['old-request']};
+const doc={querySelector:q=>q==='#prompt-textarea'?{disabled:false}:null,querySelectorAll:q=>q.includes('conversation-turn')||q==='article[data-turn]'?[user,assistant]:[],createElement:()=>({getContext:()=>({drawImage:i=>drawn=i}),toDataURL:()=> 'data:image/png;base64,AAAA'})};
+const ctx={document:doc,location:{href:'https://chatgpt.com/c/test'},sessionStorage:{getItem:()=>null,setItem(){},removeItem(){}},chrome:{runtime:{onMessage:{addListener(){}},async sendMessage(m){if(m.type==='poll')return{command};if(m.type==='result')phases.push(m.data.phase);return{ok:true}}}},setInterval:fn=>tick=fn,console};
+vm.runInNewContext(source,ctx);for(let i=0;i<5;i++)await tick();assert(phases.includes('done'));assert.strictEqual(drawn,img);assert(user.textContent.includes('old-request'));console.log('PASS: collapsed user prompt and article-based assistant image recovered without sending a new request');})().catch(e=>{console.error(e);process.exit(1)});

@@ -1,0 +1,36 @@
+VIDEO IMAGE STUDIO 0.3.43 — TIẾN TRÌNH VÀ KHÔI PHỤC PHÂN TÍCH
+
+ĐỢT SỬA NÀY CHỈ TẬP TRUNG VÀO PHÂN TÍCH
+- Dữ liệu văn bản mới làm mới mốc tiến triển; không dùng ngưỡng 5 phút
+  của tạo ảnh cho tác vụ phân tích. Phân tích báo ngắt sau 15 phút không có dữ liệu mới.
+- Trạng thái phân tích đã bị bỏ theo dõi ở bản cũ được hiển thị là bị ngắt,
+  không tiếp tục ghi Lượt 1/2 như còn đang chạy.
+- Bước 2 hiển thị mã tác vụ, trạng thái, số ký tự phản hồi và thời điểm
+  liên lạc cuối; lỗi nằm ngay tại bước phân tích.
+- Phản hồi không có JSON cũng được chuyển về để báo lỗi thay vì chờ vô hạn.
+- Lưu phản hồi đã nhận trong dữ liệu tác vụ để kiểm tra lỗi.
+
+CẬP NHẬT VÀ NHẬN LẠI KẾT QUẢ CŨ
+1. Giữ cuộc chat có prompt phân tích cũ. Giải nén gói, chạy MO_VIDEO_IMAGE_STUDIO.bat.
+2. Bản này có sửa tiện ích: vào edge://extensions hoặc chrome://extensions,
+   chọn Tải lại tiện ích Video Image Studio. Nếu tiện ích đang trỏ tới thư mục
+   khác thư mục bản cài vừa cập nhật, phải cập nhật đúng thư mục tiện ích đó
+   hoặc nạp tiện ích từ thư mục extension của bản cài hiện tại.
+3. Tải lại trang ChatGPT có prompt và JSON cũ; kết nối/chuyển kết nối sang đúng tab nếu cần.
+4. Ở Studio Ctrl+F5, bước 2 bấm Nhận lại kết quả phân tích · Không gửi lại prompt.
+   Tiện ích đọc phản hồi gắn với mã VIS_JOB cũ, kể cả khi có câu hỏi mới phía sau.
+   Không cần sao chép JSON vào Studio và không xếp lại prompt lượt 1.
+5. JSON hợp lệ thì Studio tự gửi lượt rà soát 2. JSON lỗi sẽ báo nguyên nhân;
+   không tự tạo ảnh. Kết thúc hai lượt, xem/sửa và duyệt phương án như trước.
+
+Không nhận kết quả cũ nếu nội dung/phong cách đã thay đổi. Phải mở đúng cuộc chat
+có mã yêu cầu; nếu phản hồi chưa có hoặc đã bị mất, tính năng không thể khôi phục
+nội dung chưa từng được trả về. Không tự sinh phần còn thiếu.
+Đợt sửa này chưa thay quy trình hai lượt thành quy trình nhiều lô cảnh.
+
+KIỂM TRA
+54 test Python: 52 đạt, hai lỗi cũ từ 0.3.36 giữ nguyên.
+5 test mới cho tiến triển, timeout riêng, khôi phục trạng thái cũ và nhận lại
+mã yêu cầu mà không xếp lại prompt. Test tiện ích bổ sung nhận lại phân tích
+không bấm Gửi và báo phản hồi không JSON để máy chủ kiểm tra.
+Test tải ảnh và giao diện mô phỏng đạt. Chưa thử trực tiếp Windows/ChatGPT thật.
