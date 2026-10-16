@@ -4,7 +4,7 @@
   let activeId='', lastText='', lastChanged=0, busy=false, timer=0;
   const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   const input=()=>document.querySelector('#prompt-textarea,textarea[placeholder*="Message"],textarea[placeholder*="Nhắn"],[contenteditable="true"][role="textbox"]');
-  const sendButton=()=>[...document.querySelectorAll('button')].find(b=>/send prompt|gửi|send message/i.test(`${b.getAttribute('aria-label')||''} ${b.getAttribute('data-testid')||''}`)&&!b.disabled);
+  const sendButton=()=>document.querySelector('[data-testid="send-button"]:not([disabled])')||[...document.querySelectorAll('button')].find(b=>/send[- ]?(prompt|message)|gửi/i.test(`${b.getAttribute('aria-label')||''} ${b.getAttribute('data-testid')||''}`)&&!b.disabled);
   const stopButton=()=>document.querySelector('[data-testid="stop-button"],button[aria-label*="Stop"],button[aria-label*="Dừng"]');
   const ready=()=>!!input();
   const responseText=()=>{
