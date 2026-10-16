@@ -15,8 +15,9 @@ def _split_exact(script,count=5):
     return parts
 def start(p,snapshot):
     if snapshot.get('mode')!='script': raise ValueError('Luồng này dùng cho toàn bộ kịch bản.')
-    parts=_split_exact(snapshot.get('script',''),5);s={'id':uuid.uuid4().hex,'snapshot':copy.deepcopy(snapshot),'parts':parts,'current_part':1,'total_parts':5,'part_scenes':{},'part_status':{str(n):{'status':'waiting','scene_count':0,'error':''} for n in range(1,6)},'approved_parts':[],'stage':'mapping','status':'running','saved':0,'last_error':''}
-    p['analysis_pipeline']=s;return _map(p)
+    parts=_split_exact(snapshot.get('script',''),5);s={'id':uuid.uuid4().hex,'snapshot':copy.deepcopy(snapshot),'parts':parts,'current_part':1,'total_parts':5,'part_scenes':{},'part_status':{str(n):{'status':'waiting','scene_count':0,'error':''} for n in range(1,6)},'approved_parts':[],'stage':'analyzing_part','status':'running','saved':0,'last_error':''}
+    s['part_status']['1']['status']='processing';p['analysis_pipeline']=s
+    return queue_next(p)
 def describe(s):
     if s['stage']=='mapping':return 'Đang đọc toàn bộ kịch bản và lập bản đồ 5 phần'
     if s['stage']=='analysis_complete':return 'Hoàn tất phân tích 5/5 phần'
@@ -29,12 +30,12 @@ def _map(p):
     s=p['analysis_pipeline'];schema={'job_id':'Mã có sẵn','run_id':s['id'],'stage':'map_script','total_parts':5,'parts':[{'part':1,'title':'Tên phần','summary':'Tóm tắt ngắn','role':'Vai trò'}]}
     return _cmd(p,'map_script',-1,BASE+'Đọc TOÀN BỘ kịch bản. Lập đúng 5 phần theo mạch kể, KHÔNG chép lại đoạn nguồn. Chỉ trả title, summary, role.\nCẤU TRÚC JSON:\n'+json.dumps(schema,ensure_ascii=False)+'\nKỊCH BẢN:\n'+s['snapshot']['script'])
 def queue_next(p):
-    s=p['analysis_pipeline'];n=s['current_part'];part=s['parts'][n-1];schema={'job_id':'Mã có sẵn','run_id':s['id'],'stage':'analyze_part','part':n,'scenes':[{'title':'Tên cảnh/ý','source':'Trích đoạn ngắn','focus':'Trọng tâm','role':'Vai trò'}]}
-    task=(f'Chỉ phân tích PHẦN {n}/5. Tách cảnh CHI TIẾT: tạo cảnh mới khi thay đổi hành động, nhân vật trọng tâm, '
-          'bối cảnh, thời điểm, cảm xúc, thông tin hoặc nhịp kể; không gộp các khoảnh khắc khác nhau chỉ vì chúng gần nhau. '
-          'Mỗi cảnh phải có trọng tâm và vai trò riêng để bước góc quay sau này không bị nhàm chán. Không chép lại toàn bộ nguồn; '
-          'source chỉ là trích đoạn ngắn. Không thêm góc máy, bố cục hoặc prompt ảnh. ')
-    return _cmd(p,'analyze_part',n-1,BASE+task+'\nCẤU TRÚC JSON:\n'+json.dumps(schema,ensure_ascii=False)+'\nDỮ LIỆU PHẦN:\n'+json.dumps(part,ensure_ascii=False))
+    s=p['analysis_pipeline'];n=s['current_part'];part=s['parts'][n-1]
+    schema={'job_id':'','run_id':'','stage':'analyze_part','part':n,'scenes':[{'title':'','source':'','focus':'','role':''}]}
+    task=(f'Phân tích Phần {n}/5 bên dưới. Tách thành cảnh mới khi đổi hành động, nhân vật chính, bối cảnh, thời điểm, cảm xúc, thông tin hoặc nhịp kể. '
+          'Mỗi scene.source chỉ trích 8–25 từ trong phần này. Không tạo ảnh, prompt ảnh, góc máy hay bố cục. Trả duy nhất JSON.')
+    payload={'job_id':'Mã có sẵn','run_id':s['id'],'part':n,'text':part['source']}
+    return _cmd(p,'analyze_part',n-1,BASE+task+'\nJSON mẫu: '+json.dumps(schema,ensure_ascii=False,separators=(',',':'))+'\nDữ liệu: '+json.dumps(payload,ensure_ascii=False,separators=(',',':')))
 def _scenes(items):
     if not isinstance(items,list) or not items:raise ValueError('Phần này chưa có danh sách cảnh.')
     out=[]
