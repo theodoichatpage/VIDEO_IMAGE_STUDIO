@@ -1,7 +1,7 @@
 // Bridge between the selected ChatGPT tab and the local Video Image Studio.
 // It intentionally uses only the rendered page, never cookies or credentials.
 (()=>{
-  let activeId='', lastText='', lastChanged=0, busy=false, timer=0;
+  let activeId='', lastText='', lastChanged=0, baselineText='', responseStarted=false, busy=false, timer=0;
   const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   const input=()=>document.querySelector('#prompt-textarea,textarea[placeholder*="Message"],textarea[placeholder*="Nhắn"],[contenteditable="true"][role="textbox"]');
   const sendButton=()=>document.querySelector('[data-testid="send-button"]:not([disabled]),button[aria-label*="Send"]:not([disabled]),button[aria-label*="Gửi"]:not([disabled])')||[...document.querySelectorAll('button')].find(b=>/send[- ]?(prompt|message)|gửi/i.test(`${b.getAttribute('aria-label')||''} ${b.getAttribute('data-testid')||''}`)&&!b.disabled);
@@ -55,13 +55,23 @@
   async function observe(command){
     const text=responseText();
     const generating=!!stopButton();
+    const newResponse=!!text&&text!==baselineText;
     if(generating){
       await report('waiting');
-      if(text!==lastText){lastText=text;lastChanged=Date.now();await report('partial',{text});}
+      if(newResponse){
+        responseStarted=true;
+        if(text!==lastText){lastText=text;lastChanged=Date.now();await report('partial',{text});}
+      }
       return;
     }
+    // The previous assistant message remains visible after a new prompt is
+    // sent. Do not send that old JSON back to Studio as this job's result.
+    if(!responseStarted){
+      if(!newResponse)return;
+      responseStarted=true;
+    }
     if(text&&text!==lastText){lastText=text;lastChanged=Date.now();await report('partial',{text});return;}
-    if(text&&lastChanged&&Date.now()-lastChanged>1800){await report('done',{text});activeId='';lastText='';lastChanged=0;}
+    if(text&&lastChanged&&Date.now()-lastChanged>1800){await report('done',{text});activeId='';lastText='';baselineText='';responseStarted=false;lastChanged=0;}
   }
   async function tick(){
     if(busy)return;
@@ -71,8 +81,15 @@
       const state=await notify('poll',{ready:ready(),generating:!!stopButton(),url:location.href});
       if(state.error||state.paused||!state.command)return;
       const command=state.command;
-      if(activeId&&activeId!==command.id){activeId='';lastText='';lastChanged=0;}
-      if(!activeId){activeId=command.id;await send(command);lastChanged=Date.now();}
+      if(activeId&&activeId!==command.id){activeId='';lastText='';baselineText='';responseStarted=false;lastChanged=0;}
+      if(!activeId){
+        activeId=command.id;
+        baselineText=responseText();
+        lastText=baselineText;
+        responseStarted=false;
+        await send(command);
+        lastChanged=Date.now();
+      }
       await observe(command);
     }catch(error){await report('error',{error:error.message});activeId='';}
     finally{busy=false;}
