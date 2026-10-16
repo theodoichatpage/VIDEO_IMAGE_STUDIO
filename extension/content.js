@@ -4,7 +4,10 @@
   let activeId='', lastText='', lastChanged=0, busy=false, timer=0;
   const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   const input=()=>document.querySelector('#prompt-textarea,textarea[placeholder*="Message"],textarea[placeholder*="Nhắn"],[contenteditable="true"][role="textbox"]');
-  const sendButton=()=>document.querySelector('[data-testid="send-button"]:not([disabled])')||[...document.querySelectorAll('button')].find(b=>/send[- ]?(prompt|message)|gửi/i.test(`${b.getAttribute('aria-label')||''} ${b.getAttribute('data-testid')||''}`)&&!b.disabled);
+  const sendButton=()=>{
+    const form=input()?.closest('form');
+    return form?.querySelector('button[type="submit"]:not([disabled]),[data-testid="send-button"]:not([disabled])')||document.querySelector('[data-testid="send-button"]:not([disabled])')||[...document.querySelectorAll('button')].find(b=>/send[- ]?(prompt|message)|gửi/i.test(`${b.getAttribute('aria-label')||''} ${b.getAttribute('data-testid')||''}`)&&!b.disabled);
+  };
   const stopButton=()=>document.querySelector('[data-testid="stop-button"],button[aria-label*="Stop"],button[aria-label*="Dừng"]');
   const ready=()=>!!input();
   const responseText=()=>{
@@ -38,8 +41,13 @@
     await pause(120);
     const button=sendButton();
     if(!button)throw Error('Không tìm thấy nút Gửi của ChatGPT.');
+    button.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));
     button.click();
-    await pause(350);
+    await pause(700);
+    if((box.value||box.innerText||'').trim()){
+      box.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true}));
+      box.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true}));
+    }
     await report('sent');
   }
   async function observe(command){
