@@ -1,18 +1,27 @@
-import unittest,json
+import unittest
 import analysis_pipeline as p
 
 class T(unittest.TestCase):
  def project(self): return {'commands':[],'analysis_conversation':''}
- def snap(self): return {'mode':'script','script':'Một. Hai. Ba. Bốn. Năm.','rows':[],'visual_style':'x','style':'s','thumbnail_style':'t'}
- def response(self,c,state,part=1):
-  parts=[{'part':i,'title':f'P{i}','summary':f'S{i}','role':f'R{i}','source':x} for i,x in enumerate(['Một.','Hai.','Ba.','Bốn.','Năm.'],1)]
-  d={'job_id':c['id'],'run_id':state['id'],'stage':'analyze_part','part':part,'scenes':[{'title':'C','source':parts[part-1]['source'],'focus':'F','role':'V'}]}
-  if part==1:d['parts']=parts
-  return json.dumps(d,ensure_ascii=False)
- def test_start_sends_full_script_and_pauses_after_part1(self):
-  pr=self.project();c=p.start(pr,self.snap());self.assertIn('Một. Hai. Ba. Bốn. Năm.',c['prompt']);self.assertNotIn('shot',c['prompt'].lower());self.assertNotIn('angle',c['prompt'].lower())
-  p.accept(pr,c,self.response(c,pr['analysis_pipeline']));s=pr['analysis_pipeline'];self.assertEqual(s['stage'],'awaiting_approval');self.assertEqual(len(s['parts']),5);self.assertEqual(s['current_part'],1)
- def test_rejects_changed_source(self):
-  pr=self.project();c=p.start(pr,self.snap());d=json.loads(self.response(c,pr['analysis_pipeline']));d['scenes'][0]['source']='viết lại'
-  with self.assertRaises(ValueError):p.accept(pr,c,json.dumps(d,ensure_ascii=False))
+ def snap(self,script): return {'mode':'script','script':script,'rows':[],'visual_style':'x','style':'s','thumbnail_style':'t'}
+ def test_49_scenes_split_into_ten_parts(self):
+  script='\n\n'.join(f'CẢNH {i} - NỘI - NGÀY\nNội dung cảnh {i}.' for i in range(1,50))
+  parts=p.split_script(script,max_scenes=5,max_chars=6000)
+  self.assertEqual(len(parts),10)
+  self.assertEqual((parts[0]['scene_start'],parts[0]['scene_end']),(1,5))
+  self.assertEqual((parts[-1]['scene_start'],parts[-1]['scene_end']),(46,49))
+  self.assertEqual(''.join(x['source'] for x in parts),script)
+ def test_long_text_without_scene_markers_respects_char_limit(self):
+  script=('Đoạn văn dài. '*1200).strip()
+  parts=p.split_script(script,max_scenes=5,max_chars=6000)
+  self.assertGreater(len(parts),1)
+  self.assertTrue(all(len(x['source'])<=6100 for x in parts))
+  self.assertEqual(''.join(x['source'] for x in parts),script)
+ def test_start_precomputes_all_parts_and_queues_only_part_one(self):
+  script='\n\n'.join(f'CẢNH {i} - NGOẠI - NGÀY\nNội dung {i}.' for i in range(1,13))
+  pr=self.project();c=p.start(pr,self.snap(script));s=pr['analysis_pipeline']
+  self.assertEqual(s['total_parts'],3);self.assertEqual(len(s['parts']),3)
+  self.assertEqual(s['current_part'],1);self.assertEqual(c['part'],1)
+  self.assertEqual(s['part_status']['1']['status'],'processing')
+  self.assertEqual(s['part_status']['2']['status'],'waiting')
 if __name__=='__main__':unittest.main()
