@@ -30,7 +30,11 @@ def _map(p):
     return _cmd(p,'map_script',-1,BASE+'Đọc TOÀN BỘ kịch bản. Lập đúng 5 phần theo mạch kể, KHÔNG chép lại đoạn nguồn. Chỉ trả title, summary, role.\nCẤU TRÚC JSON:\n'+json.dumps(schema,ensure_ascii=False)+'\nKỊCH BẢN:\n'+s['snapshot']['script'])
 def queue_next(p):
     s=p['analysis_pipeline'];n=s['current_part'];part=s['parts'][n-1];schema={'job_id':'Mã có sẵn','run_id':s['id'],'stage':'analyze_part','part':n,'scenes':[{'title':'Tên cảnh/ý','source':'Trích đoạn ngắn','focus':'Trọng tâm','role':'Vai trò'}]}
-    return _cmd(p,'analyze_part',n-1,BASE+f'Chỉ phân tích PHẦN {n}/5. Không chép lại toàn bộ nguồn; source chỉ là trích đoạn ngắn. Không thêm góc máy, bố cục hoặc prompt ảnh.\nCẤU TRÚC JSON:\n'+json.dumps(schema,ensure_ascii=False)+'\nDỮ LIỆU PHẦN:\n'+json.dumps(part,ensure_ascii=False))
+    task=(f'Chỉ phân tích PHẦN {n}/5. Tách cảnh CHI TIẾT: tạo cảnh mới khi thay đổi hành động, nhân vật trọng tâm, '
+          'bối cảnh, thời điểm, cảm xúc, thông tin hoặc nhịp kể; không gộp các khoảnh khắc khác nhau chỉ vì chúng gần nhau. '
+          'Mỗi cảnh phải có trọng tâm và vai trò riêng để bước góc quay sau này không bị nhàm chán. Không chép lại toàn bộ nguồn; '
+          'source chỉ là trích đoạn ngắn. Không thêm góc máy, bố cục hoặc prompt ảnh. ')
+    return _cmd(p,'analyze_part',n-1,BASE+task+'\nCẤU TRÚC JSON:\n'+json.dumps(schema,ensure_ascii=False)+'\nDỮ LIỆU PHẦN:\n'+json.dumps(part,ensure_ascii=False))
 def _scenes(items):
     if not isinstance(items,list) or not items:raise ValueError('Phần này chưa có danh sách cảnh.')
     out=[]
@@ -55,9 +59,12 @@ def accept(p,c,text):
     n=s['current_part']
     if d.get('job_id')!=c['id'] or d.get('run_id')!=s['id'] or d.get('stage')!='analyze_part' or d.get('part')!=n:raise ValueError('Kết quả sai mã hoặc sai phần.')
     s=copy.deepcopy(s);s['part_scenes'][str(n)]=_scenes(d.get('scenes'));s['part_status'][str(n)]={'status':'complete','scene_count':len(s['part_scenes'][str(n)]),'error':''};s['approved_parts'].append(n);s['saved']+=1
-    if n<5:s.update(current_part=n+1,stage='analyzing_part');s['part_status'][str(n+1)]['status']='processing';p['analysis_pipeline']=s;queue_next(p);return True
+    if n<5:s.update(stage='awaiting_approval',status='paused');p['analysis_pipeline']=s;p.update(analysis_stage='awaiting_approval',layout_status=f'Phần {n}/5 hoàn tất · chờ bạn duyệt để gửi Phần {n+1}');return False
     s.update(stage='analysis_complete',status='ready');p['analysis_pipeline']=s;_drafts(p,s);p.update(analysis_stage='analysis_complete',layout_status=describe(s),analysis_inputs=copy.deepcopy(s['snapshot']));return False
-def approve_part(p):return None
+def approve_part(p):
+    s=p['analysis_pipeline'];n=s['current_part']
+    if s.get('stage')!='awaiting_approval':raise ValueError('Phần hiện tại chưa sẵn sàng để duyệt.')
+    s.update(current_part=n+1,stage='analyzing_part',status='running');s['part_status'][str(n+1)]['status']='processing';p.update(analysis_stage='analyzing_part',layout_status=describe(s));return queue_next(p)
 def reanalyze_part(p):
     s=p['analysis_pipeline'];n=s['current_part'];s['part_scenes'].pop(str(n),None);s['part_status'][str(n)]={'status':'processing','scene_count':0,'error':''};s.update(stage='analyzing_part',status='running');p.update(analysis_stage='analyzing_part',layout_status=describe(s));return queue_next(p)
 def _drafts(p,s):
