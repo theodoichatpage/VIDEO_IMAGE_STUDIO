@@ -8,8 +8,11 @@
   const stopButton=()=>document.querySelector('[data-testid="stop-button"],button[aria-label*="Stop"],button[aria-label*="Dừng"]');
   const ready=()=>!!input();
   const responseText=()=>{
-    const messages=[...document.querySelectorAll('[data-message-author-role="assistant"],article[data-testid^="conversation-turn"] [data-message-author-role="assistant"]')];
-    return (messages.at(-1)?.innerText||'').trim();
+    const direct=[...document.querySelectorAll('[data-message-author-role="assistant"],article[data-testid^="conversation-turn"] [data-message-author-role="assistant"]')];
+    if(direct.length)return (direct.at(-1).innerText||'').trim();
+    const turns=[...document.querySelectorAll('article[data-testid^="conversation-turn"],main article')];
+    const assistant=turns.filter(turn=>turn.querySelector('[data-message-author-role="assistant"],.markdown,pre code')||/assistant/i.test(turn.getAttribute('data-turn')||''));
+    return (assistant.at(-1)?.innerText||'').trim();
   };
   const diagnostics=()=>({ready:ready(),generating:!!stopButton(),url:location.href});
   const notify=(type,data={})=>new Promise(resolve=>chrome.runtime.sendMessage({type,data},result=>resolve(result||{})));
