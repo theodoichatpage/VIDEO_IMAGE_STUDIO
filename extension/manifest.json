@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Video Image Studio — kết nối ChatGPT",
+  "version": "0.3.56",
+  "description": "Kết nối tab ChatGPT bạn chọn với Studio chạy trên máy; không truy cập cookie hoặc mật khẩu.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "downloads"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:7871/*",
+    "https://chatgpt.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
