@@ -434,7 +434,7 @@ def analysis_resume():
         pending_ids={c['id'] for c in pending}
         if any(x['id'] not in pending_ids for x in analysis_blockers()):raise ValueError('Có tác vụ khác chưa hoàn tất.')
         for c in pending:c['status']='abandoned'
-        state['status']='running';pipeline.queue_next(p,first=True);running=True;persist(p);return jsonify(ok=True)
+        state['status']='running';pipeline.queue_next(p);running=True;persist(p);return jsonify(ok=True)
 
 @app.post('/api/layout-recover')
 def layout_recover():
