@@ -97,6 +97,7 @@ window.addEventListener('beforeunload',e=>{if(revision!==savedRevision){e.preven
 (()=>{const css=document.createElement('style');css.textContent='.analysis-part-list .part-line{position:relative;grid-template-columns:42px minmax(0,1fr) 90px 110px!important;align-items:center}.analysis-part-list .part-line:before{content:attr(data-no);width:29px;height:29px;border-radius:50%;background:#1976ed;color:#fff;display:grid;place-items:center;font-weight:700}.analysis-part-list .part-line strong{display:block}.analysis-part-list .part-line small{display:block;color:#64748b}.analysis-part-list .part-line[data-state="complete"] strong{color:#159b62}.analysis-part-list .part-line[data-state="processing"] strong{color:#ee8700}.analysis-part-list .part-line[data-state="waiting"]:before{background:#7e8998}.analysis-part-list .part-percent{font-size:12px;font-weight:700;color:#506781;text-align:center}.analysis-part-list .part-line button{border-color:#8dbcf8;color:#0878f9;background:#fff;font-weight:700}.analysis-part-list .part-line[data-state="processing"] button{border-color:#ffb4b4;color:#e34242}';document.head.append(css);setInterval(()=>{[...document.querySelectorAll('#analysisPartList .part-line')].forEach((line,i)=>{const text=line.textContent;const state=text.includes('Hoàn tất')?'complete':text.includes('Đang xử lý')?'processing':text.includes('Lỗi')?'error':text.includes('Đã dừng')?'stopped':'waiting';line.dataset.no=String(i+1);line.dataset.state=state;if(!line.querySelector('.part-percent')){const pct=document.createElement('span');pct.className='part-percent';pct.textContent=state==='complete'?'100%':state==='processing'?'45%':'0%';line.insertBefore(pct,line.lastElementChild)}})},300)})();
 
 /* The five controls are deliberately independent of old workflow renderers. */
+(()=>{const style=document.createElement('style');style.textContent='#analysisWorkspace{gap:16px!important}.analysis-part-list{max-height:none!important;overflow:visible!important}.analysis-part-list .part-line{min-height:64px!important;grid-template-columns:42px minmax(0,1fr) 56px 205px!important;background:#fff!important;border-color:#cfe0f4!important}.analysis-part-list .part-line:before{align-self:center}.analysis-reference-actions{display:flex;gap:7px;justify-content:flex-end}.analysis-reference-actions button{min-width:90px}.analysis-reference-actions button:last-child{min-width:78px;color:#5a7396;border-color:#d6e3f1}#analysisTelemetry,#bridgeDiagnostics{display:none!important}#analysisResultContent{background:#fff}.analysis-empty{padding:28px 12px;color:#7185a6;text-align:center;border:1px dashed #ceddec;border-radius:9px;margin-top:12px}';document.head.append(style)})();
 function renderAnalysisReference(){
  const flow=p?.analysis_pipeline, tabs=$('#analysisPartTabs'), list=$('#analysisPartList');
  if(!tabs||!list)return;
@@ -111,11 +112,14 @@ function renderAnalysisReference(){
   const line=el('div',undefined,'part-line');line.dataset.no=String(n);line.dataset.state=raw;
   const detail=el('div');detail.append(el('strong','Phần '+n+' · '+stateName,raw==='complete'?'part-ok':raw==='error'?'part-error':''),el('small',(item.scene_count||0)+' cảnh · '+stateName));
   const percent=el('span',raw==='complete'?'100%':raw==='processing'?'45%':'0%','part-percent');
+  const actions=el('div',undefined,'analysis-reference-actions');
   const action=el('button',raw==='complete'?'Xem kết quả':raw==='processing'?'Dừng':raw==='error'||raw==='cancelled'?'Tạo lại':'Bắt đầu');
   action.onclick=()=>{selectedAnalysisPart=n;if(raw==='complete'){paintWorkflow();return}if(raw==='processing'){$('#cancelAnalysis').click();return}if(!flow){$('#analyzeScript').click();return}if(n===flow.current_part){$('#reanalyzePart').click();return}notify('Phần '+n+' chờ hoàn tất phần trước.')};
-  line.append(detail,percent,action);list.append(line);
+  const retry=el('button','Tạo lại');retry.disabled=raw==='waiting';retry.onclick=()=>{selectedAnalysisPart=n;if(flow&&n===flow.current_part)$('#reanalyzePart').click();else notify('Chọn phần đang xử lý để tạo lại.')};
+  actions.append(action,retry);line.append(detail,percent,actions);list.append(line);
  }
  const summary=$('#analysisSummary');if(summary)summary.textContent='Phần '+selectedAnalysisPart+'/5 · '+(flow?.part_status?.[String(selectedAnalysisPart)]?.status==='complete'?'Đã nhận kết quả':flow?.current_part===selectedAnalysisPart?'Đang xử lý':'Chờ xử lý');
+ const overview=$('#planOverview');if(overview&&!flow?.part_scenes?.[String(selectedAnalysisPart)])overview.replaceChildren(el('div','Chưa có kết quả cho phần này','analysis-empty'));
 }
 setInterval(renderAnalysisReference,200);renderAnalysisReference();</script></html>
 
