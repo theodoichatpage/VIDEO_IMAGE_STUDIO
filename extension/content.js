@@ -82,6 +82,18 @@
       if(state.error||state.paused||!state.command)return;
       const command=state.command;
       if(activeId&&activeId!==command.id){activeId='';lastText='';baselineText='';responseStarted=false;lastChanged=0;}
+      // Recovery is initiated explicitly in Studio. In this one case the
+      // visible assistant answer is the intended result, even though it was
+      // rendered before the extension began tracking this command.
+      if(command.recover_plan){
+        activeId=command.id;
+        const recovered=responseText();
+        if(recovered){
+          await report('done',{text:recovered});
+          activeId='';lastText='';baselineText='';responseStarted=false;lastChanged=0;
+        }else await report('waiting');
+        return;
+      }
       if(!activeId){
         activeId=command.id;
         baselineText=responseText();
