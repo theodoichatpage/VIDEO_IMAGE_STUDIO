@@ -1,0 +1,11 @@
+VIDEO IMAGE STUDIO 0.3.61
+
+- Chia kịch bản thành nhiều phần nhỏ trước khi gửi ChatGPT.
+- Mặc định tối đa 5 cảnh hoặc khoảng 6.000 ký tự mỗi phần.
+- Kịch bản 49 cảnh tạo khoảng 10 phần thay vì 5-6 phần lớn.
+- Web biết tổng số phần ngay khi bắt đầu, không phải chờ ChatGPT quyết định.
+- Mỗi phần có trạng thái độc lập: Chờ xử lý / Đang xử lý / Hoàn tất / Lỗi.
+- Kết quả từng phần được lưu riêng trong part_results và part_scenes.
+- Sau khi nhận JSON hợp lệ của phần hiện tại, hệ thống tự chuyển sang phần kế tiếp.
+- Prompt mỗi lượt chỉ chứa nội dung phần hiện tại, giảm lượng source gửi sang ChatGPT.
+- Giai đoạn phân tích vẫn chỉ xử lý văn bản; không tạo prompt ảnh/góc máy/bố cục.
