@@ -12,8 +12,10 @@ async function chatTab() {
 }
 async function poll() {
   const { pairCode, busyJob } = await settings();
-  if (!pairCode || busyJob) return;
+  if (!pairCode) return;
   try {
+    await call('/api/bridge/' + pairCode + '/ping', { method: 'POST' });
+    if (busyJob) return;
     const data = await call('/api/bridge/' + pairCode + '/next');
     if (!data.command) return;
     const tab = await chatTab();
