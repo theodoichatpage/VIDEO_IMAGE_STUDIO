@@ -1,0 +1,3 @@
+const code = document.querySelector('#code'); const state = document.querySelector('#state');
+chrome.runtime.sendMessage({ type: 'studio-status' }, data => { code.value = data?.pairCode || ''; state.textContent = data?.pairCode ? 'Đã ghép. Tiện ích đang chờ lệnh.' : 'Chưa ghép.'; });
+document.querySelector('#save').addEventListener('click', () => { chrome.runtime.sendMessage({ type: 'studio-pair', code: code.value }, data => { state.textContent = data?.ok ? 'Đã ghép. Quay lại web để bắt đầu.' : 'Không thể ghép.'; }); });
