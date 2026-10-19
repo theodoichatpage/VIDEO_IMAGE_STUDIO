@@ -1,4 +1,4 @@
-import handler from './[...path]';
+import handler from './handler';
 
 export default function apiIndex(req: any, res: any) {
   if (!req.query.path) {
