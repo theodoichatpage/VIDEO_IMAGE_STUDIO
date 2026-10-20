@@ -14,9 +14,14 @@ const send = (res: ResponseLike, code: number, value: unknown) => res.status(cod
 const fail = (res: ResponseLike, message: string, code = 400) => send(res, code, { error: message });
 
 function settings() {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error('Thiếu cấu hình Supabase trên Vercel.');
+  const runtime = globalThis as { Deno?: { env: { get(name: string): string | undefined } }; process?: { env?: Record<string, string | undefined> } };
+  const get = (name: string) => runtime.Deno?.env.get(name) || runtime.process?.env?.[name];
+  const secrets = get('SUPABASE_SECRET_KEYS');
+  let defaultSecret = '';
+  try { defaultSecret = secrets ? String(JSON.parse(secrets).default || '') : ''; } catch { defaultSecret = ''; }
+  const url = get('SUPABASE_URL');
+  const key = get('SUPABASE_SECRET_KEY') || get('SUPABASE_SERVICE_ROLE_KEY') || defaultSecret;
+  if (!url || !key) throw new Error('Thiếu cấu hình Supabase.');
   return { url: url.replace(/\/$/, ''), key };
 }
 async function database(path: string, init?: RequestInit) {

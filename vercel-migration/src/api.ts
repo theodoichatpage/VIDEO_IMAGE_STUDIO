@@ -1,13 +1,15 @@
 type ApiResponse<T> = { data: T };
+const apiBase = 'https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api';
 
 async function request<T>(method: string, url: string, body?: unknown): Promise<ApiResponse<T>> {
-  const response = await fetch(url, {
+  const route = url.replace(/^\/api\//, '');
+  const response = await fetch(apiBase + '?path=' + encodeURIComponent(route), {
     method,
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
+  if (!response.ok || data.error) {
     const error = new Error(String(data.error || 'Không thể kết nối máy chủ.'));
     (error as Error & { response?: { data: unknown } }).response = { data };
     throw error;
