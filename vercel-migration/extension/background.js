@@ -97,15 +97,20 @@ function reconcileWaitingResult() {
   return reconciliation;
 }
 
-async function queueAndBroadcast(payload) {
-  if (!payload?.jobId || !['completed', 'error'].includes(payload.state)) return;
+let enqueue = Promise.resolve();
+function queueAndBroadcast(payload) {
+  enqueue = enqueue.catch(() => {}).then(() => persistAndDeliver(payload));
+  return enqueue;
+}
+async function persistAndDeliver(payload) {
+  if (!payload?.jobId || !['progress', 'completed', 'error'].includes(payload.state)) return;
   const stored = await chrome.storage.local.get(['pendingChatEvents', 'pairCode']);
   if ((stored.pendingChatEvents || []).some(item => item.jobId === payload.jobId && item.state === 'completed')) return;
   const events = Array.isArray(stored.pendingChatEvents) ? stored.pendingChatEvents.filter(item => item?.jobId !== payload.jobId) : [];
   events.push({ ...payload, _sessionId: stored.pairCode });
   await chrome.storage.local.set({ pendingChatEvents: events.slice(-10) });
   await deliverPending();
-  await broadcastToStudio({ type: 'vis-chat-event', payload });
+  await broadcastToStudio({ type: 'vis-chat-event', payload, serverManaged: true });
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -119,7 +124,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       let error = '';
       try { await ensureChatReceiver(); chatReady = true; } catch (caught) { error = caught?.message || String(caught); }
       const pending = await chrome.storage.local.get(['pendingChatEvents']);
-      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic, version: '0.4.12', pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
+      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic, version: '0.4.13', pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
       return;
     }
     if (message?.type === 'vis-pair') {
@@ -130,7 +135,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (chosen) await chrome.storage.local.set({ chatTabId: chosen.id });
       await ensureChatReceiver();
       await chrome.storage.local.set({ pairCode, ...(message.studioOrigin ? { studioOrigin: String(message.studioOrigin) } : {}) });
-      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.12' });
+      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.13' });
       await broadcastToStudio({ type: 'vis-status-changed' });
       return;
     }

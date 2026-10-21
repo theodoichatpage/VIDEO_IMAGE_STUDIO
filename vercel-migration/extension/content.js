@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_0412__) return;
-  window.__VIS_CHAT_BRIDGE_0412__ = true;
+  if (window.__VIS_CHAT_BRIDGE_0413__) return;
+  window.__VIS_CHAT_BRIDGE_0413__ = true;
   let currentJobId = '';
   let currentJobType = '';
   let cancelled = false;
@@ -10,7 +10,7 @@
 
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const composer = () => document.querySelector('#prompt-textarea') || document.querySelector('div[contenteditable="true"][data-virtualkeyboard="true"]') || document.querySelector('div[contenteditable="true"].ProseMirror');
-  const stopButton = () => document.querySelector('button[data-testid="stop-button"]') || [...document.querySelectorAll('button')].find(button => /stop generating|dừng tạo|stop/i.test(button.getAttribute('aria-label') || button.textContent || ''));
+  const stopButton = () => document.querySelector('button[data-testid="stop-button"]') || [...document.querySelectorAll('button')].find(button => /^(stop generating|stop streaming|dừng tạo|dừng tạo câu trả lời)$/i.test((button.getAttribute('aria-label') || button.textContent || '').trim()));
   const isVisible = node => {
     if (!node) return false;
     const style = window.getComputedStyle(node);
@@ -67,6 +67,7 @@
     let last = assistantText(kind);
     let started = Boolean(last && last !== before);
     let changedAt = Date.now();
+    let sentScenes = 0, progressAt = 0;
     const observer = new MutationObserver(() => {
       const next = assistantText(kind);
       if (next !== last) { last = next; changedAt = Date.now(); }
@@ -85,6 +86,13 @@
         const next = assistantText(kind);
         if (next !== last) { last = next; changedAt = Date.now(); }
         if (next && next !== before) started = true;
+        if (kind === 'part_analysis' && Date.now() - progressAt > 3000) {
+          const progress = VISReplyReader.readStreaming(document, { ...replyContext, type: kind });
+          if (progress.text) {
+            const count = JSON.parse(progress.text).scenes.length;
+            if (count > sentScenes) { await emit({ jobId: replyContext.id, state: 'progress', text: progress.text }); sentScenes = count; progressAt = Date.now(); }
+          }
+        }
         if (started && last && !isGenerating() && Date.now() - changedAt >= 3000 && jsonFromPage(kind)) return jsonFromPage(kind);
         await sleep(500);
       }
@@ -222,7 +230,7 @@
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.12', conversationLabel: location.pathname }); return; }
+    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.13', conversationLabel: location.pathname }); return; }
     if (message?.type === 'vis-restore-draft') {
       restoreDraft().then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));
       return true;
@@ -246,24 +254,26 @@
     }
     if (message?.type === 'vis-capture-result') {
       const context = message.command?.id === message.jobId ? message.command : currentJobId === message.jobId ? replyContext : null;
-      if (!context?.id || isGenerating()) { sendResponse({ ok: false, error: 'Chưa nhận diện được tác vụ đang chờ hoặc ChatGPT vẫn đang trả lời.' }); return; }
+      if (!context?.id) { sendResponse({ ok: false, error: 'Chưa nhận diện được tác vụ đang chờ.' }); return; }
       if (String(message.jobType || currentJobType || '') === 'image_generation') {
+        if (isGenerating()) { sendResponse({ ok: false, error: 'ChatGPT vẫn đang tạo ảnh.' }); return; }
         const imageUrl = imageUrls().at(-1);
         if (!imageUrl) { sendResponse({ ok: false, error: 'ChatGPT chưa có ảnh để đồng bộ.' }); return; }
         sendResponse({ ok: true, payload: { jobId: String(message.jobId || currentJobId), state: 'completed', imageUrl } });
         return;
       }
-      const result = VISReplyReader.read(document, { ...context, type: context.type || message.jobType || currentJobType });
+      const result = VISReplyReader.readStreaming(document, { ...context, type: context.type || message.jobType || currentJobType });
       if (!result.text) { sendResponse({ ok: false, error: (result.reason === 'latest-user-mismatch' ? 'Tab ChatGPT đang mở không có lệnh của phần cần đồng bộ. Hãy mở đúng hội thoại đã trả lời phần này.' : result.reason === 'invalid-json' ? 'Đã tìm thấy phản hồi đúng phần nhưng JSON chưa đầy đủ hoặc không hợp lệ.' : 'Chưa đọc được câu trả lời sau lệnh của phần này. Giữ tab ChatGPT mở ở cuối phản hồi rồi bấm Đồng bộ lại.' ) + ' [' + VISReplyReader.diagnose(document, context) + ']' }); return; }
       // Capturing a valid reply ends the matching waiter without stopping ChatGPT.
       // Recovery may use a new job ID for the exact same original prompt.
-      if (currentJobId && (currentJobId === context.id || (replyContext.prompt && replyContext.prompt === context.prompt))) {
+      const complete = result.complete && !isGenerating();
+      if (complete && currentJobId && (currentJobId === context.id || (replyContext.prompt && replyContext.prompt === context.prompt))) {
         finished.add(currentJobId);
         generation += 1;
         currentJobId = ''; currentJobType = ''; cancelled = false;
       }
-      finished.add(context.id);
-      sendResponse({ ok: true, payload: { jobId: context.id, state: 'completed', text: result.text } });
+      if (complete) finished.add(context.id);
+      sendResponse({ ok: true, payload: { jobId: context.id, state: complete ? 'completed' : 'progress', text: result.text } });
     }
   });
 })();

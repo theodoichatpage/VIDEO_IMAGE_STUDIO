@@ -1,12 +1,12 @@
 (() => {
-  if (window.__VIS_WEB_BRIDGE_0412__) return;
-  window.__VIS_WEB_BRIDGE_0412__ = true;
+  if (window.__VIS_WEB_BRIDGE_0413__) return;
+  window.__VIS_WEB_BRIDGE_0413__ = true;
 
   const postStatus = async () => {
     try {
       const response = await chrome.runtime.sendMessage({ type: 'vis-status', studioOrigin: location.origin });
       for (const payload of (response?.pendingEvents || [])) {
-        window.postMessage({ source: 'vis-extension', type: 'studio-event', payload }, '*');
+        window.postMessage({ source: 'vis-extension', type: 'studio-event', payload, serverManaged: Boolean(payload._sessionId) }, '*');
       }
       window.postMessage({
         source: 'vis-extension',
@@ -66,7 +66,7 @@
 
   chrome.runtime.onMessage.addListener(message => {
     if (message?.type === 'vis-chat-event') {
-      window.postMessage({ source: 'vis-extension', type: 'studio-event', payload: message.payload }, '*');
+      window.postMessage({ source: 'vis-extension', type: 'studio-event', payload: message.payload, serverManaged: Boolean(message.serverManaged) }, '*');
     }
     if (message?.type === 'vis-status-changed') void postStatus();
   });

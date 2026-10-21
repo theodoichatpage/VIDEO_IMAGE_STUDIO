@@ -111,3 +111,12 @@ test('manual sync recovers a completed part after the extension was reloaded', (
   assert.equal(JSON.parse(result.payload.text).scenes[0].title, 'Part 3 result');
   assert.equal(page.hooks.current(), '');
 });
+
+test('manual sync publishes complete scenes from an unfinished JSON response and keeps waiting', () => {
+  const page = bridge(); page.hooks.setActive('part-3-job');
+  page.turns([{ role: 'user', text: 'Analyze part 3' }, { role: 'assistant', text: '{"scenes":[{"title":"First","prompt":"A shell"},{"title":"Second","prompt":"unfinished' }]);
+  const result = page.message({ type: 'vis-capture-result', jobId: 'part-3-job', command: { id: 'part-3-job', type: 'part_analysis', prompt: 'Analyze part 3' } });
+  assert.equal(result.payload.state, 'progress');
+  assert.equal(JSON.parse(result.payload.text).scenes.length, 1);
+  assert.equal(page.hooks.current(), 'part-3-job');
+});

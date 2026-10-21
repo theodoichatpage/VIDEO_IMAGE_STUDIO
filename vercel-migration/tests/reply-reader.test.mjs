@@ -29,6 +29,21 @@ function page(messages, articles = false) {
   return { querySelectorAll: selector => selector.startsWith('article') ? articles ? messages : [] : messages };
 }
 
+test('reads generic div conversation turns without old role attributes or markdown classes', () => {
+  const user = turn('user', 'Analyze part 3', { article: true });
+  const answer = turn('assistant', scene('New DOM reply'), { article: true });
+  const doc = { querySelectorAll: selector => selector.includes('[data-testid^="conversation-turn-"]') && !selector.startsWith('article') ? [user, answer] : [] };
+  assert.equal(reader.read(doc, { type: 'part_analysis', prompt: 'Analyze part 3' }).reason, 'matched');
+});
+
+test('streams only complete scene objects and leaves the final incomplete object unread', () => {
+  const value = '{"scenes":[{"title":"First","prompt":"A {shell} and \\"light\\""},{"title":"Second","prompt":"A cave"},{"title":"Third","prompt":"unfinished';
+  const doc = page([turn('user', 'Analyze part 3'), turn('assistant', value)]);
+  const result = reader.readStreaming(doc, { type: 'part_analysis', prompt: 'Analyze part 3' });
+  assert.equal(result.complete, false);
+  assert.equal(JSON.parse(result.text).scenes.length, 2);
+});
+
 test('finds part 3 when old messages disappear and the total count no longer increases', () => {
   const before = page([turn('assistant', scene('Part 1')), turn('assistant', scene('Part 2'))]);
   const job = { id: 'job-3', type: 'part_analysis', prompt: 'Analyze part 3', before: reader.snapshot(before) };

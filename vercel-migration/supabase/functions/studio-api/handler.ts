@@ -2,7 +2,7 @@ type RequestLike = { method?: string; query: { path?: string | string[] }; body?
 type ResponseLike = { setHeader(name: string, value: string): void; status(code: number): { json(value: unknown): void } };
 
 type Scene = { title: string; backdrop: string; content: string; character: string; emotion: string; shot: string; image: string; prompt: string; imageStatus?: string; imageResults?: { url: string; prompt: string; createdAt: number }[]; imagePrompt?: string; imageError?: string };
-type Part = { id: string; title: string; range: string; content: string; status: string; scenes: Scene[]; analysisText: string };
+type Part = { id: string; title: string; range: string; content: string; status: string; scenes: Scene[]; analysisText: string; receivedAt?: number };
 type Job = { id: string; type: 'script_structure' | 'part_analysis' | 'image_generation'; status: string; prompt: string; partId?: string; sceneKey?: string; protocol: 2 | 3 };
 type Session = { id: string; script: string; status: string; activeJob: Job | null; lastJob?: Job; parts: Part[]; imageJobs: Job[]; updatedAt: number; bridgeLastSeen?: number; finishedJobIds?: string[]; lastError?: string };
 
@@ -207,6 +207,17 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         }
         if (session.finishedJobIds?.includes(eventJobId) || !job || eventJobId !== job.id) return send(res, 200, { session, acknowledged: true, ignored: true });
         const state = String(body.state || ''); const message = String(body.text || '').trim();
+        if (state === 'progress' && job.type === 'part_analysis') {
+          const parsed = jsonReply(message);
+          const raw = parsed.scenes;
+          if (!Array.isArray(raw) || raw.length > 30 || raw.some(scene => !scene || !String(scene.prompt || '').trim())) return fail(res, 'Dữ liệu cảnh đang đồng bộ chưa hợp lệ.', 422);
+          const part = session.parts.find(item => item.id === job.partId);
+          if (!part) return fail(res, 'Không tìm thấy phần đang nhận cảnh.', 404);
+          if (raw.length <= part.scenes.length) return send(res, 200, { session, acknowledged: true, ignored: true });
+          part.scenes = normalizeScenes(raw); part.status = 'processing'; part.receivedAt = Date.now();
+          job.status = 'waiting';
+          return send(res, 200, { session: await write(session) });
+        }
         if (['completed', 'error'].includes(state)) {
           session.finishedJobIds = [...(session.finishedJobIds || []), job.id].slice(-200);
           session.lastJob = { ...job, status: state };

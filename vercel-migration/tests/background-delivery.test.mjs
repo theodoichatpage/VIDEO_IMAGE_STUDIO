@@ -35,6 +35,22 @@ test('saves completed ChatGPT JSON to server even with no Studio tab open', asyn
   assert.deepEqual(w.received[0].body, payload);
 });
 
+test('delivers intermediate scenes without marking the job completed', async () => {
+  const w = worker();
+  const payload = { jobId: 'part-3-job', state: 'progress', text: '{"scenes":[{"title":"First","prompt":"A shell"}]}' };
+  await w.message({ type: 'vis-chat-event', payload }, { tab: { url: 'https://chatgpt.com/c/part3' } });
+  assert.equal(w.received[0].body.state, 'progress');
+  assert.deepEqual(w.received[0].body, payload);
+});
+
+test('a simultaneous stale progress event cannot replace a completed result in the queue', async () => {
+  const w = worker();
+  const completed = { jobId: 'part-3-job', state: 'completed', text: '{"scenes":[{"prompt":"Finished result"}]}' };
+  const progress = { ...completed, state: 'progress' };
+  await Promise.all([w.message({ type: 'vis-chat-event', payload: completed }, { tab: { url: 'https://chatgpt.com/c/part3' } }), w.message({ type: 'vis-chat-event', payload: progress }, { tab: { url: 'https://chatgpt.com/c/part3' } })]);
+  assert.ok(w.received.some(item => item.body.state === 'completed'));
+});
+
 test('keeps unsaved result across network failure and retries on next status poll', async () => {
   const w = worker(); w.offline(true);
   const payload = { jobId: 'part-3-job', state: 'completed', text: '{"scenes":[{"prompt":"A cave"}]}' };

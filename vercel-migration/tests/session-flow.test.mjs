@@ -39,6 +39,12 @@ test('analysis results, repeated delivery, late error, stop and next part remain
     response = await call('POST', `sessions/${id}/parts/${first}/analysis`);
     job = response.session.activeJob.id;
     const completed = { jobId: job, state: 'completed', text: JSON.stringify({ scenes: [{ title: 'Cảnh 1', content: 'Nội dung', prompt: 'Scene one' }] }) };
+    await call('POST', `bridge/${id}/event`, { ...completed, state: 'progress' });
+    assert.equal(stored.parts[0].scenes.length, 1);
+    assert.equal(stored.parts[0].status, 'processing');
+    assert.equal(stored.activeJob.id, job);
+    await call('POST', `bridge/${id}/event`, { jobId: job, state: 'progress', text: '{"scenes":[]}' });
+    assert.equal(stored.parts[0].scenes.length, 1);
     await call('POST', `bridge/${id}/event`, completed);
     assert.equal(stored.parts[0].status, 'complete');
     await call('POST', `bridge/${id}/event`, completed);

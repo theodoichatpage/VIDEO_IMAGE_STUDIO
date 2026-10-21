@@ -11,10 +11,15 @@
     if (hasUser && hasAssistant) return '';
     if (hasUser) return 'user';
     if (hasAssistant || node.matches?.('.markdown, .agent-turn') || node.querySelector?.('.markdown, .agent-turn')) return 'assistant';
+    const heading = normalize(node.querySelector?.('h5, h6, [role="heading"]')?.textContent || '');
+    if (/^(you said|bạn đã nói|bạn nói)\s*:?$/i.test(heading)) return 'user';
+    if (/^(chatgpt said|chatgpt đã nói|chatgpt nói)\s*:?$/i.test(heading)) return 'assistant';
     return '';
   };
   function turns(document) {
-    const candidates = [...document.querySelectorAll('article[data-testid^="conversation-turn-"], article[data-turn]'), ...document.querySelectorAll('[data-message-author-role="user"], [data-message-author-role="assistant"]'), ...document.querySelectorAll('main .markdown, main .agent-turn')];
+    const headings = [...document.querySelectorAll('h5, h6, [role="heading"]')].filter(node => /^(you said|bạn đã nói|bạn nói|chatgpt said|chatgpt đã nói|chatgpt nói)\s*:?$/i.test(normalize(node.textContent)));
+    const semanticTurns = headings.map(node => node.closest?.('article, [data-testid*="conversation-turn"], [data-turn]') || node.parentElement).filter(Boolean);
+    const candidates = [...document.querySelectorAll('[data-testid^="conversation-turn-"], [data-testid="conversation-turn"], [data-turn="user"], [data-turn="assistant"], main article, [role="main"] article, article'), ...semanticTurns, ...document.querySelectorAll('article[data-testid^="conversation-turn-"], article[data-turn]'), ...document.querySelectorAll('[data-message-author-role="user"], [data-message-author-role="assistant"]'), ...document.querySelectorAll('main .markdown, main .agent-turn')];
     const nodes = [...new Set(candidates)].filter(node => ['user', 'assistant'].includes(roleOf(node)));
     const top = nodes.filter((node, index) => !nodes.some((parent, other) => index !== other && roleOf(parent) === roleOf(node) && parent.contains?.(node)));
     top.sort((a, b) => {
@@ -98,5 +103,34 @@
     const messages = turns(document);
     return 'user=' + messages.filter(turn => turn.role === 'user').length + ', assistant=' + messages.filter(turn => turn.role === 'assistant').length + ', reason=' + read(document, context).reason;
   }
-  globalThis.VISReplyReader = { turns, snapshot, sources, extract, read, diagnose };
+  function readStreaming(document, context) {
+    const full = read(document, context);
+    if (full.text) return { ...full, complete: true };
+    if (context.type !== 'part_analysis') return { ...full, complete: false };
+    for (const source of sources(document, context).sources) {
+      const match = /"scenes"\s*:\s*\[/.exec(source);
+      if (!match) continue;
+      const scenes = [];
+      let start = -1, depth = 0, quoted = false, escaped = false;
+      for (let i = match.index + match[0].length; i < source.length; i++) {
+        const c = source[i];
+        if (quoted) { if (escaped) escaped = false; else if (c === '\\') escaped = true; else if (c === '"') quoted = false; continue; }
+        if (c === '"') { quoted = true; continue; }
+        if (c === '{') { if (depth === 0) start = i; depth++; }
+        else if (c === '}' && depth > 0) {
+          depth--;
+          if (depth === 0) {
+            try {
+              const scene = JSON.parse(source.slice(start, i + 1));
+              if (!String(scene.prompt || '').trim()) break;
+              scenes.push(scene);
+            } catch { break; }
+          }
+        } else if (c === ']' && depth === 0) break;
+      }
+      if (scenes.length) return { text: JSON.stringify({ scenes }), reason: 'partial', complete: false };
+    }
+    return { ...full, complete: false };
+  }
+  globalThis.VISReplyReader = { turns, snapshot, sources, extract, read, readStreaming, diagnose };
 })();

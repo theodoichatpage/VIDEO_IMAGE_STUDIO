@@ -1,7 +1,7 @@
-VIDEO IMAGE STUDIO — ChatGPT Bridge v0.4.12
+VIDEO IMAGE STUDIO — ChatGPT Bridge v0.4.13
 
 1. Mở chrome://extensions hoặc edge://extensions, gỡ hoặc tắt bản tiện ích cũ.
-2. Giải nén ZIP. Các file nằm trong thư mục VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.12.
+2. Giải nén ZIP. Các file nằm trong thư mục VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.13.
 3. Bật Chế độ nhà phát triển, bấm Tải tiện ích đã giải nén, chọn thư mục chứa manifest.json.
 4. Tải lại cả tab web và tab ChatGPT. Trên web bấm Kết nối ChatGPT rồi kết nối lại.
 5. Nếu ChatGPT đã có kết quả Phần 3: giữ đúng hội thoại đó mở, bấm Đồng bộ kết quả ngay trên web. Không bấm Phân tích lại.
