@@ -1,24 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
-
-const appPath=path.resolve('src/App.tsx');
-let s=fs.readFileSync(appPath,'utf8');
-if(!s.includes("const [transcriptEngineStatus, setTranscriptEngineStatus]")){
- s=s.replace("  const [showSettings, setShowSettings] = useState(false);","  const [showSettings, setShowSettings] = useState(false);\n  const [transcriptEngineStatus, setTranscriptEngineStatus] = useState<'unknown'|'checking'|'online'|'offline'>('unknown');");
-}
-if(!s.includes('const checkTranscriptEngine = async')){
- const anchor='  const copyPrompt = async (prompt: string) =>';
- const fn=`  const checkTranscriptEngine = async () => {\n    setTranscriptEngineStatus('checking');\n    const controller = new AbortController(); const timer = window.setTimeout(() => controller.abort(), 2500);\n    try { const response = await fetch('http://127.0.0.1:8000/health', { signal: controller.signal }); const data = await response.json(); setTranscriptEngineStatus(response.ok && data?.service === 'YOUTUBE_TRANSCRIPT' ? 'online' : 'offline'); } catch { setTranscriptEngineStatus('offline'); } finally { window.clearTimeout(timer); }\n  };\n`;
- s=s.replace(anchor,fn+anchor);
-}
-const old='<Settings size={18} /><span>Cài đặt</span>';
-const button='<button type="button" className="settings-launch" onClick={() => { setShowSettings(true); void checkTranscriptEngine(); }}><Settings size={18} /><span>Cài đặt</span></button>';
-if(s.includes(old))s=s.replace(old,button);
+const appPath=path.resolve('src/App.tsx');let s=fs.readFileSync(appPath,'utf8');
+if(!s.includes("const [transcriptEngineStatus, setTranscriptEngineStatus]"))s=s.replace("  const [showSettings, setShowSettings] = useState(false);","  const [showSettings, setShowSettings] = useState(false);\n  const [transcriptEngineStatus, setTranscriptEngineStatus] = useState<'unknown'|'checking'|'online'|'offline'>('unknown');");
+if(!s.includes('const checkTranscriptEngine = async')){const anchor='  const copyPrompt = async (prompt: string) =>';const fn=`  const checkTranscriptEngine = async () => {\n    setTranscriptEngineStatus('checking'); const controller=new AbortController(); const timer=window.setTimeout(()=>controller.abort(),2500);\n    try{const response=await fetch('http://127.0.0.1:8000/health',{signal:controller.signal});const data=await response.json();setTranscriptEngineStatus(response.ok&&data?.service==='YOUTUBE_TRANSCRIPT'?'online':'offline')}catch{setTranscriptEngineStatus('offline')}finally{window.clearTimeout(timer)}\n  };\n`;s=s.replace(anchor,fn+anchor)}
+s=s.replace(/<h3>VIDEO IMAGE STUDIO Local Engine<\/h3>/g,'<h3>Tách ảnh Image Studio</h3>');
+s=s.replace(/<h3>YouTube Transcript Engine<\/h3>/g,'<h3>Lấy thoại Youtube Transcripts</h3>');
+s=s.replace(/<button type="button" className="outline" onClick=\{\(\) => void checkTranscriptEngine\(\)\}>Kiểm tra kết nối<\/button>/g,'');
+const old='<Settings size={18} /><span>Cài đặt</span>',button='<button type="button" className="settings-launch" onClick={() => { setShowSettings(true); void checkTranscriptEngine(); }}><Settings size={18} /><span>Cài đặt</span></button>';if(s.includes(old))s=s.replace(old,button);
 const oldSettings='<h3>VIDEO IMAGE STUDIO Local Engine</h3><p className="modal-help">Local Engine chạy SAM2 trực tiếp trên máy Windows để Tab Tách ảnh hoạt động.</p><a className="analyze-all modal-copy local-engine-download" href="/resources/VIDEO_IMAGE_STUDIO_Local_Engine_Setup.bat" download><Download size={16}/> Tải / Cập nhật Local Engine</a>';
-const newSettings=oldSettings+'<div className="settings-divider"></div><h3>YouTube Transcript Engine</h3><p className={transcriptEngineStatus === \'online\' ? \'modal-status online\' : \'modal-status offline\'}>{transcriptEngineStatus === \'online\' ? \'● Đang chạy · 127.0.0.1:8000\' : transcriptEngineStatus === \'checking\' ? \'● Đang kiểm tra…\' : \'● Chưa kết nối\'}</p><p className="modal-help">Engine lấy transcript YouTube trực tiếp qua mạng máy tính của bạn, tránh phụ thuộc IP Vercel.</p><div className="settings-actions"><a className="analyze-all modal-copy" href="/resources/YOUTUBE_TRANSCRIPT_ENGINE_Setup.bat" download><Download size={16}/> Cài Transcript Engine</a><button type="button" className="outline" onClick={() => void checkTranscriptEngine()}>Kiểm tra kết nối</button></div>';
+const newSettings='<h3>Tách ảnh Image Studio</h3><p className="modal-help">Local Engine chạy SAM2 trực tiếp trên máy Windows để Tab Tách ảnh hoạt động.</p><a className="analyze-all modal-copy local-engine-download" href="/resources/VIDEO_IMAGE_STUDIO_Local_Engine_Setup.bat" download><Download size={16}/> Tải / Cập nhật Local Engine</a><div className="settings-divider"></div><h3>Lấy thoại Youtube Transcripts</h3><p className={transcriptEngineStatus === \'online\' ? \'modal-status online\' : \'modal-status offline\'}>{transcriptEngineStatus === \'online\' ? \'● Đang chạy · 127.0.0.1:8000\' : transcriptEngineStatus === \'checking\' ? \'● Đang kiểm tra…\' : \'● Chưa kết nối\'}</p><p className="modal-help">Engine lấy transcript YouTube trực tiếp qua mạng máy tính của bạn, tránh phụ thuộc IP Vercel.</p><div className="settings-actions"><a className="analyze-all modal-copy" href="/resources/YOUTUBE_TRANSCRIPT_ENGINE_Setup.bat" download><Download size={16}/> Cài Transcript Engine</a></div>';
 if(s.includes(oldSettings)&&!s.includes('YOUTUBE_TRANSCRIPT_ENGINE_Setup.bat'))s=s.replace(oldSettings,newSettings);
 fs.writeFileSync(appPath,s,'utf8');
-
-const cssPath=path.resolve('src/index.css');let css=fs.readFileSync(cssPath,'utf8');
-if(!css.includes('.settings-divider')) css += '\n.settings-divider{height:1px;background:#dce8f3;margin:18px 0}.settings-dialog h3{margin-top:10px}.settings-actions{display:flex;align-items:center;gap:10px;margin-top:8px}.settings-actions .analyze-all{margin-top:0}.settings-actions .outline{min-height:36px}\n';
-fs.writeFileSync(cssPath,css,'utf8');
+const cssPath=path.resolve('src/index.css');let css=fs.readFileSync(cssPath,'utf8');if(!css.includes('.settings-divider'))css+='\n.settings-divider{height:1px;background:#dce8f3;margin:18px 0}.settings-dialog h3{margin-top:10px}.settings-actions{display:flex;align-items:center;gap:10px;margin-top:8px}.settings-actions .analyze-all{margin-top:0}\n';fs.writeFileSync(cssPath,css,'utf8');
