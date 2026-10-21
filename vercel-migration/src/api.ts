@@ -1,3 +1,5 @@
+import type { Session, Job } from './types';
+type ApiData = { session: Session | null; command?: Job | null; ignored?: boolean; discarded?: boolean };
 type ApiResponse<T> = { data: T };
 const apiBase = 'https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api';
 
@@ -18,7 +20,7 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
 }
 
 export const api = {
-  get: <T>(url: string) => request<T>('GET', url),
-  post: <T>(url: string, body?: unknown) => request<T>('POST', url, body),
+  get: <T = ApiData>(url: string) => request<T>('GET', url),
+  post: <T = ApiData>(url: string, body?: unknown) => request<T>('POST', url, body),
 };
 

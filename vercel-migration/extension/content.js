@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_0414__) return;
-  window.__VIS_CHAT_BRIDGE_0414__ = true;
+  if (window.__VIS_CHAT_BRIDGE_0416__) return;
+  window.__VIS_CHAT_BRIDGE_0416__ = true;
   let currentJobId = '';
   let currentJobType = '';
   let cancelled = false;
@@ -50,17 +50,26 @@
     if (activeImageMode()) throw new Error('ChatGPT đang bật chế độ Tạo ảnh. Hãy tắt Tạo ảnh cạnh ô nhập rồi phân tích lại phần này. Lệnh phân tích chưa được gửi.');
   }
 
-  const imageUrls = () => [...document.querySelectorAll('main img')].map(image => image.currentSrc || image.src || '').filter(url => /^https?:\/\//.test(url));
-  async function waitForImage(before, token) {
-    const previous = new Set(before);
+  const imageUrls = (context = replyContext) => [...(VISReplyReader.sources(document, context).node?.querySelectorAll('img') || [])].filter(image => image.complete && image.naturalWidth >= 256 && image.naturalHeight >= 256).map(image => image.currentSrc || image.src || '').filter(url => /^(https?:|blob:)/.test(url));
+  async function imagePayload(context) {
+    const imageUrl = imageUrls(context).at(-1);
+    if (!imageUrl) throw new Error('Chưa tìm thấy ảnh hoàn tất đúng lệnh của cảnh này. Mở đúng hội thoại và cuộn tới ảnh.');
+    const response = await fetch(imageUrl, { credentials: 'include' });
+    if (!response.ok) throw new Error('Không tải được tệp ảnh trong ChatGPT (' + response.status + ').');
+    const blob = await response.blob();
+    if (!/^image\/(png|jpeg|webp)$/.test(blob.type) || blob.size > 8388608) throw new Error('Ảnh phải là PNG/JPEG/WebP, tối đa 8 MB.');
+    const bytes = new Uint8Array(await blob.arrayBuffer()); let binary = '';
+    for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
+    return { jobId: context.id, state: 'completed', imageDataUrl: 'data:' + blob.type + ';base64,' + btoa(binary) };
+  }
+  async function waitForImage(_before, token) {
     const deadline = Date.now() + 10 * 60 * 1000;
     while (Date.now() < deadline) {
       if (cancelled || token !== generation) throw new Error('Đã dừng tác vụ tạo ảnh.');
-      const next = imageUrls().filter(url => !previous.has(url));
-      if (next.length && !isGenerating()) return next.at(-1);
-      await sleep(750);
+      if (imageUrls().length && !isGenerating()) return imagePayload(replyContext);
+      await sleep(1500);
     }
-    throw new Error('ChatGPT quá thời gian tạo ảnh hoặc không đọc được ảnh kết quả.');
+    throw new Error('ChatGPT quá thời gian tạo ảnh hoặc không đọc được ảnh đúng cảnh.');
   }
 
   async function waitForFinalAnswer(before, kind, token) {
@@ -202,8 +211,8 @@
         await fillComposer(command.prompt);
         await submit(token);
         await emit({ jobId: command.id, state: 'sent' });
-        const imageUrl = await waitForImage(beforeImages, token);
-        await emit({ jobId: command.id, state: 'completed', imageUrl });
+        const payload = await waitForImage(beforeImages, token);
+        await emit(payload);
         finished.add(command.id);
         return;
       }
@@ -230,7 +239,7 @@
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.14', conversationLabel: location.pathname }); return; }
+    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.16', conversationLabel: location.pathname }); return; }
     if (message?.type === 'vis-restore-draft') {
       restoreDraft().then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));
       return true;
@@ -257,10 +266,8 @@
       if (!context?.id) { sendResponse({ ok: false, error: 'Chưa nhận diện được tác vụ đang chờ.' }); return; }
       if (String(message.jobType || currentJobType || '') === 'image_generation') {
         if (isGenerating()) { sendResponse({ ok: false, error: 'ChatGPT vẫn đang tạo ảnh.' }); return; }
-        const imageUrl = imageUrls().at(-1);
-        if (!imageUrl) { sendResponse({ ok: false, error: 'ChatGPT chưa có ảnh để đồng bộ.' }); return; }
-        sendResponse({ ok: true, payload: { jobId: String(message.jobId || currentJobId), state: 'completed', imageUrl } });
-        return;
+        imagePayload(context).then(payload => sendResponse({ ok: true, payload })).catch(error => sendResponse({ ok: false, error: error.message }));
+        return true;
       }
       const result = VISReplyReader.readStreaming(document, { ...context, type: context.type || message.jobType || currentJobType });
       if (!result.text) { sendResponse({ ok: false, error: (result.reason === 'latest-user-mismatch' ? 'Tab ChatGPT đang mở không có lệnh của phần cần đồng bộ. Hãy mở đúng hội thoại đã trả lời phần này.' : result.reason === 'invalid-json' ? 'Đã tìm thấy phản hồi đúng phần nhưng JSON chưa đầy đủ hoặc không hợp lệ.' : 'Chưa đọc được câu trả lời sau lệnh của phần này. Giữ tab ChatGPT mở ở cuối phản hồi rồi bấm Đồng bộ lại.' ) + ' [' + VISReplyReader.diagnose(document, context) + ']' }); return; }

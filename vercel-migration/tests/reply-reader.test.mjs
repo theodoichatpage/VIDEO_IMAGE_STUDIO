@@ -121,3 +121,12 @@ test('does not discard a markdown answer when only user articles have explicit r
   const doc = { querySelectorAll: selector => selector.startsWith('article') ? [user] : selector.startsWith('main') ? [answer] : [user] };
   assert.equal(JSON.parse(reader.read(doc, { id: 'job-3', type: 'part_analysis', prompt: 'Analyze part 3' }).text).scenes[0].title, 'Markdown-only reply');
 });
+
+test('image recovery selects the exact older scene answer and never a later scene',()=>{
+ const one=turn('assistant','Image one'),two=turn('assistant','Image two');
+ const doc=page([turn('user','STYLE garden END'),one,turn('user','STYLE ocean END'),two]);
+ assert.equal(reader.sources(doc,{type:'image_generation',prompt:'STYLE garden END'}).node,one);
+ assert.equal(reader.sources(doc,{type:'image_generation',prompt:'STYLE mountain END'}).node,undefined);
+ const baseline=reader.snapshot(doc);
+ assert.equal(reader.sources(doc,{type:'image_generation',prompt:'STYLE garden END',before:baseline}).node,undefined);
+});

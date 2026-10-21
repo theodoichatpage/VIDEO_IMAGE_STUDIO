@@ -1,10 +1,10 @@
 type RequestLike = { method?: string; query: { path?: string | string[] }; body?: unknown; headers: Record<string, string | string[] | undefined> };
 type ResponseLike = { setHeader(name: string, value: string): void; status(code: number): { json(value: unknown): void } };
 
-type Scene = { title: string; backdrop: string; content: string; character: string; emotion: string; shot: string; image: string; prompt: string; imageStatus?: string; imageResults?: { url: string; prompt: string; createdAt: number }[]; imagePrompt?: string; imageError?: string };
+type Scene = { title: string; backdrop: string; content: string; character: string; emotion: string; shot: string; image: string; prompt: string; imageStatus?: string; imageResults?: { url: string; prompt: string; createdAt: number; storagePath?: string; expiresAt?: number }[]; imagePrompt?: string; imageError?: string };
 type Part = { id: string; title: string; range: string; content: string; status: string; scenes: Scene[]; analysisText: string; receivedAt?: number };
 type Job = { id: string; type: 'script_structure' | 'part_analysis' | 'image_generation'; status: string; prompt: string; partId?: string; sceneKey?: string; protocol: 2 | 3 };
-type Session = { id: string; script: string; status: string; activeJob: Job | null; lastJob?: Job; parts: Part[]; imageJobs: Job[]; updatedAt: number; bridgeLastSeen?: number; finishedJobIds?: string[]; lastError?: string; analysisQueue?: string[]; batchAnalysis?: boolean; analysisBackup?: { script: string; parts: Part[]; savedAt: number } };
+type Session = { id: string; script: string; status: string; activeJob: Job | null; lastJob?: Job; parts: Part[]; imageJobs: Job[]; updatedAt: number; bridgeLastSeen?: number; finishedJobIds?: string[]; lastError?: string; analysisQueue?: string[]; batchAnalysis?: boolean; stylePrompt?: string; analysisBackup?: { script: string; parts: Part[]; savedAt: number } };
 
 const idOk = (value: string) => /^[A-Za-z0-9-]{16,64}$/.test(value);
 const newId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -34,6 +34,32 @@ async function database(path: string, init?: RequestInit) {
   const text = await result.text();
   return text.trim() ? JSON.parse(text) : null;
 }
+
+async function storage(path: string, init: RequestInit = {}) {
+  const { url, key } = settings();
+  const response = await fetch(url + '/storage/v1/' + path, { ...init, headers: { apikey: key, Authorization: 'Bearer ' + key, ...(init.headers || {}) } });
+  if (!response.ok) throw new Error('Không lưu được tệp ảnh: ' + await response.text());
+  return response.json();
+}
+async function signImage(path: string) {
+  const signed = await storage('object/sign/studio-images/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expiresIn: 604800 }) });
+  return { url: settings().url + '/storage/v1' + signed.signedURL, expiresAt: Date.now() + 604800000 };
+}
+async function saveImage(session: Session, job: Job, value: unknown) {
+  const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(value || ''));
+  if (!match || match[2].length > 11200000) throw new Error('Cần Extension 0.4.16 để chuyển tệp ảnh thật về web. Hãy cập nhật rồi Đồng bộ lại ảnh.');
+  const raw = atob(match[2]); const bytes = Uint8Array.from(raw, c => c.charCodeAt(0));
+  const valid = match[1] === 'png' ? bytes[0] === 137 && raw.slice(1, 4) === 'PNG' : match[1] === 'jpeg' ? bytes[0] === 255 && bytes[1] === 216 : raw.startsWith('RIFF') && raw.slice(8,12) === 'WEBP';
+  if (!valid) throw new Error('Tệp ảnh nhận được không hợp lệ.');
+  try { await storage('bucket/studio-images'); } catch {
+    try { await storage('bucket', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'studio-images', name: 'studio-images', public: false, file_size_limit: 8388608, allowed_mime_types: ['image/png','image/jpeg','image/webp'] }) }); }
+    catch { await storage('bucket/studio-images'); }
+  }
+  const path = session.id + '/' + job.id + '.' + match[1];
+  await storage('object/studio-images/' + path, { method: 'POST', headers: { 'Content-Type': 'image/' + match[1], 'x-upsert': 'true' }, body: bytes });
+  return { ...await signImage(path), storagePath: path, prompt: job.prompt, createdAt: Date.now() };
+}
+
 async function read(id: string): Promise<Session | null> {
   const rows = await database('studio_sessions?id=eq.' + encodeURIComponent(id) + '&select=record') as { record: Session }[];
   const value = rows?.[0]?.record;
@@ -45,6 +71,10 @@ async function read(id: string): Promise<Session | null> {
       return Array.isArray(parsed.scenes) && parsed.scenes.length === part.scenes.length ? { ...part, status: 'complete' } : part;
     } catch { return part; }
   });
+  for (const part of parts) for (const scene of part.scenes || []) for (const image of scene.imageResults || []) {
+    if (!image.storagePath && /^https:\/\/chatgpt\.com\/backend-api\//.test(image.url)) { scene.imageStatus = 'error'; scene.imageError = 'Ảnh cũ là liên kết ChatGPT cần đăng nhập. Bấm Đồng bộ lại ảnh để lưu tệp về web.'; }
+    if (image.storagePath && (!image.expiresAt || image.expiresAt < Date.now() + 3600000)) Object.assign(image, await signImage(image.storagePath));
+  }
   return { ...value, parts, imageJobs: value.imageJobs || [], finishedJobIds: value.finishedJobIds || [] };
 }
 async function write(session: Session) {
@@ -203,13 +233,26 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         session.activeJob = null; session.status = 'part_complete'; session.lastError = ''; nextAnalysis(session);
         return send(res, 200, { session: await write(session) });
       }
-      if (path[2] === 'images' && req.method === 'POST') {
+      if (path[2] === 'settings' && req.method === 'POST') {
+        session.stylePrompt = String(body.stylePrompt || '');
+        return send(res, 200, { session: await write(session) });
+      }
+      if (path[2] === 'images' && path[3] === 'recover' && req.method === 'POST') {
+        if (session.activeJob) return fail(res, 'Hãy hoàn tất hoặc dừng tác vụ đang chạy trước.', 409);
+        const key = String(body.sceneKey || ''); const target = findScene(session, key);
+        const prompt = target.scene?.imageResults?.[0]?.prompt || target.scene?.imagePrompt;
+        if (!target.scene || !prompt) return fail(res, 'Cảnh này chưa có lệnh tạo ảnh để tìm lại.', 422);
+        session.activeJob = { id: newId(), type: 'image_generation', status: 'waiting', prompt, sceneKey: key, partId: target.part?.id, protocol: 3 };
+        target.scene.imageStatus = 'generating'; target.scene.imageError = ''; session.status = 'image_processing';
+        return send(res, 200, { session: await write(session) });
+      }
+      if (path[2] === 'images' && path.length === 3 && req.method === 'POST') {
         if (session.activeJob) return fail(res, 'Hãy hoàn tất hoặc dừng tác vụ đang chạy trước.', 409);
         const style = String(body.stylePrompt || '').trim(); const keys = [...new Set(((body.sceneKeys as unknown[]) || []).map(String))]; if (!style || !keys.length) return fail(res, 'Cần chọn cảnh và nhập prompt phong cách chung.');
         const jobs: Job[] = [];
         for (const key of keys) { const target = findScene(session, key); if (!target.scene?.prompt) continue; const prompt = imagePrompt(style, target.scene, String(body.ratio || '16:9')); target.scene.imageStatus = 'queued'; target.scene.imagePrompt = prompt; target.scene.imageError = ''; jobs.push({ id: newId(), type: 'image_generation', status: 'queued', prompt, partId: target.part?.id, sceneKey: key, protocol: 3 }); }
         if (!jobs.length) return fail(res, 'Các cảnh được chọn chưa có prompt ảnh.');
-        session.imageJobs.push(...jobs); nextImage(session); return send(res, 200, { session: await write(session) });
+        session.stylePrompt = style; session.imageJobs.push(...jobs); nextImage(session); return send(res, 200, { session: await write(session) });
       }
       if (path[2] === 'stop' && req.method === 'POST') {
         pauseAnalysis(session);
@@ -222,7 +265,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
     }
     if (path[0] === 'bridge' && path[1]) {
       const session = await read(path[1]); if (!session) return fail(res, 'Mã ghép không đúng.', 404);
-      if (path[2] === 'ping' && req.method === 'POST') { session.bridgeLastSeen = Date.now(); return send(res, 200, { session: await write(session) }); }
+      if (path[2] === 'ping' && req.method === 'POST') { session.bridgeLastSeen = Date.now(); await database('rpc/studio_touch_session', { method: 'POST', body: JSON.stringify({ session_id: session.id, seen_at: session.bridgeLastSeen }) }); return send(res, 200, { session: await read(session.id) }); }
       if (path[2] === 'next' && req.method === 'GET') { const job = session.activeJob; if (!job || !['queued','sending'].includes(job.status)) return send(res, 200, { command: null }); if (!current(job)) { session.activeJob = null; session.status = 'parts_ready'; await write(session); return send(res, 200, { command: null, discarded: true }); } if (job.status === 'queued') { job.status = 'sending'; await write(session); } return send(res, 200, { command: job }); }
       if (path[2] === 'event' && req.method === 'POST') {
         const eventJobId = String(body.jobId || '');
@@ -245,13 +288,23 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
           job.status = 'waiting';
           return send(res, 200, { session: await write(session) });
         }
+        let savedImage;
+        if (state === 'completed' && job.type === 'image_generation') {
+          try { savedImage = await saveImage(session, job, body.imageDataUrl); }
+          catch (error) { return fail(res, error instanceof Error ? error.message : 'Không lưu được ảnh.', 422); }
+        }
         if (['completed', 'error'].includes(state)) {
           session.finishedJobIds = [...(session.finishedJobIds || []), job.id].slice(-200);
           session.lastJob = { ...job, status: state };
         }
         if (state === 'sent') { job.status = 'waiting'; if (job.type === 'image_generation' && job.sceneKey) { const target = findScene(session, job.sceneKey); if (target.scene) target.scene.imageStatus = 'generating'; } return send(res, 200, { session: await write(session) }); }
         if (state === 'error') { pauseAnalysis(session); if (job.type === 'image_generation') finishImage(session, 'error', '', message || 'ChatGPT không tạo được ảnh.'); else { if (job.partId) { const part = session.parts.find(item => item.id === job.partId); if (part) part.status = 'error'; } session.activeJob = null; session.status = 'error'; session.lastError = message || 'ChatGPT không thể hoàn tất tác vụ.'; } return send(res, 200, { session: await write(session) }); }
-        if (state === 'completed' && job.type === 'image_generation') { const url = String(body.imageUrl || ''); if (!/^https?:\/\//.test(url)) return fail(res, 'Không đọc được URL ảnh từ ChatGPT.', 422); finishImage(session, 'complete', url); return send(res, 200, { session: await write(session) }); }
+        if (state === 'completed' && job.type === 'image_generation' && savedImage) {
+          const target = findScene(session, String(job.sceneKey));
+          finishImage(session, 'complete', savedImage.url);
+          if (target.scene) target.scene.imageResults = [savedImage];
+          return send(res, 200, { session: await write(session) });
+        }
         if (state === 'completed') { try { const parsed = jsonReply(message); if (job.type === 'script_structure') { session.parts = normalizeParts(parsed.parts); session.activeJob = null; session.status = 'parts_ready'; } else { const part = session.parts.find(item => item.id === job.partId); if (!part) throw new Error('Không tìm thấy phần kịch bản.'); part.scenes = normalizeScenes(parsed.scenes); part.analysisText = message; part.status = 'complete'; session.activeJob = null; session.status = 'part_complete'; nextAnalysis(session); } return send(res, 200, { session: await write(session) }); } catch (caught) { pauseAnalysis(session); if (job.partId) { const part = session.parts.find(item => item.id === job.partId); if (part) part.status = 'error'; } session.activeJob = null; session.status = 'error'; session.lastError = caught instanceof Error ? caught.message : 'Không đọc được JSON ChatGPT.'; await write(session); return fail(res, session.lastError, 422); } }
       }
     }

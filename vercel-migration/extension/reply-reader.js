@@ -44,7 +44,8 @@
   }
   function fingerprint(turn) {
     const identity = turn.node.getAttribute?.('data-message-id') || turn.node.getAttribute?.('data-testid') || '';
-    return identity + ':' + normalize(turn.text);
+    const images = [...(turn.node.querySelectorAll?.('img') || [])].map(image => image.currentSrc || image.src || '').filter(Boolean).join('|');
+    return identity + ':' + normalize(turn.text) + (images ? ':' + images : '');
   }
   function snapshot(document) { return turns(document).filter(turn => turn.role === 'assistant').map(fingerprint); }
   function matchesPrompt(user, context) {
@@ -61,22 +62,25 @@
   }
   function sources(document, context = {}) {
     const messages = turns(document, context);
-    const latestUser = messages.findLastIndex(turn => turn.role === 'user');
+    const hasUsers = messages.some(turn => turn.role === 'user');
+    const latestUser = messages.findLastIndex(turn => turn.role === 'user' && (context.type !== 'image_generation' || [normalize(turn.text), normalize(turn.node.textContent)].some(value => matchesPrompt(value, context))));
+    if (context.type === 'image_generation' && hasUsers && latestUser < 0) return { sources: [], reason: 'latest-user-mismatch' };
     let answers;
     if (latestUser >= 0) {
       const userTexts = [normalize(messages[latestUser].text), normalize(messages[latestUser].node.textContent)];
       const matches = userTexts.some(user => matchesPrompt(user, context));
       if (!matches) return { sources: [], reason: 'latest-user-mismatch' };
-      answers = messages.slice(latestUser + 1).filter(turn => turn.role === 'assistant');
+      const nextUser = messages.findIndex((turn, index) => index > latestUser && turn.role === 'user');
+      answers = messages.slice(latestUser + 1, nextUser < 0 ? undefined : nextUser).filter(turn => turn.role === 'assistant');
     } else {
       if (!Array.isArray(context.before)) return { sources: [], reason: 'no-user-anchor' };
       answers = messages.filter(turn => turn.role === 'assistant' && !context.before.includes(fingerprint(turn)));
     }
     const answer = answers.find(turn => wordResponse(turn.node)) || answers.at(-1);
-    if (!answer) return { sources: [], reason: 'no-new-answer' };
+    if (!answer || context.type === 'image_generation' && Array.isArray(context.before) && context.before.includes(fingerprint(answer))) return { sources: [], reason: 'no-new-answer' };
     const code = [...(answer.node.querySelectorAll?.('pre code, pre') || [])].map(node => node.textContent || text(node));
     const words = [...(answer.node.querySelectorAll?.('[data-stream-word], [data-d-stream-word]') || [])].map(node => node.textContent || '').join(' ');
-    return { sources: [...new Set([...code, answer.text, answer.node.textContent || '', words].filter(Boolean))], reason: 'matched' };
+    return { node: answer.node, sources: [...new Set([...code, answer.text, answer.node.textContent || '', words].filter(Boolean))], reason: 'matched' };
   }
   function extract(source, kind) {
     const key = kind === 'script_structure' ? 'parts' : kind === 'part_analysis' ? 'scenes' : '';

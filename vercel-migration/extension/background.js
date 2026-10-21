@@ -46,7 +46,7 @@ function deliverPending() {
       const { _sessionId, ...payload } = event;
       try {
         const response = await fetch('https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api?path=' + encodeURIComponent('bridge/' + sessionId + '/event'), {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(15000)
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(45000)
         });
         const data = await response.json();
         if (!response.ok || data.error) continue;
@@ -89,7 +89,7 @@ function reconcileWaitingResult() {
       const data = await response.json();
       if (!response.ok || data.error) return;
       const command = data.session?.activeJob;
-      if (!command || !['sent', 'waiting'].includes(command.status) || !['part_analysis', 'script_structure'].includes(command.type)) { syncDiagnostic = ''; return; }
+      if (!command || !['sent', 'waiting'].includes(command.status) || !['part_analysis', 'script_structure', 'image_generation'].includes(command.type)) { syncDiagnostic = ''; return; }
       await queueAndBroadcast(await captureCommand(command));
       syncDiagnostic = '';
     } catch (error) { syncDiagnostic = error?.message || String(error); }
@@ -105,7 +105,7 @@ function queueAndBroadcast(payload) {
 async function persistAndDeliver(payload) {
   if (!payload?.jobId || !['progress', 'completed', 'error'].includes(payload.state)) return;
   const stored = await chrome.storage.local.get(['pendingChatEvents', 'pairCode']);
-  if ((stored.pendingChatEvents || []).some(item => item.jobId === payload.jobId && item.state === 'completed')) return;
+  if ((stored.pendingChatEvents || []).some(item => item.jobId === payload.jobId && item.state === 'completed' && (!payload.imageDataUrl || item.imageDataUrl))) return;
   const events = Array.isArray(stored.pendingChatEvents) ? stored.pendingChatEvents.filter(item => item?.jobId !== payload.jobId) : [];
   events.push({ ...payload, _sessionId: stored.pairCode });
   await chrome.storage.local.set({ pendingChatEvents: events.slice(-10) });
@@ -124,7 +124,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       let error = '';
       try { await ensureChatReceiver(); chatReady = true; } catch (caught) { error = caught?.message || String(caught); }
       const pending = await chrome.storage.local.get(['pendingChatEvents']);
-      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic, version: '0.4.14', pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
+      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic, version: '0.4.16', pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
       return;
     }
     if (message?.type === 'vis-pair') {
@@ -135,7 +135,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (chosen) await chrome.storage.local.set({ chatTabId: chosen.id });
       await ensureChatReceiver();
       await chrome.storage.local.set({ pairCode, ...(message.studioOrigin ? { studioOrigin: String(message.studioOrigin) } : {}) });
-      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.14' });
+      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.16' });
       await broadcastToStudio({ type: 'vis-status-changed' });
       return;
     }
