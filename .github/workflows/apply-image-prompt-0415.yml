@@ -1,0 +1,28 @@
+name: Apply image prompt and extension 0.4.15
+on:
+  push:
+    branches: [vercel-migration]
+    paths:
+      - 'vercel-migration/scripts/apply_prompt_extension_0415.py'
+      - '.github/workflows/apply-image-prompt-0415.yml'
+permissions:
+  contents: write
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vercel-migration
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply changes and package extension
+        run: python vercel-migration/scripts/apply_prompt_extension_0415.py
+      - name: Commit generated changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add vercel-migration/supabase/functions/studio-api/handler.ts vercel-migration/src/App.tsx vercel-migration/extension/manifest.json vercel-migration/public/resources/VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.15.zip
+          git diff --cached --quiet || git commit -m 'Fix image prompt composition and publish extension v0.4.15'
+          git push origin vercel-migration
