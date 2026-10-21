@@ -2,11 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 const p=path.resolve('src/App.tsx');let s=fs.readFileSync(p,'utf8');
 const imp="import ImageSeparationTab from './ImageSeparationTab';\n";if(!s.includes(imp))s=s.replace("import './index.css';\n",`import './index.css';\n${imp}`);
+const projectImp="import ProjectTab from './ProjectTab';\n";if(!s.includes(projectImp))s=s.replace(imp,imp+projectImp);
 const old="([[FileText, '1. Phân tích'], [Image, '2. Tạo ảnh'], [Square, '3. Tiến trình'], [Folder, '4. Dự án'], [Scissors, '5. Tách ảnh'], [VideoIcon, '6. Dựng video']] as const)";
 const nav="([[FileText, '1. Phân tích'], [Image, '2. Tạo ảnh'], [Scissors, '3. Tách ảnh'], [VideoIcon, '4. Dựng video'], [Folder, '5. Dự án']] as const)";if(s.includes(old))s=s.replace(old,nav);
 const imageStart='</div> : <section className="image-workspace">';if(s.includes(imageStart))s=s.replace(imageStart,'</div> : activeMenu === 1 ? <section className="image-workspace">');
 const needle='</section>}\n  </main>;\n}\n\nexport default App;';
-const replacement='</section> : activeMenu === 2 ? <ImageSeparationTab projectId={sessionId} generatedImages={imageParts.flatMap((part, partIndex) => part.scenes.flatMap((scene, sceneIndex) => (scene.imageResults || []).map((item, imageIndex) => ({ name: `Phần ${partIndex + 1} · Cảnh ${sceneIndex + 1} · Ảnh ${imageIndex + 1}`, url: item.url }))))} /> : <section className="image-empty"><VideoIcon size={48} /><h2>{activeMenu === 3 ? "4. Dựng video" : "5. Dự án"}</h2><p>Chức năng này được giữ độc lập với Tab Tách ảnh.</p></section>}\n  </main>;\n}\n\nexport default App;';
+const replacement='</section> : activeMenu === 2 ? <ImageSeparationTab projectId={sessionId} generatedImages={imageParts.flatMap((part, partIndex) => part.scenes.flatMap((scene, sceneIndex) => (scene.imageResults || []).map((item, imageIndex) => ({ name: `Phần ${partIndex + 1} · Cảnh ${sceneIndex + 1} · Ảnh ${imageIndex + 1}`, url: item.url }))))} /> : activeMenu === 4 ? <ProjectTab projectId={sessionId} session={session} /> : <section className="image-empty"><VideoIcon size={48} /><h2>4. Dựng video</h2><p>Chức năng này được giữ độc lập với Tab Tách ảnh.</p></section>}\n  </main>;\n}\n\nexport default App;';
 if(s.includes(needle))s=s.replace(needle,replacement);else if(!s.includes('<ImageSeparationTab projectId={sessionId}'))throw new Error('Không tìm thấy điểm tích hợp App.tsx');
 if(!s.includes('const [showSettings, setShowSettings]'))s=s.replace("  const [showConnection, setShowConnection] = useState(false);","  const [showConnection, setShowConnection] = useState(false);\n  const [showSettings, setShowSettings] = useState(false);");
 const settingsOld='<Settings size={18} /><span>Cài đặt</span>';
@@ -22,8 +23,6 @@ const settingsCss='.settings-launch { height: 38px; min-width: 124px; display: i
 if(!css.includes('.settings-launch {'))css += '\n'+settingsCss;
 fs.writeFileSync(cssPath,css,'utf8');
 
-// Publish a tiny updater/installer. It always downloads the Local Engine files from the current production deployment,
-// so the same Settings button remains valid for future engine updates.
 const publicDir=path.resolve('public/resources/local-engine');fs.mkdirSync(publicDir,{recursive:true});
 const engineDir=path.resolve('local-engine');
 const files=fs.readdirSync(engineDir).filter(name=>fs.statSync(path.join(engineDir,name)).isFile()&&!name.startsWith('.'));
