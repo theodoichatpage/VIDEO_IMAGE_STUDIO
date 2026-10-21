@@ -1,0 +1,21 @@
+name: Verify separation tab
+on:
+  push:
+    branches: [vercel-migration]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vercel-migration
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: vercel-migration/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: python3 -m py_compile local-engine/app.py local-engine/sam2_adapter.py local-engine/layers.py local-engine/semantic.py local-engine/install.py
