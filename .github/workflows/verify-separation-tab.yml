@@ -14,8 +14,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: vercel-migration/package-lock.json
-      - run: npm ci
+      - run: npm install
       - run: npm run build
       - run: python3 -m py_compile local-engine/app.py local-engine/sam2_adapter.py local-engine/layers.py local-engine/semantic.py local-engine/install.py
