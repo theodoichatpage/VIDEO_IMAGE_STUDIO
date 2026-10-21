@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Clipboard, Download, ExternalLink, LoaderCircle, Network, RotateCcw, Save, Square, Youtube } from 'lucide-react';
+import { Clipboard, Download, ExternalLink, LoaderCircle, ListOrdered, RotateCcw, Save, Square, Youtube } from 'lucide-react';
 import './transcriptTab.css';
-import MindmapView from './MindmapView';
-import { assembleRewrittenScript, loadTranscriptWorkspace, saveTranscriptWorkspace, sectionsFromBranches, validateMindmapPayload, type ScriptSection, type TranscriptWorkspaceState } from './transcriptWorkspace';
+import {buildPartitionPrompt,partitionBranches} from './transcriptPartition';
+import { assembleRewrittenScript, loadTranscriptWorkspace, saveTranscriptWorkspace, sectionsFromBranches, type ScriptSection, type TranscriptWorkspaceState } from './transcriptWorkspace';
 import { fetchTranscript } from './transcriptProvider';
-import { buildMindmapPrompt, buildRewritePrompt } from './transcriptAi';
+import { buildRewritePrompt } from './transcriptAi';
 import { statusLabel } from './rewriteQueue';
 
 type Props={onUseTranscript:(text:string,title?:string)=>void;projectId?:string};
@@ -44,7 +44,7 @@ export default function TranscriptTab({onUseTranscript,projectId='default'}:Prop
    try{
     if(job.kind==='mindmap'){
      const parsed=typeof data.text==='string'?JSON.parse(data.text):data.text;
-     const branches=validateMindmapPayload(parsed);
+     const branches=partitionBranches(parsed,ws.transcript?.text||'');
      setWs(s=>({...s,branches,sections:sectionsFromBranches(branches),selectedBranchId:branches[0]?.id||''}));
     }else if(job.sectionId){
      const text=String(data.text||'').trim();if(!text)throw new Error('ChatGPT trả về kịch bản trống.');
@@ -56,7 +56,7 @@ export default function TranscriptTab({onUseTranscript,projectId='default'}:Prop
   window.addEventListener('message',receive);
   if(pending.current){armTimeout(Math.max(1,pending.current.expires-Date.now()),'Tác vụ Transcript đã quá thời gian chờ.');window.postMessage({source:'vis-web',type:'studio-status'},'*')}
   return()=>{window.removeEventListener('message',receive);clearTimeout(timer.current)};
- },[projectId,pairCode]);
+ },[projectId,pairCode,ws.transcript?.text]);
  const sendChat=(prompt:string,kind:'mindmap'|'rewrite',sectionId?:string)=>{
   if(pending.current)return;
   const job:PendingAi={id:'transcript-'+crypto.randomUUID(),kind,sectionId,expires:Date.now()+10*60*1000};
@@ -67,19 +67,20 @@ export default function TranscriptTab({onUseTranscript,projectId='default'}:Prop
 
  const patch=(p:Partial<TranscriptWorkspaceState>)=>setWs(s=>({...s,...p}));
  const load=async()=>{if(!ws.url.trim())return;setBusy(true);setError('');try{const transcript=await fetchTranscript({url:ws.url.trim(),language:ws.language});patch({transcript,branches:[],sections:[],selectedBranchId:''});}catch(e){setError(e instanceof Error?e.message:'Không lấy được transcript.')}finally{setBusy(false)}};
- const createMindmap=()=>{if(!ws.transcript)return;sendChat(buildMindmapPrompt(ws.transcript.text,ws.language),'mindmap')};
+ const createParts=()=>{if(!ws.transcript||pending.current)return;if(ws.sections.length&&!window.confirm('Chia lại sẽ thay thế danh sách phần và nội dung đã viết lại. Bạn có chắc muốn tiếp tục?'))return;sendChat(buildPartitionPrompt(ws.transcript.text,ws.language),'mindmap')};
  const rewrite=(section:ScriptSection)=>{if(pending.current)return;setWs(s=>({...s,sections:s.sections.map(x=>x.id===section.id?{...x,status:'processing'}:x)}));const idx=ws.sections.findIndex(x=>x.id===section.id);const context=[ws.sections[idx-1]?.summary,ws.sections[idx+1]?.summary].filter(Boolean).join(' | ');sendChat(buildRewritePrompt(section,ws.stylePrompt,context),'rewrite',section.id)};
  const stop=()=>{if(!pending.current)return;clearPending();setWs(s=>({...s,sections:s.sections.map(x=>x.status==='processing'||x.status==='waiting'?{...x,status:'stopped'}:x)}));window.postMessage({source:'vis-web',type:'studio-stop'},'*')};
  const rewriteAll=()=>{const next=ws.sections.find(x=>x.status!=='done');if(next)rewrite(next)};
+ const selectedPart=ws.sections.find(x=>x.branchId===ws.selectedBranchId)||ws.sections[0];
  const chars=ws.transcript?.text.length||0;
  return <section className="transcript-page workspace">
-  <div className="yt-row panel"><strong><Youtube size={19}/> Link YouTube</strong><input value={ws.url} onChange={e=>patch({url:e.target.value})} placeholder="https://www.youtube.com/watch?v=..."/><label>Ngôn ngữ<select value={ws.language} onChange={e=>patch({language:e.target.value})}><option value="vi">Tiếng Việt (Tự động)</option><option value="en">English</option></select></label><button>Tùy chọn</button><button className="primary" onClick={()=>void load()} disabled={busy||!ws.url}>{busy?<LoaderCircle className="spin" size={17}/>:<Youtube size={17}/>} Lấy Transcript</button></div>
+  <div className="yt-row panel"><strong><Youtube size={19}/> Link YouTube</strong><input value={ws.url} onChange={e=>patch({url:e.target.value})} placeholder="https://www.youtube.com/watch?v=..."/><label>Ngôn ngữ<select value={ws.language} onChange={e=>patch({language:e.target.value})}><option value="vi">Tiếng Việt (Tự động)</option><option value="en">English</option></select></label><button>Tùy chọn</button><button className="primary" onClick={()=>void load()} disabled={busy||!!aiBusy||!ws.url}>{busy?<LoaderCircle className="spin" size={17}/>:<Youtube size={17}/>} Lấy Transcript</button></div>
   <div className="transcript-panel panel"><header><strong>▣ Transcript (kịch bản gốc từ YouTube)</strong><span className="ok">● {ws.transcript?'Đã lấy transcript thành công':'Chưa có transcript'}</span>{ws.transcript&&<span>• Số ký tự: {chars.toLocaleString('vi-VN')}</span>}<div className="grow"/><button onClick={()=>window.open(ws.url,'_blank')}><ExternalLink size={15}/> Xem video</button><button onClick={()=>navigator.clipboard?.writeText(display)}><Clipboard size={15}/> Sao chép</button><button onClick={()=>downloadText(display,'youtube-transcript.txt')}><Download size={15}/> Tải xuống (.txt)</button></header><textarea value={display} readOnly placeholder="Transcript sẽ hiển thị tại đây..."/><label className="timestamp"><input type="checkbox" checked={withTime} onChange={e=>setWithTime(e.target.checked)}/> Timestamp</label></div>
   {aiStatus&&<div className="transcript-ai-status" role="status">{aiStatus}</div>}
   {error&&<div className="transcript-error">{error}</div>}
   <div className="middle-grid">
-   <div className="panel mindmap-panel"><header><strong><Network size={18}/> Mindmap nội dung</strong><div className="grow"/><button onClick={createMindmap} disabled={!ws.transcript||!!aiBusy}><Network size={15}/> Tạo mindmap</button><button onClick={createMindmap} disabled={!ws.transcript||!!aiBusy}><RotateCcw size={15}/> Tạo lại</button><button className="mindmap-stop" onClick={stop} disabled={!aiBusy}><Square size={15}/> Dừng</button></header><MindmapView branches={ws.branches} selected={ws.selectedBranchId} onSelect={id=>patch({selectedBranchId:id})}/></div>
-   <div className="panel sections-panel"><header><strong>☷ Các phần kịch bản (từ mindmap)</strong><span className="grow"/>Tổng: {ws.sections.length} phần</header><div className="transcript-sections-scroll"><table><thead><tr><th>#</th><th>Tên phần</th><th>Tóm tắt nội dung</th><th>Số ký tự</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>{ws.sections.map((s,i)=><tr key={s.id} className={ws.selectedBranchId===s.branchId?'selected-row':''}><td>{i+1}</td><td><b>{s.title}</b></td><td>{s.summary}</td><td>{s.sourceText.length.toLocaleString('vi-VN')}</td><td><span className={'status '+s.status}>{statusLabel(s.status)}</span></td><td><button onClick={()=>patch({selectedBranchId:s.branchId})}>Xem</button></td></tr>)}</tbody></table></div></div>
+   <div className="panel transcript-part-panel"><header><strong><ListOrdered size={18}/> Nội dung phần đang chọn</strong><div className="grow"/><button className="primary" onClick={createParts} disabled={!ws.transcript||!!aiBusy}><ListOrdered size={15}/> Chia phần để viết lại</button><button onClick={createParts} disabled={!ws.transcript||!!aiBusy||!ws.sections.length}><RotateCcw size={15}/> Chia lại</button><button className="mindmap-stop" onClick={stop} disabled={!aiBusy}><Square size={15}/> Dừng</button></header>{selectedPart?<div className="transcript-part-source"><b>{selectedPart.title}</b><small>{selectedPart.sourceText.length.toLocaleString('vi-VN')} ký tự · Nguyên văn transcript</small><div>{selectedPart.sourceText}</div></div>:<div className="transcript-part-empty">Bấm “Chia phần để viết lại”. ChatGPT chỉ chọn mốc chia; web giữ nguyên nội dung gốc, không cần tạo Mindmap.</div>}</div>
+   <div className="panel sections-panel"><header><strong>☷ Các phần kịch bản</strong><span className="grow"/>Tổng: {ws.sections.length} phần</header><div className="transcript-sections-scroll"><table><thead><tr><th>#</th><th>Tên phần</th><th>Nội dung đầu phần</th><th>Số ký tự</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>{ws.sections.map((s,i)=><tr key={s.id} className={ws.selectedBranchId===s.branchId?'selected-row':''}><td>{i+1}</td><td><b>{s.title}</b></td><td>{s.summary}</td><td>{s.sourceText.length.toLocaleString('vi-VN')}</td><td><span className={'status '+s.status}>{statusLabel(s.status)}</span></td><td><button onClick={()=>patch({selectedBranchId:s.branchId})}>Xem</button></td></tr>)}</tbody></table></div></div>
   </div>
   <div className="panel rewrite-panel"><header><strong>✎ Prompt phong cách & Viết lại kịch bản</strong></header><div className="rewrite-grid"><div className="style-box"><b>Phong cách cá nhân hóa</b><textarea value={ws.stylePrompt} onChange={e=>patch({stylePrompt:e.target.value})} placeholder="Mô tả cách viết, giọng văn, thói quen, chủ đề yêu thích..."/><button onClick={()=>{localStorage.setItem('vis-transcript-style',ws.stylePrompt)}}><Save size={15}/> Lưu phong cách</button></div><div className="processing"><div className="part-actions"><b>Xử lý từng phần</b>{ws.sections.map((s,i)=><button key={s.id} onClick={()=>rewrite(s)} disabled={!!aiBusy}>{`Phần ${i+1}`}<small>{s.status==='done'?'Đã viết':'Viết lại'}</small></button>)}<button onClick={rewriteAll} disabled={!ws.sections.length||!!aiBusy}>Viết lại toàn bộ<br/><small>(từng phần)</small></button><button className="danger" onClick={stop}><Square size={14}/> Dừng xử lý</button></div><div className="result-head"><b>▣ Kết quả kịch bản đã viết lại</b><div className="grow"/><button onClick={()=>navigator.clipboard?.writeText(finalText)}>Sao chép</button><button onClick={()=>downloadText(finalText,'kich-ban-da-viet-lai.txt')}>Tải xuống (.txt)</button></div><textarea className="final-text" value={finalText} readOnly placeholder="Kịch bản sau khi viết lại sẽ hiển thị tại đây..."/><button className="finish" disabled={!finalText} onClick={()=>onUseTranscript(finalText,ws.transcript?.title)}>Hoàn tất & Đưa kịch bản sang Phân tích →</button></div></div></div>
  </section>;

@@ -39,3 +39,11 @@
 @media(max-width:950px){.transcript-page .middle-grid,.transcript-page .rewrite-grid{grid-template-columns:minmax(0,1fr)}.transcript-page .yt-row{flex-wrap:wrap}.transcript-page .yt-row>input{flex-basis:60%}.transcript-page .style-box{border-right:0;border-bottom:1px solid #dce8f5}}
 
 .transcript-page .transcript-ai-status{margin:6px 0 8px;padding:8px 10px;border:1px solid #b9d9f8;border-radius:5px;background:#eef7ff;color:#14578f;font-size:12px}
+
+.transcript-page .transcript-part-panel{display:flex;flex-direction:column;min-width:0}
+.transcript-page .transcript-part-panel>header>strong{width:100%}
+.transcript-page .transcript-part-panel>header>.grow{display:none}
+.transcript-page .transcript-part-panel>header .primary{background:#087bea;border-color:#087bea;color:white}
+.transcript-page .transcript-part-source{height:230px;overflow:auto;padding:12px;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 Arial}
+.transcript-page .transcript-part-source small{display:block;color:#647a94;margin:4px 0 8px}
+.transcript-page .transcript-part-empty{min-height:160px;padding:26px 18px;color:#647a94;font:12px/1.6 Arial}
