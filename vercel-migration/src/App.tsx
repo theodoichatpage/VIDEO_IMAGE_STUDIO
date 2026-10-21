@@ -9,7 +9,7 @@ type Scene = { title: string; backdrop: string; content: string; character: stri
 type PartStatus = 'pending' | 'ready' | 'processing' | 'complete' | 'error' | 'stopped';
 type Part = { id: string; title: string; range: string; content: string; status: PartStatus; scenes: Scene[]; analysisText: string };
 type Job = { id: string; type: 'script_structure' | 'part_analysis' | 'image_generation'; status: string; prompt: string; partId?: string; sceneKey?: string };
-type Session = { id: string; script: string; status: string; activeJob?: Job | null; parts?: Part[]; bridgeLastSeen?: number; lastError?: string };
+type Session = { id: string; script: string; status: string; activeJob?: Job | null; parts?: Part[]; bridgeLastSeen?: number; lastError?: string; updatedAt?: number };
 
 const makeId = () => crypto.randomUUID().replaceAll('-', '');
 const statusText = (status: PartStatus) => ({ pending: 'Chưa phân tích', ready: 'Sẵn sàng phân cảnh', processing: 'Đang phân cảnh', complete: 'Hoàn tất', error: 'Lỗi', stopped: 'Đã dừng' }[status]);
@@ -23,8 +23,14 @@ const shortText = (text: string, limit: number) => text.length > limit ? text.sl
 const partName = (title: string) => title.replace(/^Phần\s*\d+\s*[-–:]?\s*/i, '').trim() || title;
 
 function App() {
-  const [sessionId] = useState(() => localStorage.getItem('vis-session') || makeId());
-  const [session, setSession] = useState<Session | null>(null);
+  const [sessionId] = useState(() => {
+    const id = localStorage.getItem('vis-session') || makeId();
+    localStorage.setItem('vis-session', id);
+    return id;
+  });
+  const [session, setSessionState] = useState<Session | null>(null);
+  const setSession = (next: Session | null) => setSessionState(previous =>
+    previous && next && (previous.updatedAt || 0) > (next.updatedAt || 0) ? previous : next);
   const [script, setScript] = useState(() => localStorage.getItem('vis-script-draft') || '');
   const [stylePrompt, setStylePrompt] = useState(() => localStorage.getItem('vis-style-prompt') || '');
   const [notice, setNotice] = useState('Nhập toàn bộ kịch bản, sau đó bấm Phân tích & chia kịch bản.');
@@ -47,8 +53,12 @@ function App() {
   const [parallelImages, setParallelImages] = useState('1');
   const hydrated = useRef(false);
   const bridgeEventsInFlight = useRef(new Set<string>());
+  const bridgeEventQueue = useRef(Promise.resolve());
+  const loadInFlight = useRef(false);
 
   const load = async () => {
+    if (loadInFlight.current) return;
+    loadInFlight.current = true;
     try {
       const { data } = await api.get('/api/sessions/' + sessionId);
       const next = data.session as Session | null;
@@ -65,7 +75,8 @@ function App() {
         localStorage.setItem('vis-session', sessionId);
         hydrated.current = true;
       }
-    } catch { setNotice('Không thể kết nối máy chủ web. Hãy tải lại trang.'); }
+    } catch (caught) { setNotice('Máy chủ: ' + (caught instanceof Error ? caught.message : 'Không thể kết nối.')); }
+    finally { loadInFlight.current = false; }
   };
   useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 4000); return () => window.clearInterval(timer); }, []);
 
@@ -85,12 +96,17 @@ function App() {
       if (event.data.type === 'studio-event' && event.data.payload?.jobId) {
         const payload = event.data.payload as { jobId: string; state?: string; text?: string };
         const jobId = String(payload.jobId);
-        if (bridgeEventsInFlight.current.has(jobId)) return;
-        bridgeEventsInFlight.current.add(jobId);
-        void api.post('/api/bridge/' + sessionId + '/event', payload).then(({ data }) => {
+        const eventKey = jobId + ':' + payload.state;
+        if (bridgeEventsInFlight.current.has(eventKey)) return;
+        bridgeEventsInFlight.current.add(eventKey);
+        bridgeEventQueue.current = bridgeEventQueue.current.then(() => api.post('/api/bridge/' + sessionId + '/event', payload)).then(({ data }) => {
           const next = data.session as Session;
           setSession(next);
-          if (next.parts?.length) setActivePartId(next.parts[0].id);
+          if (data.ignored) {
+            window.postMessage({ source: 'vis-web', type: 'studio-event-ack', jobId }, '*');
+            return;
+          }
+          if (next.parts?.length) setActivePartId(current => next.parts?.some(part => part.id === current) ? current : next.parts![0].id);
           if (payload.state === 'sent') {
             setNotice('Đã gửi lệnh sang ChatGPT. Web đang chờ JSON kết quả, chưa xác nhận hoàn tất.');
             return;
@@ -99,7 +115,7 @@ function App() {
             window.postMessage({ source: 'vis-web', type: 'studio-event-ack', jobId }, '*');
             setNotice(payload.state === 'completed' && next.parts?.length ? 'Đã lưu JSON ChatGPT và cập nhật các phần kịch bản.' : payload.state === 'completed' ? 'Đã lưu JSON kết quả từ ChatGPT.' : 'ChatGPT lỗi: ' + (next.lastError || payload.text || 'Web đã giải phóng tác vụ; bạn có thể bấm Phân tích lại.'));
           }
-        }).catch(() => setNotice('Web chưa lưu được kết quả ChatGPT. Tiện ích sẽ tự gửi lại cho đến khi web xác nhận.')).finally(() => bridgeEventsInFlight.current.delete(jobId));
+        }).catch((caught) => setNotice('Chưa lưu được kết quả: ' + (caught instanceof Error ? caught.message : 'Máy chủ không phản hồi.') + ' Tiện ích sẽ gửi lại.')).finally(() => bridgeEventsInFlight.current.delete(eventKey));
       }
     };
     window.addEventListener('message', receive); requestStatus();
@@ -107,7 +123,7 @@ function App() {
     return () => { window.removeEventListener('message', receive); window.clearInterval(timer); };
   }, [sessionId]);
 
-  const bridgeConnected = extensionPairCode === sessionId && extensionVersion === '0.4.7' && chatReady;
+  const bridgeConnected = extensionPairCode === sessionId && extensionVersion === '0.4.8' && chatReady;
   useEffect(() => {
     if (!bridgeConnected || !session?.activeJob || !['queued', 'sending'].includes(session.activeJob.status)) return;
     let cancelled = false;
@@ -148,17 +164,20 @@ function App() {
   };
   const runPart = async (part: Part) => {
     if (part.status === 'pending') { setNotice('Hãy để ChatGPT phân tích và chia kịch bản trước.'); return; }
+    if (busy) return;
+    setBusy(true);
     try {
       await ensureSession();
       const { data } = await api.post('/api/sessions/' + sessionId + '/parts/' + part.id + '/analysis');
       setSession(data.session as Session); setActivePartId(part.id);
       setNotice('Đã gửi ' + part.title + ' sang ChatGPT. Khi hoàn tất, web sẽ dừng và chờ bạn chọn phần kế tiếp.');
-    } catch { setNotice('Không thể gửi phần này. Hãy tải lại trang rồi thử lại.'); }
+    } catch (caught) { setNotice(caught instanceof Error ? caught.message : 'Không thể gửi phần này.'); }
+    finally { setBusy(false); }
   };
   const stopWork = async () => {
     window.postMessage({ source: 'vis-web', type: 'studio-stop' }, '*');
     try { const { data } = await api.post('/api/sessions/' + sessionId + '/stop'); setSession(data.session as Session); setNotice('Đã dừng tác vụ hiện tại trên web và ChatGPT.'); }
-    catch { setNotice('Không thể dừng tác vụ.'); }
+    catch (caught) { setNotice('Chưa xác nhận dừng: ' + (caught instanceof Error ? caught.message : 'Máy chủ không phản hồi.')); }
   };
   const copyPrompt = async (prompt: string) => { await navigator.clipboard?.writeText(prompt); setNotice('Đã sao chép mã kết nối.'); };
   const bindCurrentConversation = () => {
@@ -195,7 +214,7 @@ function App() {
 
   return <main className="studio">
     <header className="topbar"><div className="brand"><Clapperboard size={30} /><strong>VIDEO IMAGE STUDIO</strong></div><nav aria-label="Các bước studio">{[[FileText, '1. Phân tích'], [Image, '2. Tạo ảnh'], [Square, '3. Tiến trình'], [Folder, '4. Dự án'], [Scissors, '5. Tách ảnh'], [VideoIcon, '6. Dựng video']].map(([Icon, label], index) => <button className={'nav-item ' + (index === activeMenu ? 'active' : '')} key={String(label)} type="button" onClick={() => setActiveMenu(index)}><Icon size={23} /><span>{label}</span></button>)}</nav><div className="top-tools"><span className={bridgeConnected ? 'top-connection online' : 'top-connection offline'}>{bridgeConnected ? '● Đã kết nối' : '● Chưa kết nối'}</span><button type="button" className="connect-button" onClick={() => setShowConnection(true)}>Kết nối ChatGPT</button><Settings size={18} /><span>Cài đặt</span><i>AI</i></div></header>
-    {showConnection && <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Kết nối ChatGPT"><section className="connection-dialog"><button type="button" className="modal-close" onClick={() => setShowConnection(false)} aria-label="Đóng">×</button><h2>Kết nối ChatGPT</h2><p className={bridgeConnected ? 'modal-status online' : 'modal-status offline'}>{bridgeConnected ? '● Đã kết nối ChatGPT · Extension v0.4.7' : '● Chưa kết nối ChatGPT'}</p>{conversationLabel && <p className="modal-help"><b>Hội thoại đang khóa:</b> {conversationLabel}</p>}<p className="modal-help">Mở đúng hội thoại ChatGPT bạn muốn dùng rồi bấm Kết nối hội thoại đang mở.</p><button type="button" className="analyze-all modal-copy" onClick={bindCurrentConversation}>Kết nối hội thoại đang mở</button>{!bridgeConnected && bridgeMessage && <p className="modal-help"><b>Lý do:</b> {bridgeMessage}</p>}{extensionVersion && extensionVersion !== '0.4.7' && <p className="modal-help"><b>Extension hiện tại: v{extensionVersion} — cần cài v0.4.7.</b></p>}<label>Mã kết nối<code>{sessionId}</code></label><button type="button" className="analyze-all modal-copy" onClick={() => copyPrompt(sessionId)}><Copy size={16} /> Sao chép mã kết nối</button><a className="outline modal-install" href="/resources/VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.7.zip" download>Tải Extension v0.4.7</a></section></div>}
+    {showConnection && <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Kết nối ChatGPT"><section className="connection-dialog"><button type="button" className="modal-close" onClick={() => setShowConnection(false)} aria-label="Đóng">×</button><h2>Kết nối ChatGPT</h2><p className={bridgeConnected ? 'modal-status online' : 'modal-status offline'}>{bridgeConnected ? '● Đã kết nối ChatGPT · Extension v0.4.8' : '● Chưa kết nối ChatGPT'}</p>{conversationLabel && <p className="modal-help"><b>Hội thoại đang khóa:</b> {conversationLabel}</p>}<p className="modal-help">Mở đúng hội thoại ChatGPT bạn muốn dùng rồi bấm Kết nối hội thoại đang mở.</p><button type="button" className="analyze-all modal-copy" onClick={bindCurrentConversation}>Kết nối hội thoại đang mở</button>{!bridgeConnected && bridgeMessage && <p className="modal-help"><b>Lý do:</b> {bridgeMessage}</p>}{extensionVersion && extensionVersion !== '0.4.8' && <p className="modal-help"><b>Extension hiện tại: v{extensionVersion} — cần cài v0.4.8.</b></p>}<label>Mã kết nối<code>{sessionId}</code></label><button type="button" className="analyze-all modal-copy" onClick={() => copyPrompt(sessionId)}><Copy size={16} /> Sao chép mã kết nối</button><a className="outline modal-install" href="/resources/VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.8.zip" download>Tải Extension v0.4.8</a></section></div>}
     {activeMenu === 0 ? <div className="workspace">
       <section className="left-column panel"><div className="panel-heading"><FileText /><div><h1>1. PHÂN TÍCH KỊCH BẢN</h1><p>ChatGPT đọc kịch bản, tự chia thành số phần phù hợp, rồi phân tích chi tiết từng phần thành phân cảnh.</p></div></div>
         <section className="script-box"><h2><FileText size={20} /> Toàn bộ kịch bản</h2><div className="file-row"><FileText size={22} /><div><b>{script.trim() ? 'Kịch bản đang chỉnh sửa' : 'Chưa có kịch bản'}</b><small>{sceneEstimate ? sceneEstimate + ' cảnh nhận diện · ' : ''}{script.length.toLocaleString('vi-VN')} ký tự</small></div><span className="uploaded">● Sẵn sàng</span><button type="button" className="outline"><Folder size={17} /> Thay đổi</button></div><textarea className="screenplay" value={script} onChange={event => changeScript(event.target.value)} placeholder="Dán hoặc nhập toàn bộ kịch bản tại đây…" /><p className="script-meta">Số ký tự: {script.length.toLocaleString('vi-VN')} <b>|</b> <span>{session?.status === 'structure_processing' ? 'ChatGPT đang phân tích cấu trúc' : storedParts.length ? 'Đã chia ' + storedParts.length + ' phần' : 'Chưa phân tích'}</span></p><div className="analysis-controls"><button className="analyze-all split-button" type="button" onClick={analyzeStructure} disabled={busy || session?.activeJob?.type === 'script_structure'}><Play size={18} fill="currentColor" /> {busy ? 'Đang khởi tạo…' : 'Phân tích & chia kịch bản'}</button><button className="danger split-button stop-analysis" type="button" onClick={stopWork} disabled={session?.activeJob?.type !== 'script_structure'}><Square size={16} /> Dừng phân tích</button><button className="outline split-button" type="button" onClick={captureResult} disabled={!session?.activeJob || session.activeJob.status !== 'waiting'}>Đồng bộ kết quả ngay{pendingSyncCount ? ' (' + pendingSyncCount + ')' : ''}</button></div></section>

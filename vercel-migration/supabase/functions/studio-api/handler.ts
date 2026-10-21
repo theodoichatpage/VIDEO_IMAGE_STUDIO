@@ -31,12 +31,15 @@ async function database(path: string, init?: RequestInit) {
     headers: { apikey: key, Authorization: 'Bearer ' + key, 'Content-Type': 'application/json', ...(init?.headers || {}) },
   });
   if (!result.ok) throw new Error(await result.text());
-  return result.status === 204 ? null : result.json();
+  const text = await result.text();
+  return text.trim() ? JSON.parse(text) : null;
 }
 async function read(id: string): Promise<Session | null> {
   const rows = await database('studio_sessions?id=eq.' + encodeURIComponent(id) + '&select=record') as { record: Session }[];
   const value = rows?.[0]?.record;
-  return value ? { ...value, parts: value.parts || [], imageJobs: value.imageJobs || [], finishedJobIds: value.finishedJobIds || [] } : null;
+  if (!value) return null;
+  const recovered = /Unexpected end of JSON input/i.test(value.lastError || '');
+  return { ...value, parts: (value.parts || []).map(part => recovered && part.status === 'error' && part.scenes?.length ? { ...part, status: 'complete' } : part), imageJobs: value.imageJobs || [], finishedJobIds: value.finishedJobIds || [] };
 }
 async function write(session: Session) {
   session.updatedAt = Date.now();
@@ -47,6 +50,9 @@ function structurePrompt(script: string) {
   return 'Bạn là biên tập viên kịch bản. Hãy đọc TOÀN BỘ kịch bản và chia thành số phần HỢP LÝ theo mạch nội dung, không cố định 5 phần. Mục tiêu là mỗi phần đủ ngắn để bước sau phân tích thành phân cảnh chi tiết, nhưng tuyệt đối không cắt giữa một ý, sự kiện hoặc đoạn kể đang liền mạch. Chỉ trả MỘT JSON hợp lệ, không markdown, đúng dạng: {"parts":[{"title":"Phần 1 - tên ngắn","range":"mô tả phạm vi nội dung","content":"nguyên văn đầy đủ nội dung thuộc phần này"}]}. Phải bao phủ toàn bộ kịch bản theo đúng thứ tự, không bỏ sót, không viết lại nội dung. KỊCH BẢN:\n' + script;
 }
 function partPrompt(part: Part) {
+  return 'CHẾ ĐỘ PHÂN TÍCH VĂN BẢN. KHÔNG TẠO ẢNH, không gọi công cụ tạo ảnh. Chỉ viết JSON, các prompt là dữ liệu văn bản để dùng ở bước sau.\n' + sceneAnalysisPrompt(part);
+}
+function sceneAnalysisPrompt(part: Part) {
   return 'Bạn là đạo diễn hình ảnh. Chỉ trả MỘT JSON hợp lệ, không markdown: {"scenes":[{"title":"Cảnh 1 - tên rất ngắn","backdrop":"bối cảnh riêng của cảnh","content":"hành động/sự kiện riêng của cảnh","character":"nhân vật xuất hiện, tư thế hoặc biểu cảm riêng","emotion":"cảm xúc riêng","shot":"góc máy, cỡ cảnh, hướng nhìn riêng","image":"mô tả hình ảnh ngắn bằng tiếng Việt","prompt":"English scene prompt only: subject/action + character details for this scene + setting + camera framing"}]}. Từ nội dung Phần này, tách thành các cảnh dùng tạo ảnh YouTube. Mỗi cảnh có góc máy điện ảnh khác nhau. PROMPT CẢNH chỉ chứa nội dung riêng của cảnh, nhân vật/bối cảnh và góc máy; không chứa phong cách chung, ánh sáng, chất liệu hoặc tỷ lệ. PHẦN: ' + part.title + '\nNỘI DUNG:\n' + part.content;
 }
 function current(job: Job | null | undefined) { return Boolean(job && ((job.protocol === 2 && job.type !== 'image_generation') || (job.protocol === 3 && job.type === 'image_generation'))); }
@@ -108,6 +114,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         session.imageJobs.push(...jobs); nextImage(session); return send(res, 200, { session: await write(session) });
       }
       if (path[2] === 'stop' && req.method === 'POST') {
+        if (session.activeJob) session.finishedJobIds = [...(session.finishedJobIds || []), session.activeJob.id].slice(-200);
         if (session.activeJob?.type === 'image_generation') { const target = session.activeJob.sceneKey ? findScene(session, session.activeJob.sceneKey) : undefined; if (target?.scene) target.scene.imageStatus = 'stopped'; session.imageJobs = []; }
         else if (session.activeJob?.partId) { const part = session.parts.find(item => item.id === session.activeJob?.partId); if (part) part.status = 'stopped'; }
         session.activeJob = null; session.status = 'stopped'; return send(res, 200, { session: await write(session) });
@@ -118,8 +125,11 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       if (path[2] === 'ping' && req.method === 'POST') { session.bridgeLastSeen = Date.now(); return send(res, 200, { session: await write(session) }); }
       if (path[2] === 'next' && req.method === 'GET') { const job = session.activeJob; if (!job || !['queued','sending'].includes(job.status)) return send(res, 200, { command: null }); if (!current(job)) { session.activeJob = null; session.status = 'parts_ready'; await write(session); return send(res, 200, { command: null, discarded: true }); } if (job.status === 'queued') { job.status = 'sending'; await write(session); } return send(res, 200, { command: job }); }
       if (path[2] === 'event' && req.method === 'POST') {
-        const job = session.activeJob; if (!job) return fail(res, 'Không có tác vụ đang hoạt động.', 404); if (String(body.jobId || '') !== job.id) return fail(res, 'Tác vụ không khớp.', 409);
+        const eventJobId = String(body.jobId || '');
+        const job = session.activeJob;
+        if (session.finishedJobIds?.includes(eventJobId) || !job || eventJobId !== job.id) return send(res, 200, { session, acknowledged: true, ignored: true });
         const state = String(body.state || ''); const message = String(body.text || '').trim();
+        if (['completed', 'error'].includes(state)) session.finishedJobIds = [...(session.finishedJobIds || []), job.id].slice(-200);
         if (state === 'sent') { job.status = 'waiting'; if (job.type === 'image_generation' && job.sceneKey) { const target = findScene(session, job.sceneKey); if (target.scene) target.scene.imageStatus = 'generating'; } return send(res, 200, { session: await write(session) }); }
         if (state === 'error') { if (job.type === 'image_generation') finishImage(session, 'error', '', message || 'ChatGPT không tạo được ảnh.'); else { if (job.partId) { const part = session.parts.find(item => item.id === job.partId); if (part) part.status = 'error'; } session.activeJob = null; session.status = 'error'; session.lastError = message || 'ChatGPT không thể hoàn tất tác vụ.'; } return send(res, 200, { session: await write(session) }); }
         if (state === 'completed' && job.type === 'image_generation') { const url = String(body.imageUrl || ''); if (!/^https?:\/\//.test(url)) return fail(res, 'Không đọc được URL ảnh từ ChatGPT.', 422); finishImage(session, 'complete', url); return send(res, 200, { session: await write(session) }); }

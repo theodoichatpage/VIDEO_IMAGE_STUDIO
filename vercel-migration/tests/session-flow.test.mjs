@@ -1,0 +1,63 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import ts from 'typescript';
+
+const source = readFileSync(new URL('../supabase/functions/studio-api/handler.ts', import.meta.url), 'utf8');
+const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText;
+const { default: handler } = await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'));
+const id = 'regression-session-20261021';
+
+test('analysis results, repeated delivery, late error, stop and next part remain consistent', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = { url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SECRET_KEY };
+  process.env.SUPABASE_URL = 'https://database.test';
+  process.env.SUPABASE_SECRET_KEY = 'server-test-key';
+  let stored;
+  globalThis.fetch = async (_url, init) => {
+    if (init?.method === 'POST') {
+      stored = JSON.parse(init.body).record;
+      // PostgREST return=minimal may return 201 with an empty body.
+      return new Response('', { status: 201 });
+    }
+    return Response.json(stored ? [{ record: structuredClone(stored) }] : []);
+  };
+  const call = async (method, path, body) => {
+    let status, data;
+    await handler({ method, query: { path: path.split('/') }, body, headers: {} }, {
+      setHeader() {}, status(code) { status = code; return { json(value) { data = value; } }; },
+    });
+    assert.equal(status, 200, JSON.stringify(data));
+    return data;
+  };
+  try {
+    await call('POST', 'sessions', { id });
+    let response = await call('POST', `sessions/${id}/analysis`, { script: 'Một câu chuyện gồm hai sự kiện.' });
+    let job = response.session.activeJob.id;
+    await call('POST', `bridge/${id}/event`, { jobId: job, state: 'completed', text: JSON.stringify({ parts: [{ title: 'Phần 1', content: 'Sự kiện một.' }, { title: 'Phần 2', content: 'Sự kiện hai.' }] }) });
+    const first = stored.parts[0].id, second = stored.parts[1].id;
+    response = await call('POST', `sessions/${id}/parts/${first}/analysis`);
+    job = response.session.activeJob.id;
+    const completed = { jobId: job, state: 'completed', text: JSON.stringify({ scenes: [{ title: 'Cảnh 1', content: 'Nội dung', prompt: 'Scene one' }] }) };
+    await call('POST', `bridge/${id}/event`, completed);
+    assert.equal(stored.parts[0].status, 'complete');
+    await call('POST', `bridge/${id}/event`, completed);
+    await call('POST', `bridge/${id}/event`, { jobId: job, state: 'error', text: 'Late error' });
+    assert.equal(stored.parts[0].status, 'complete');
+    response = await call('POST', `sessions/${id}/parts/${second}/analysis`);
+    const secondJob = response.session.activeJob.id;
+    await call('POST', `bridge/${id}/event`, completed);
+    assert.equal(stored.activeJob.id, secondJob);
+    await call('POST', `sessions/${id}/stop`);
+    assert.equal(stored.activeJob, null);
+    assert.equal(stored.parts[1].status, 'stopped');
+    response = await call('POST', `sessions/${id}/parts/${second}/analysis`);
+    assert.equal(response.session.activeJob.type, 'part_analysis');
+    assert.match(response.session.activeJob.prompt, /KHÔNG TẠO ẢNH/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [name, value] of [['SUPABASE_URL', originalEnv.url], ['SUPABASE_SECRET_KEY', originalEnv.key]]) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+  }
+});
