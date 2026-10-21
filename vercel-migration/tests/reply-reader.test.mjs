@@ -36,6 +36,16 @@ test('reads generic div conversation turns without old role attributes or markdo
   assert.equal(reader.read(doc, { type: 'part_analysis', prompt: 'Analyze part 3' }).reason, 'matched');
 });
 
+test('does not mistake a user template nested inside a data-turn user container for a reply', () => {
+  const user = turn('user', 'Analyze part 3', { article: true });
+  const template = turn('', scene('Template only'));
+  template.matches = () => true;
+  template.closest = selector => selector.includes('data-turn') ? user : null;
+  user.contains = other => other === template;
+  const doc = { querySelectorAll: selector => selector.startsWith('main') ? [template] : selector.startsWith('[data-testid') ? [user] : [] };
+  assert.equal(reader.read(doc, { type: 'part_analysis', prompt: 'Analyze part 3' }).text, '');
+});
+
 test('streams only complete scene objects and leaves the final incomplete object unread', () => {
   const value = '{"scenes":[{"title":"First","prompt":"A {shell} and \\"light\\""},{"title":"Second","prompt":"A cave"},{"title":"Third","prompt":"unfinished';
   const doc = page([turn('user', 'Analyze part 3'), turn('assistant', value)]);

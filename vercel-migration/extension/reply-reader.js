@@ -4,7 +4,8 @@
   const roleOf = node => {
     const direct = node.getAttribute?.('data-message-author-role') || node.getAttribute?.('data-turn');
     if (['user', 'assistant'].includes(direct)) return direct;
-    const parentRole = node.closest?.('[data-message-author-role]')?.getAttribute('data-message-author-role');
+    const parent = node.closest?.('[data-message-author-role], [data-turn="user"], [data-turn="assistant"]');
+    const parentRole = parent?.getAttribute('data-message-author-role') || parent?.getAttribute('data-turn');
     if (['user', 'assistant'].includes(parentRole)) return parentRole;
     const hasUser = node.querySelector?.('[data-message-author-role="user"]');
     const hasAssistant = node.querySelector?.('[data-message-author-role="assistant"]');
