@@ -16,24 +16,24 @@ jobs:
       - name: Build extension zip and update installer
         run: |
           cd vercel-migration/extension
-          zip -r ../public/resources/VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.15.zip . -x '*.DS_Store'
+          zip -r ../public/resources/VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.16.zip . -x '*.DS_Store'
           cd ../..
           python3 - <<'PY'
           from pathlib import Path
           p=Path('vercel-migration/src/App.tsx')
           s=p.read_text()
-          s=s.replace("['0.4.10', '0.4.11', '0.4.12', '0.4.13', '0.4.14'].includes(extensionVersion)", "['0.4.15'].includes(extensionVersion)")
-          s=s.replace("extensionVersion !== '0.4.14'", "extensionVersion !== '0.4.15'")
-          s=s.replace('cần cài v0.4.14.', 'cần cài v0.4.15.')
-          s=s.replace('VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.14.zip', 'VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.15.zip')
-          s=s.replace('Tải Extension v0.4.14', 'Tải Extension v0.4.15')
+          s=s.replace("['0.4.10', '0.4.11', '0.4.12', '0.4.13', '0.4.14', '0.4.15'].includes(extensionVersion)", "['0.4.16'].includes(extensionVersion)")
+          s=s.replace("extensionVersion !== '0.4.15'", "extensionVersion !== '0.4.16'")
+          s=s.replace('cần cài v0.4.15.', 'cần cài v0.4.16.')
+          s=s.replace('VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.15.zip', 'VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.16.zip')
+          s=s.replace('Tải Extension v0.4.15', 'Tải Extension v0.4.16')
           p.write_text(s)
           PY
       - name: Commit package and installer
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add vercel-migration/public/resources/VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.15.zip vercel-migration/src/App.tsx
+          git add vercel-migration/public/resources/VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.16.zip vercel-migration/src/App.tsx
           git diff --cached --quiet && exit 0
-          git commit -m 'build: publish extension v0.4.15 and update installer'
+          git commit -m 'build: publish extension v0.4.16 and update installer'
           git push
