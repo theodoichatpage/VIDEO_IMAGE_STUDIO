@@ -21,7 +21,8 @@
     }
     if (!image.naturalWidth || !image.naturalHeight) return '';
 
-    const maxWidth = 640;
+    // Preview only: keep the Studio project light. The original stays in ChatGPT.
+    const maxWidth = 480;
     const scale = Math.min(1, maxWidth / image.naturalWidth);
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
@@ -29,7 +30,7 @@
     const context = canvas.getContext('2d', { alpha: false });
     if (!context) return '';
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL('image/jpeg', 0.68);
+    return canvas.toDataURL('image/jpeg', 0.60);
   }
 
   chrome.runtime.sendMessage = function(message, ...args) {
