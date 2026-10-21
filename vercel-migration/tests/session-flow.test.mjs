@@ -122,6 +122,28 @@ test('analysis results, repeated delivery, late error, stop and next part remain
     response = await call('POST', `sessions/${id}/analysis`, { script: 'Kịch bản mới đã xác nhận.', confirmReset: true });
     assert.equal(response.session.parts.length, 0);
     assert.equal(JSON.stringify(response.session.analysisBackup.parts), preservedParts);
+    job = response.session.activeJob.id;
+    await call('POST', `bridge/${id}/event`, { jobId: job, state: 'completed', text: JSON.stringify({ parts: ['A', 'B', 'C'].map(title => ({ title, content: 'Nội dung ' + title })) }) });
+    const [a, b, c] = stored.parts.map(part => part.id);
+    response = await call('POST', `sessions/${id}/parts/${a}/analysis`);
+    await call('POST', `bridge/${id}/event`, { ...completed, jobId: response.session.activeJob.id });
+    const savedA = JSON.stringify(stored.parts[0]);
+    response = await call('POST', `sessions/${id}/parts/${b}/analysis`);
+    const existingB = response.session.activeJob.id;
+    response = await call('POST', `sessions/${id}/parts/batch`, {});
+    assert.equal(response.session.activeJob.id, existingB);
+    assert.deepEqual(response.session.analysisQueue, [c]);
+    await call('POST', `bridge/${id}/event`, { ...completed, jobId: existingB });
+    assert.equal(stored.activeJob.partId, c);
+    assert.equal(JSON.stringify(stored.parts[0]), savedA);
+    await call('POST', `bridge/${id}/event`, { jobId: stored.activeJob.id, state: 'error', text: 'Pause batch on error' });
+    assert.equal(stored.activeJob, null);
+    assert.equal(stored.batchAnalysis, false);
+    response = await call('POST', `sessions/${id}/parts/batch`, {});
+    assert.equal(response.session.activeJob.partId, c);
+    await call('POST', `sessions/${id}/stop`);
+    assert.equal(stored.batchAnalysis, false);
+    assert.deepEqual(stored.analysisQueue, []);
   } finally {
     globalThis.fetch = originalFetch;
     for (const [name, value] of [['SUPABASE_URL', originalEnv.url], ['SUPABASE_SECRET_KEY', originalEnv.key]]) {

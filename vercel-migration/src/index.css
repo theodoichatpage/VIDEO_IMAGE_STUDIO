@@ -95,3 +95,18 @@ nav { flex: 1; display: flex; gap: 8px; justify-content: center; }
 .restart-analysis { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:8px 2px; color:#60799c; font:12px Arial; }
 .restart-analysis button { flex-shrink:0; font:12px Arial; }
 .restart-analysis button:disabled { opacity:.38; cursor:not-allowed; }
+.parts-toolbar { gap:10px; flex-wrap:wrap; }
+.batch-controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-left:auto; }
+.batch-controls .analyze-all { margin:0; padding:7px 11px; font:700 12px Arial; white-space:nowrap; }
+.batch-controls .outline { padding:7px 10px; font:12px Arial; white-space:nowrap; }
+.batch-notice { margin:0 0 7px; }
+.part-row { grid-template-columns:30px minmax(0,1fr) 82px 48px 90px 68px; gap:8px; padding:8px; min-height:54px; }
+.part-row > * { min-width:0; }
+.part-label b { font-size:12px; }
+.part-label small { margin-top:4px; font-size:11px; }
+.part-row .chip { box-sizing:border-box; width:100%; min-width:0; max-width:100%; padding:3px 5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:center; justify-content:center; font:11px Arial; }
+.part-row .percent { white-space:nowrap; font:11px Arial; }
+.part-row .action { display:flex; align-items:center; justify-content:center; gap:4px; box-sizing:border-box; width:100%; padding:7px 4px; font:11px Arial; white-space:nowrap; }
+.part-row .action svg { flex-shrink:0; }
+.part-row .action:disabled { opacity:.45; cursor:not-allowed; }
+.parts-footer { display:flex; justify-content:flex-end; margin-top:10px; }
