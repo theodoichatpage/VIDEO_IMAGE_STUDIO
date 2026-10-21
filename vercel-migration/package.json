@@ -8,6 +8,7 @@
     "dev": "vite",
     "prebuild": "node scripts/apply_image_separation_tab.mjs && node scripts/apply_transcript_engine_settings.mjs",
     "build": "vite build",
+    "test": "vitest run",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -15,9 +16,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
-  "optionalDependencies": {
-    "@rollup/rollup-linux-x64-gnu": "^4.0.0"
-  },
+  "optionalDependencies": {"@rollup/rollup-linux-x64-gnu": "^4.0.0"},
   "devDependencies": {
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
@@ -26,6 +25,7 @@
     "postcss": "^8.4.0",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.7.0",
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "vitest": "^3.2.4"
   }
 }
