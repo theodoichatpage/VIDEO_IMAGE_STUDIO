@@ -4,9 +4,9 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "predev": "node scripts/apply_image_separation_tab.mjs",
+    "predev": "node scripts/apply_image_separation_tab.mjs && node scripts/apply_transcript_engine_settings.mjs",
     "dev": "vite",
-    "prebuild": "node scripts/apply_image_separation_tab.mjs",
+    "prebuild": "node scripts/apply_image_separation_tab.mjs && node scripts/apply_transcript_engine_settings.mjs",
     "build": "vite build",
     "preview": "vite preview"
   },
