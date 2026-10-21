@@ -14,3 +14,8 @@ test('edge adapter preserves the status returned by the API handler', () => {
   assert.match(adapter, /result\.status = code/);
   assert.match(adapter, /status: result\.status/);
 });
+
+test('loading an unknown studio session returns an empty session instead of an API error', () => {
+  const handler = readFileSync(new URL('../supabase/functions/studio-api/handler.ts', import.meta.url), 'utf8');
+  assert.match(handler, /if \(path\.length === 2 && req\.method === 'GET'\) return send\(res, 200, \{ session: session \}\);/);
+});

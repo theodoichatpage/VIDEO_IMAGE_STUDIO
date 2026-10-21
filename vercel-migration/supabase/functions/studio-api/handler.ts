@@ -84,8 +84,9 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       return send(res, 200, { session: await write(session) });
     }
     if (path[0] === 'sessions' && path[1]) {
-      const session = await read(path[1]); if (!session) return fail(res, 'Không tìm thấy phiên làm việc.', 404);
-      if (path.length === 2 && req.method === 'GET') return send(res, 200, { session });
+      const session = await read(path[1]);
+      if (path.length === 2 && req.method === 'GET') return send(res, 200, { session: session });
+      if (!session) return fail(res, 'Không tìm thấy phiên làm việc.', 404);
       if (path[2] === 'analysis' && req.method === 'POST') {
         if (session.activeJob && !['completed','error','stopped'].includes(session.activeJob.status)) return fail(res, 'Một tác vụ đang chờ ChatGPT.', 409);
         const script = String(body.script || '').trim(); if (!script) return fail(res, 'Kịch bản không được để trống.');
