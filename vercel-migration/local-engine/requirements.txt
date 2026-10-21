@@ -1,0 +1,7 @@
+flask>=3,<4
+pillow>=10
+numpy>=1.24
+opencv-python-headless
+transformers==4.50.3
+easyocr==1.7.2
+huggingface_hub
