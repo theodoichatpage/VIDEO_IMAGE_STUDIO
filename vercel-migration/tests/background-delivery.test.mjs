@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 
-function worker(tabs = [], activeJob = null) {
+function worker(tabs = [], activeJob = null, version = '0.4.16') {
   let listener, offline = false;
   let stored = { pairCode: 'session-three', studioOrigin: 'https://video-image-studio.vercel.app' };
   const received = [];
   const chrome = {
     storage: { local: { async get() { return structuredClone(stored); }, async set(value) { Object.assign(stored, structuredClone(value)); } } },
     tabs: { async query() { return tabs; }, async sendMessage(id, message) {
-      if (message.type === 'vis-ping') return { ready: true, version: '0.4.11' };
+      if (message.type === 'vis-ping') return { ready: true, version };
       if (message.type === 'vis-capture-result') return id === 2 ? { ok: true, payload: { jobId: message.jobId, state: 'completed', text: '{"scenes":[{"prompt":"Correct part 3"}]}' } } : { ok: false, error: 'Wrong conversation' };
     } },
     runtime: { onMessage: { addListener(fn) { listener = fn; } } },
@@ -84,4 +84,10 @@ test('automatic recovery never captures an answer for an unsent queued job', asy
   await w.message({ type: 'vis-status' });
   await new Promise(setImmediate);
   assert.equal(w.received.length, 0);
+});
+
+test('does not report connected while the ChatGPT tab still runs an old content script', async () => {
+ const w = worker([{id:2,url:'https://chatgpt.com/c/existing'}],null,'0.4.14');
+ const result = await w.message({type:'vis-status'});
+ assert.equal(result.chatReady,false); assert.match(result.error,/F5/);
 });

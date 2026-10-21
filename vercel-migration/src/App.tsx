@@ -253,7 +253,7 @@ function App() {
       }
       if (!command) return;
       window.postMessage({ source: 'vis-web', type: 'studio-capture-result', jobId: command.id, command }, '*');
-      setNotice('Đang lấy JSON đã có trong đúng hội thoại ChatGPT để hoàn tất phần đang chờ…');
+      setNotice(command.type === 'image_generation' ? 'Đang nhận tệp ảnh từ đúng cảnh trong ChatGPT…' : 'Đang lấy JSON đã có trong đúng hội thoại ChatGPT để hoàn tất phần đang chờ…');
     } catch (caught) { setNotice(caught instanceof Error ? caught.message : 'Không thể khởi tạo đồng bộ kết quả.'); }
   };
   const changeStylePrompt = (value: string) => { setStylePrompt(value); localStorage.setItem('vis-style-prompt', value); };

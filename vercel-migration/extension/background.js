@@ -14,10 +14,12 @@ async function ensureChatReceiver(preferredId) {
   if (!tabs.length) throw new Error('Chưa có tab ChatGPT. Hãy mở chatgpt.com và đăng nhập.');
   const stored = await chrome.storage.local.get(['chatTabId']);
   const tab = tabs.find(item => item.id === preferredId) || tabs.find(item => item.id === stored.chatTabId) || tabs.find(item => item.active) || tabs[0];
-  try {
-    const pong = await chrome.tabs.sendMessage(tab.id, { type: 'vis-ping' });
-    if (pong?.ready) return tab;
-  } catch {}
+  let existing;
+  try { existing = await chrome.tabs.sendMessage(tab.id, { type: 'vis-ping' }); } catch {}
+  if (existing?.ready) {
+    if (existing.version !== '0.4.16') throw new Error('Tab ChatGPT còn cầu nối cũ v' + (existing.version || '?') + '. Hãy F5 tab ChatGPT để nạp Extension 0.4.16.');
+    return tab;
+  }
   try {
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['reply-reader.js', 'content.js'] });
   } catch (error) {
@@ -25,7 +27,7 @@ async function ensureChatReceiver(preferredId) {
   }
   try {
     const pong = await chrome.tabs.sendMessage(tab.id, { type: 'vis-ping' });
-    if (pong?.ready) return tab;
+    if (pong?.ready && pong.version === '0.4.16') return tab;
   } catch {}
   throw new Error('Tab ChatGPT chưa sẵn sàng nhận lệnh. Hãy F5 tab ChatGPT rồi kết nối lại.');
 }

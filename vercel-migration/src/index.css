@@ -110,3 +110,6 @@ nav { flex: 1; display: flex; gap: 8px; justify-content: center; }
 .part-row .action svg { flex-shrink:0; }
 .part-row .action:disabled { opacity:.45; cursor:not-allowed; }
 .parts-footer { display:flex; justify-content:flex-end; margin-top:10px; }
+
+.preview-actions { flex-wrap: wrap; }
+.preview-actions > button, .preview-actions > a { flex: 1 1 110px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 34px; text-decoration: none; }
