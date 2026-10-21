@@ -22,12 +22,12 @@ test('analysis results, repeated delivery, late error, stop and next part remain
     }
     return Response.json(stored ? [{ record: structuredClone(stored) }] : []);
   };
-  const call = async (method, path, body) => {
+  const call = async (method, path, body, expectedStatus = 200) => {
     let status, data;
     await handler({ method, query: { path: path.split('/') }, body, headers: {} }, {
       setHeader() {}, status(code) { status = code; return { json(value) { data = value; } }; },
     });
-    assert.equal(status, 200, JSON.stringify(data));
+    assert.equal(status, expectedStatus, JSON.stringify(data));
     return data;
   };
   try {
@@ -81,6 +81,25 @@ test('analysis results, repeated delivery, late error, stop and next part remain
     await call('POST', `bridge/${id}/event`, { jobId: recoverId, state: 'completed', text: JSON.stringify({ scenes: [{ title: 'Recovered legacy part', prompt: 'The existing result' }] }) });
     assert.equal(stored.parts[1].status, 'complete');
     assert.equal(JSON.stringify(stored.parts[0]), savedFirstPart);
+    stored.parts[1].status = 'error'; stored.parts[1].scenes = []; stored.parts[1].analysisText = '';
+    response = await call('POST', `sessions/${id}/parts/${second}/recover`);
+    const importJobId = response.session.activeJob.id;
+    const beforeImport = JSON.stringify(stored);
+    await call('POST', `sessions/${id}/parts/${second}/result`, { text: '{"scenes":[', expectedJobId: importJobId }, 422);
+    assert.equal(JSON.stringify(stored), beforeImport);
+    await call('POST', `sessions/${id}/parts/${second}/result`, { text: completed.text, expectedJobId: 'wrong-job' }, 409);
+    assert.equal(JSON.stringify(stored), beforeImport);
+    await call('POST', `sessions/${id}/parts/${first}/result`, { text: completed.text, expectedJobId: importJobId }, 409);
+    const imported = { scenes: Array.from({ length: 12 }, (_, i) => ({ title: 'Imported scene ' + (i + 1), prompt: 'Cinematic shot ' + (i + 1) })) };
+    response = await call('POST', `sessions/${id}/parts/${second}/result`, { text: '```json\n' + JSON.stringify(imported) + '\n```', expectedJobId: importJobId });
+    assert.equal(response.session.activeJob, null);
+    assert.equal(response.session.parts[1].status, 'complete');
+    assert.equal(response.session.parts[1].scenes.length, 12);
+    assert.equal(JSON.stringify(stored.parts[0]), savedFirstPart);
+    await call('POST', `bridge/${id}/event`, { jobId: importJobId, state: 'error', text: 'Late extension timeout' });
+    assert.equal(stored.parts[1].status, 'complete');
+    response = await call('POST', `sessions/${id}/parts/${second}/analysis`);
+    assert.equal(response.session.activeJob.type, 'part_analysis');
   } finally {
     globalThis.fetch = originalFetch;
     for (const [name, value] of [['SUPABASE_URL', originalEnv.url], ['SUPABASE_SECRET_KEY', originalEnv.key]]) {

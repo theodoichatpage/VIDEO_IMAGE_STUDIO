@@ -85,4 +85,10 @@ nav { flex: 1; display: flex; gap: 8px; justify-content: center; }
 .image-prompt-card .combined-prompt { align-items: start; }
 .combined-prompt p { padding: 9px; border: 1px solid #b6ecd9; border-radius: 6px; color: #06685d; background: #effcf7; }
 .combined-prompt .outline { grid-column: 2; width: fit-content; }
+.result-import-launch { margin-left: auto; flex-shrink: 0; white-space: nowrap; }
+.json-import-dialog { width: min(740px, 94vw); max-height: 84vh; overflow-y: auto; }
+.json-import-dialog select, .json-import-dialog textarea { display: block; width: 100%; margin-top: 8px; padding: 10px; border: 1px solid #bcd9f3; border-radius: 6px; color: #173963; background: #f8fbff; font: 13px Arial; }
+.json-import-dialog textarea { min-height: 280px; line-height: 1.5; resize: vertical; }
+.import-clipboard { display: flex; align-items: center; gap: 10px; margin-top: 12px; color: #617b9e; font-size: 12px; }
+.import-error { margin-top: 10px; padding: 9px; border-radius: 6px; color: #ad2e2e; background: #fff0f0; font-size: 13px; line-height: 1.5; }
 

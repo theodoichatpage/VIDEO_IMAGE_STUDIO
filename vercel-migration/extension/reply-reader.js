@@ -1,11 +1,27 @@
 (() => {
   const normalize = text => String(text || '').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
   const text = node => node?.innerText || node?.textContent || '';
-  const roleOf = node => node.getAttribute?.('data-message-author-role') || node.getAttribute?.('data-turn') || (node.querySelector?.('[data-message-author-role="user"]') ? 'user' : node.querySelector?.('[data-message-author-role="assistant"]') ? 'assistant' : '');
+  const roleOf = node => {
+    const direct = node.getAttribute?.('data-message-author-role') || node.getAttribute?.('data-turn');
+    if (['user', 'assistant'].includes(direct)) return direct;
+    const parentRole = node.closest?.('[data-message-author-role]')?.getAttribute('data-message-author-role');
+    if (['user', 'assistant'].includes(parentRole)) return parentRole;
+    const hasUser = node.querySelector?.('[data-message-author-role="user"]');
+    const hasAssistant = node.querySelector?.('[data-message-author-role="assistant"]');
+    if (hasUser && hasAssistant) return '';
+    if (hasUser) return 'user';
+    if (hasAssistant || node.matches?.('.markdown, .agent-turn') || node.querySelector?.('.markdown, .agent-turn')) return 'assistant';
+    return '';
+  };
   function turns(document) {
-    const articles = [...document.querySelectorAll('article[data-testid^="conversation-turn-"], article[data-turn]')].filter(node => ['user', 'assistant'].includes(roleOf(node)));
-    const nodes = articles.length ? articles : [...document.querySelectorAll('[data-message-author-role="user"], [data-message-author-role="assistant"]')];
-    return nodes.filter((node, index) => !nodes.some((parent, other) => index !== other && parent.contains?.(node))).map(node => ({ role: roleOf(node), node, text: text(node) }));
+    const candidates = [...document.querySelectorAll('article[data-testid^="conversation-turn-"], article[data-turn]'), ...document.querySelectorAll('[data-message-author-role="user"], [data-message-author-role="assistant"]'), ...document.querySelectorAll('main .markdown, main .agent-turn')];
+    const nodes = [...new Set(candidates)].filter(node => ['user', 'assistant'].includes(roleOf(node)));
+    const top = nodes.filter((node, index) => !nodes.some((parent, other) => index !== other && roleOf(parent) === roleOf(node) && parent.contains?.(node)));
+    top.sort((a, b) => {
+      const position = a.compareDocumentPosition?.(b) || 0;
+      return position & 4 ? -1 : position & 2 ? 1 : 0;
+    });
+    return top.map(node => ({ role: roleOf(node), node, text: text(node) }));
   }
   function fingerprint(turn) {
     const identity = turn.node.getAttribute?.('data-message-id') || turn.node.getAttribute?.('data-testid') || '';
@@ -68,5 +84,9 @@
     }
     return { text: '', reason: found.reason === 'matched' ? 'invalid-json' : found.reason };
   }
-  globalThis.VISReplyReader = { turns, snapshot, sources, extract, read };
+  function diagnose(document, context) {
+    const messages = turns(document);
+    return 'user=' + messages.filter(turn => turn.role === 'user').length + ', assistant=' + messages.filter(turn => turn.role === 'assistant').length + ', reason=' + read(document, context).reason;
+  }
+  globalThis.VISReplyReader = { turns, snapshot, sources, extract, read, diagnose };
 })();

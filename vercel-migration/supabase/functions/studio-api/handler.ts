@@ -72,7 +72,32 @@ function finishImage(session: Session, state: string, url = '', message = '') {
   session.imageJobs = session.imageJobs.filter(item => item.id !== job.id); session.activeJob = null;
   if (!nextImage(session)) session.status = 'images_ready';
 }
-function jsonReply(text: string) { const fence = String.fromCharCode(96).repeat(3); return JSON.parse(text.replace(new RegExp(fence + 'json|' + fence, 'gi'), '').trim()) as Record<string, unknown>; }
+function jsonReply(text: string): Record<string, unknown> {
+  const source = String(text || '').replace(/[\u200B\uFEFF]/g, '');
+  for (let start = 0; start < source.length; start += 1) {
+    if (source[start] !== '{') continue;
+    let depth = 0, quoted = false, escaped = false;
+    for (let end = start; end < source.length; end += 1) {
+      const char = source[end];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') quoted = false;
+        continue;
+      }
+      if (char === '"') quoted = true;
+      else if (char === '{') depth += 1;
+      else if (char === '}') depth -= 1;
+      if (depth !== 0) continue;
+      try {
+        const parsed = JSON.parse(source.slice(start, end + 1));
+        if (parsed && (Array.isArray(parsed.parts) || Array.isArray(parsed.scenes))) return parsed;
+      } catch {}
+      break;
+    }
+  }
+  throw new Error('JSON chưa đầy đủ hoặc không hợp lệ. Hãy sao chép toàn bộ câu trả lời từ dấu { đầu đến dấu } cuối.');
+}
 function normalizeParts(value: unknown): Part[] {
   if (!Array.isArray(value) || !value.length) throw new Error('ChatGPT chưa trả về danh sách parts.');
   return value.slice(0, 30).map((item, index) => { const row = item && typeof item === 'object' ? item as Record<string, unknown> : {}; const content = String(row.content || '').trim(); if (!content) throw new Error('Một phần kịch bản không có nội dung.'); return { id: partId(), title: String(row.title || 'Phần ' + (index + 1)), range: String(row.range || 'Phần ' + (index + 1)), content, status: 'ready', scenes: [], analysisText: '' }; });
@@ -122,6 +147,27 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         part.status = 'processing'; session.status = 'part_processing'; session.lastError = '';
         // Waiting means receive an existing response only; never dispatch another ChatGPT prompt.
         session.activeJob = { id: newId(), type: 'part_analysis', status: 'waiting', prompt: partPrompt(part), partId: part.id, protocol: 2 };
+        return send(res, 200, { session: await write(session) });
+      }
+      if (path[2] === 'parts' && path[3] && path[4] === 'result' && req.method === 'POST') {
+        const part = session.parts.find(item => item.id === path[3]);
+        if (!part) return fail(res, 'Không tìm thấy phần nhận kết quả.', 404);
+        if (part.status === 'complete' && part.scenes.length) return fail(res, 'Phần này đã có kết quả. Hãy chọn đúng phần đang thiếu.', 409);
+        const job = session.activeJob;
+        if (job && (job.type !== 'part_analysis' || job.partId !== part.id || String(body.expectedJobId || '') !== job.id)) return fail(res, 'Tác vụ đã thay đổi. Hãy đóng cửa sổ này, chọn đúng phần và mở Dán JSON kết quả lại.', 409);
+        let parsed: Record<string, unknown>;
+        let scenes: Scene[];
+        try {
+          parsed = jsonReply(String(body.text || ''));
+          if (!Array.isArray(parsed.scenes) || !parsed.scenes.length || parsed.scenes.length > 30 || parsed.scenes.some(item => !item || typeof item !== 'object' || !String((item as Record<string, unknown>).prompt || '').trim())) throw new Error('Cần JSON scenes có từ 1 đến 30 cảnh và prompt riêng cho mỗi cảnh.');
+          scenes = normalizeScenes(parsed.scenes);
+        } catch (caught) { return fail(res, caught instanceof Error ? caught.message : 'Không đọc được JSON phân cảnh.', 422); }
+        part.scenes = scenes; part.analysisText = JSON.stringify(parsed); part.status = 'complete';
+        if (job) {
+          session.finishedJobIds = [...(session.finishedJobIds || []), job.id].slice(-200);
+          session.lastJob = { ...job, status: 'completed' };
+        }
+        session.activeJob = null; session.status = 'part_complete'; session.lastError = '';
         return send(res, 200, { session: await write(session) });
       }
       if (path[2] === 'images' && req.method === 'POST') {

@@ -38,6 +38,12 @@ function App() {
   const [activePartId, setActivePartId] = useState('pending-0');
   const [activeMenu, setActiveMenu] = useState(0);
   const [showConnection, setShowConnection] = useState(false);
+  const [showResultImport, setShowResultImport] = useState(false);
+  const [importPartId, setImportPartId] = useState('');
+  const [importExpectedJobId, setImportExpectedJobId] = useState<string | null>(null);
+  const [importText, setImportText] = useState('');
+  const [importError, setImportError] = useState('');
+  const [importBusy, setImportBusy] = useState(false);
   const [extensionPairCode, setExtensionPairCode] = useState('');
   const [extensionVersion, setExtensionVersion] = useState('');
   const [chatReady, setChatReady] = useState(false);
@@ -186,6 +192,36 @@ function App() {
   };
   const syncJob = session?.activeJob || (session?.lastJob?.status === 'error' ? session.lastJob : null);
   const recoveryPart = session?.parts?.find(part => part.id === activePartId);
+  const selectImportPart = (id: string) => {
+    setImportPartId(id);
+    setImportExpectedJobId(session?.activeJob?.partId === id ? session.activeJob.id : null);
+    setImportError('');
+  };
+  const openResultImport = () => {
+    const target = session?.activeJob?.partId || (recoveryPart?.status !== 'complete' ? recoveryPart?.id : '') || session?.parts?.find(part => part.status !== 'complete')?.id;
+    if (!target) { setNotice('Các phần hiện có đã được lưu kết quả.'); return; }
+    selectImportPart(target); setImportText(''); setShowResultImport(true);
+  };
+  const pasteResult = async () => {
+    try { setImportText(await navigator.clipboard.readText()); setImportError(''); }
+    catch { setImportError('Hãy bấm vào ô bên dưới và nhấn Ctrl + V để dán toàn bộ JSON.'); }
+  };
+  const saveImportedResult = async () => {
+    if (importBusy || !importText.trim()) return;
+    setImportBusy(true); setImportError('');
+    try {
+      const { data } = await api.post('/api/sessions/' + sessionId + '/parts/' + importPartId + '/result', { text: importText, expectedJobId: importExpectedJobId });
+      const next = data.session as Session;
+      setSession(next); setActivePartId(importPartId);
+      const index = next.parts?.findIndex(part => part.id === importPartId) ?? 0;
+      setResultsPage(Math.max(0, Math.floor(index / 10)));
+      if (importExpectedJobId) window.postMessage({ source: 'vis-web', type: 'studio-event-ack', jobId: importExpectedJobId }, '*');
+      const part = next.parts?.find(item => item.id === importPartId);
+      setNotice('Đã lưu ' + (part?.scenes.length || 0) + ' cảnh vào ' + (part?.title || 'phần đã chọn') + '. Bạn có thể phân tích phần tiếp theo.');
+      setShowResultImport(false); setImportText('');
+    } catch (caught) { setImportError(caught instanceof Error ? caught.message : 'Chưa lưu được kết quả. Nội dung đã dán vẫn được giữ lại.'); }
+    finally { setImportBusy(false); }
+  };
   const captureResult = async () => {
     try {
       let command = syncJob;
@@ -230,8 +266,9 @@ function App() {
   return <main className="studio">
     <header className="topbar"><div className="brand"><Clapperboard size={30} /><strong>VIDEO IMAGE STUDIO</strong></div><nav aria-label="Các bước studio">{[[FileText, '1. Phân tích'], [Image, '2. Tạo ảnh'], [Square, '3. Tiến trình'], [Folder, '4. Dự án'], [Scissors, '5. Tách ảnh'], [VideoIcon, '6. Dựng video']].map(([Icon, label], index) => <button className={'nav-item ' + (index === activeMenu ? 'active' : '')} key={String(label)} type="button" onClick={() => setActiveMenu(index)}><Icon size={23} /><span>{label}</span></button>)}</nav><div className="top-tools"><span className={bridgeConnected ? 'top-connection online' : 'top-connection offline'}>{bridgeConnected ? '● Đã kết nối' : '● Chưa kết nối'}</span><button type="button" className="connect-button" onClick={() => setShowConnection(true)}>Kết nối ChatGPT</button><Settings size={18} /><span>Cài đặt</span><i>AI</i></div></header>
     {showConnection && <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Kết nối ChatGPT"><section className="connection-dialog"><button type="button" className="modal-close" onClick={() => setShowConnection(false)} aria-label="Đóng">×</button><h2>Kết nối ChatGPT</h2><p className={bridgeConnected ? 'modal-status online' : 'modal-status offline'}>{bridgeConnected ? '● Đã kết nối ChatGPT · Extension v0.4.10' : '● Chưa kết nối ChatGPT'}</p>{conversationLabel && <p className="modal-help"><b>Hội thoại đang khóa:</b> {conversationLabel}</p>}<p className="modal-help">Mở đúng hội thoại ChatGPT bạn muốn dùng rồi bấm Kết nối hội thoại đang mở.</p><button type="button" className="analyze-all modal-copy" onClick={bindCurrentConversation}>Kết nối hội thoại đang mở</button>{!bridgeConnected && bridgeMessage && <p className="modal-help"><b>Lý do:</b> {bridgeMessage}</p>}{extensionVersion && extensionVersion !== '0.4.10' && <p className="modal-help"><b>Extension hiện tại: v{extensionVersion} — cần cài v0.4.10.</b></p>}<label>Mã kết nối<code>{sessionId}</code></label><button type="button" className="analyze-all modal-copy" onClick={() => copyPrompt(sessionId)}><Copy size={16} /> Sao chép mã kết nối</button><a className="outline modal-install" href="/resources/VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.10.zip" download>Tải Extension v0.4.10</a></section></div>}
+    {showResultImport && <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Dán JSON kết quả"><section className="connection-dialog json-import-dialog"><button type="button" className="modal-close" disabled={importBusy} onClick={() => setShowResultImport(false)} aria-label="Đóng">×</button><h2>Dán JSON kết quả</h2><p className="modal-help">Sao chép toàn bộ câu trả lời JSON của ChatGPT và dán vào đây. Lưu thành công sẽ chuyển phần này sang Hoàn tất để tiếp tục phần kế tiếp.</p><label>Lưu vào phần<select value={importPartId} disabled={importBusy} onChange={event => selectImportPart(event.target.value)}>{session?.parts?.map(part => <option key={part.id} value={part.id} disabled={part.status === 'complete' && part.scenes.length > 0}>{part.title}{part.status === 'complete' ? ' — Đã có kết quả' : ''}</option>)}</select></label><div className="import-clipboard"><button type="button" className="outline" disabled={importBusy} onClick={pasteResult}>Dán từ clipboard</button><span>Hoặc nhấn Ctrl + V trong ô bên dưới</span></div><textarea aria-label="JSON kết quả phân cảnh" value={importText} disabled={importBusy} onChange={event => setImportText(event.target.value)} placeholder={'Dán toàn bộ JSON: {"scenes":[…]}'} spellCheck={false} />{importError && <p className="import-error" role="alert">{importError}</p>}<button type="button" className="analyze-all modal-copy" disabled={importBusy || !importPartId || !importText.trim()} onClick={saveImportedResult}>{importBusy ? 'Đang lưu kết quả…' : 'Lưu kết quả vào phần đã chọn'}</button></section></div>}
     {activeMenu === 0 ? <div className="workspace">
-      <section className="left-column panel"><div className="panel-heading"><FileText /><div><h1>1. PHÂN TÍCH KỊCH BẢN</h1><p>ChatGPT đọc kịch bản, tự chia thành số phần phù hợp, rồi phân tích chi tiết từng phần thành phân cảnh.</p></div></div>
+      <section className="left-column panel"><div className="panel-heading"><FileText /><div><h1>1. PHÂN TÍCH KỊCH BẢN</h1><p>ChatGPT đọc kịch bản, tự chia thành số phần phù hợp, rồi phân tích chi tiết từng phần thành phân cảnh.</p></div><button type="button" className="outline result-import-launch" disabled={!session?.parts?.length} onClick={openResultImport}>Dán JSON kết quả</button></div>
         <section className="script-box"><h2><FileText size={20} /> Toàn bộ kịch bản</h2><div className="file-row"><FileText size={22} /><div><b>{script.trim() ? 'Kịch bản đang chỉnh sửa' : 'Chưa có kịch bản'}</b><small>{sceneEstimate ? sceneEstimate + ' cảnh nhận diện · ' : ''}{script.length.toLocaleString('vi-VN')} ký tự</small></div><span className="uploaded">● Sẵn sàng</span><button type="button" className="outline"><Folder size={17} /> Thay đổi</button></div><textarea className="screenplay" value={script} onChange={event => changeScript(event.target.value)} placeholder="Dán hoặc nhập toàn bộ kịch bản tại đây…" /><p className="script-meta">Số ký tự: {script.length.toLocaleString('vi-VN')} <b>|</b> <span>{session?.status === 'structure_processing' ? 'ChatGPT đang phân tích cấu trúc' : storedParts.length ? 'Đã chia ' + storedParts.length + ' phần' : 'Chưa phân tích'}</span></p><div className="analysis-controls"><button className="analyze-all split-button" type="button" onClick={analyzeStructure} disabled={busy || session?.activeJob?.type === 'script_structure'}><Play size={18} fill="currentColor" /> {busy ? 'Đang khởi tạo…' : 'Phân tích & chia kịch bản'}</button><button className="danger split-button stop-analysis" type="button" onClick={stopWork} disabled={session?.activeJob?.type !== 'script_structure'}><Square size={16} /> Dừng phân tích</button><button className="outline split-button" type="button" onClick={captureResult} disabled={!session?.activeJob || session.activeJob.status !== 'waiting'}>Đồng bộ kết quả ngay{pendingSyncCount ? ' (' + pendingSyncCount + ')' : ''}</button></div></section>
         <section className="parts"><div className="section-toolbar"><h2>♙ Các phần phân tích <small>(5 phần/trang)</small></h2><div className="pager"><button type="button" onClick={() => setPartsPage(page => Math.max(0, page - 1))} disabled={safePartsPage === 0}>‹</button><span>{safePartsPage + 1} / {partsPageCount}</span><button type="button" onClick={() => setPartsPage(page => Math.min(partsPageCount - 1, page + 1))} disabled={safePartsPage >= partsPageCount - 1}>›</button></div></div><div className="part-list">{visibleParts.map((part, index) => { const waiting = part.id.startsWith('waiting-'); return <article className={'part-row ' + (activePart.id === part.id ? 'selected' : '') + (waiting ? ' placeholder-row' : '')} key={part.id}><button type="button" className="part-number" disabled={waiting} onClick={() => setActivePartId(part.id)}>{safePartsPage * partsPerPage + index + 1}</button><button type="button" className="part-label" disabled={waiting} onClick={() => setActivePartId(part.id)}><b>{waiting ? 'Đang chờ' : 'Phần ' + (safePartsPage * partsPerPage + index + 1) + ' · ' + shortText(partName(part.title), 44)}</b><span>{waiting ? 'Chờ nội dung phân tích' : shortText(part.range, 72)}</span><small>{waiting ? 'Đang chờ ChatGPT trả nội dung.' : shortText(part.content, 118)}</small></button><span className={'chip ' + (waiting || part.status === 'pending' ? 'waiting' : part.status)}>{waiting ? 'Đang chờ' : statusText(part.status)}</span><span className="percent">{waiting ? '—' : part.status === 'complete' ? '100%' : part.status === 'processing' ? '…' : '0%'}</span>{waiting ? <button type="button" className="outline action" disabled>Đang chờ</button> : part.status === 'processing' ? <button type="button" className="danger" onClick={stopWork}><Square size={13} /> Dừng</button> : part.status === 'complete' ? <button type="button" className="outline action" onClick={() => setActivePartId(part.id)}>◉ Xem kết quả</button> : <button type="button" className="outline action" onClick={() => runPart(part)}><Play size={14} fill="currentColor" /> Phân tích phân cảnh</button>}<button type="button" className="muted" disabled={waiting} onClick={() => runPart(part)}><RotateCcw size={15} /> Tạo lại</button></article>})}</div></section><p className="notice">{notice}</p>
       </section>

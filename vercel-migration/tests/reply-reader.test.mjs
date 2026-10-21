@@ -47,3 +47,13 @@ test('rejects partial JSON and wrong response schema', () => {
   assert.equal(reader.extract('{"scenes":[{"title":"unfinished"', 'part_analysis'), '');
   assert.equal(reader.extract('{"parts":[{"content":"wrong schema"}]}', 'part_analysis'), '');
 });
+
+test('does not discard a markdown answer when only user articles have explicit role attributes', () => {
+  const user = turn('user', 'Analyze part 3', { article: true });
+  const answer = turn('', scene('Markdown-only reply'));
+  answer.matches = () => true;
+  user.compareDocumentPosition = other => other === answer ? 4 : 0;
+  answer.compareDocumentPosition = other => other === user ? 2 : 0;
+  const doc = { querySelectorAll: selector => selector.startsWith('article') ? [user] : selector.startsWith('main') ? [answer] : [user] };
+  assert.equal(JSON.parse(reader.read(doc, { id: 'job-3', type: 'part_analysis', prompt: 'Analyze part 3' }).text).scenes[0].title, 'Markdown-only reply');
+});
