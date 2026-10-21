@@ -48,8 +48,18 @@ test('analysis results, repeated delivery, late error, stop and next part remain
     const secondJob = response.session.activeJob.id;
     await call('POST', `bridge/${id}/event`, completed);
     assert.equal(stored.activeJob.id, secondJob);
+    await call('POST', `bridge/${id}/event`, { jobId: secondJob, state: 'error', text: 'Timed out reading the page' });
+    assert.equal(stored.activeJob, null);
+    assert.equal(stored.lastJob.id, secondJob);
+    await call('POST', `bridge/${id}/event`, { jobId: secondJob, state: 'completed', text: JSON.stringify({ scenes: [{ title: 'Recovered result', prompt: 'A garden' }] }) });
+    assert.equal(stored.parts[1].status, 'complete');
+    assert.equal(stored.parts[0].scenes[0].prompt, 'Scene one');
+    response = await call('POST', `sessions/${id}/parts/${second}/analysis`);
+    const stoppedJobId = response.session.activeJob.id;
     await call('POST', `sessions/${id}/stop`);
     assert.equal(stored.activeJob, null);
+    assert.equal(stored.parts[1].status, 'stopped');
+    await call('POST', `bridge/${id}/event`, { jobId: stoppedJobId, state: 'completed', text: JSON.stringify({ scenes: [{ title: 'Stopped reply' }] }) });
     assert.equal(stored.parts[1].status, 'stopped');
     response = await call('POST', `sessions/${id}/parts/${second}/analysis`);
     assert.equal(response.session.activeJob.type, 'part_analysis');
@@ -59,6 +69,18 @@ test('analysis results, repeated delivery, late error, stop and next part remain
     response = await call('GET', `sessions/${id}`);
     assert.equal(response.session.parts[0].status, 'complete');
     assert.equal(response.session.parts[0].scenes[0].prompt, 'Scene one');
+    stored.activeJob = null;
+    stored.lastJob = undefined;
+    stored.parts[1].status = 'error';
+    const savedFirstPart = JSON.stringify(response.session.parts[0]);
+    response = await call('POST', `sessions/${id}/parts/${second}/recover`);
+    assert.equal(response.session.activeJob.status, 'waiting');
+    const recoverId = response.session.activeJob.id;
+    response = await call('GET', `bridge/${id}/next`);
+    assert.equal(response.command, null);
+    await call('POST', `bridge/${id}/event`, { jobId: recoverId, state: 'completed', text: JSON.stringify({ scenes: [{ title: 'Recovered legacy part', prompt: 'The existing result' }] }) });
+    assert.equal(stored.parts[1].status, 'complete');
+    assert.equal(JSON.stringify(stored.parts[0]), savedFirstPart);
   } finally {
     globalThis.fetch = originalFetch;
     for (const [name, value] of [['SUPABASE_URL', originalEnv.url], ['SUPABASE_SECRET_KEY', originalEnv.key]]) {

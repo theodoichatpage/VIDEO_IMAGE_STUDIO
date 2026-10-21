@@ -28,14 +28,15 @@ function bridge() {
     setTimeout, clearTimeout, console,
   });
   let source = readFileSync(new URL('../extension/content.js', import.meta.url), 'utf8');
-  source = source.replace('chrome.runtime.onMessage.addListener', 'globalThis.hooks = { jsonFromPage, clearImageMode, draftText, prepareDraft, restoreDraft, fillComposer, setBaseline: value => { baseline = value; }, setActive: value => { currentJobId = value; }, current: () => currentJobId }; chrome.runtime.onMessage.addListener');
+  vm.runInContext(readFileSync(new URL('../extension/reply-reader.js', import.meta.url), 'utf8'), context);
+  source = source.replace('chrome.runtime.onMessage.addListener', 'globalThis.hooks = { jsonFromPage, clearImageMode, draftText, prepareDraft, restoreDraft, fillComposer, setBaseline: () => { replyContext = { before: VISReplyReader.snapshot(document) }; }, setActive: value => { currentJobId = value; }, current: () => currentJobId }; chrome.runtime.onMessage.addListener');
   vm.runInContext(source, context);
   return {
     hooks: context.hooks,
     box,
     stored: () => stored,
     failStorage: () => { failStorage = true; },
-    turns: values => { turns = values.map(innerText => ({ innerText })); },
+    turns: values => { turns = values.map(value => ({ innerText: typeof value === 'string' ? value : value.text, getAttribute: name => name === "data-message-author-role" ? (value.role || "assistant") : "", querySelectorAll: () => [] })); },
     imageMode: () => { mode = { innerText: 'Create image', getBoundingClientRect: () => ({ width: 20, height: 20 }), parentElement: { querySelector: () => null } }; },
     message: message => { let result; listener(message, {}, value => { result = value; }); return result; },
   };
@@ -98,4 +99,13 @@ test('rejects a second job while busy and stop immediately releases the content 
   assert.equal(page.message({ type: 'vis-command', command: { id: 'part-three-job' } }).ok, false);
   assert.equal(page.message({ type: 'vis-stop' }).ok, true);
   assert.equal(page.hooks.current(), '');
+});
+
+test('manual sync recovers a completed part after the extension was reloaded', () => {
+  const page = bridge();
+  page.turns([{ role: 'user', text: 'TEXT ANALYSIS ONLY. Analyze the original part 3' }, { role: 'assistant', text: '{"scenes":[{"title":"Part 3 result","prompt":"A cinematic shot"}]}' }]);
+  const result = page.message({ type: 'vis-capture-result', jobId: 'existing-part-3', command: { id: 'existing-part-3', type: 'part_analysis', prompt: 'Analyze the original part 3' } });
+  assert.equal(result.ok, true);
+  assert.equal(result.payload.jobId, 'existing-part-3');
+  assert.equal(JSON.parse(result.payload.text).scenes[0].title, 'Part 3 result');
 });

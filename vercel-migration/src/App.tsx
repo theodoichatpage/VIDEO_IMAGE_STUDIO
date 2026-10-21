@@ -9,7 +9,7 @@ type Scene = { title: string; backdrop: string; content: string; character: stri
 type PartStatus = 'pending' | 'ready' | 'processing' | 'complete' | 'error' | 'stopped';
 type Part = { id: string; title: string; range: string; content: string; status: PartStatus; scenes: Scene[]; analysisText: string };
 type Job = { id: string; type: 'script_structure' | 'part_analysis' | 'image_generation'; status: string; prompt: string; partId?: string; sceneKey?: string };
-type Session = { id: string; script: string; status: string; activeJob?: Job | null; parts?: Part[]; bridgeLastSeen?: number; lastError?: string; updatedAt?: number };
+type Session = { id: string; script: string; status: string; activeJob?: Job | null; lastJob?: Job; parts?: Part[]; bridgeLastSeen?: number; lastError?: string; updatedAt?: number };
 
 const makeId = () => crypto.randomUUID().replaceAll('-', '');
 const statusText = (status: PartStatus) => ({ pending: 'Chưa phân tích', ready: 'Sẵn sàng phân cảnh', processing: 'Đang phân cảnh', complete: 'Hoàn tất', error: 'Lỗi', stopped: 'Đã dừng' }[status]);
@@ -123,7 +123,7 @@ function App() {
     return () => { window.removeEventListener('message', receive); window.clearInterval(timer); };
   }, [sessionId]);
 
-  const bridgeConnected = extensionPairCode === sessionId && extensionVersion === '0.4.9' && chatReady;
+  const bridgeConnected = extensionPairCode === sessionId && extensionVersion === '0.4.10' && chatReady;
   useEffect(() => {
     if (!bridgeConnected || !session?.activeJob || !['queued', 'sending'].includes(session.activeJob.status)) return;
     let cancelled = false;
@@ -184,7 +184,22 @@ function App() {
     window.postMessage({ source: 'vis-web', type: 'studio-bind-current-chat', pairCode: sessionId }, '*');
     setNotice('Đang yêu cầu Extension khóa vào hội thoại ChatGPT đang mở.');
   };
-  const captureResult = () => { if (!session?.activeJob) return; window.postMessage({ source: 'vis-web', type: 'studio-capture-result', jobId: session.activeJob.id }, '*'); setNotice('Đang yêu cầu tiện ích lấy phản hồi cuối từ ChatGPT…'); };
+  const syncJob = session?.activeJob || (session?.lastJob?.status === 'error' ? session.lastJob : null);
+  const recoveryPart = session?.parts?.find(part => part.id === activePartId);
+  const captureResult = async () => {
+    try {
+      let command = syncJob;
+      if (!command && recoveryPart) {
+        const { data } = await api.post('/api/sessions/' + sessionId + '/parts/' + recoveryPart.id + '/recover');
+        const next = data.session as Session;
+        setSession(next); command = next.activeJob || null;
+        if (!command) { setNotice('Phần này đã có kết quả được lưu.'); return; }
+      }
+      if (!command) return;
+      window.postMessage({ source: 'vis-web', type: 'studio-capture-result', jobId: command.id, command }, '*');
+      setNotice('Đang lấy JSON đã có trong đúng hội thoại ChatGPT để hoàn tất phần đang chờ…');
+    } catch (caught) { setNotice(caught instanceof Error ? caught.message : 'Không thể khởi tạo đồng bộ kết quả.'); }
+  };
   const changeStylePrompt = (value: string) => { setStylePrompt(value); localStorage.setItem('vis-style-prompt', value); };
   const combinedPrompt = (scene: Scene) => [stylePrompt.trim(), scene.prompt.trim()].filter(Boolean).join('\n\n');
   const queueImages = async (keys: string[]) => { if (!keys.length) return; try { await ensureSession(); const { data } = await api.post('/api/sessions/' + sessionId + '/images', { sceneKeys: keys, stylePrompt, ratio: imageRatio }); setSession(data.session as Session); setNotice(keys.length === 1 ? 'Đã xếp hàng tạo ảnh cho cảnh đang chọn.' : 'Đã xếp ' + keys.length + ' cảnh; ChatGPT sẽ tạo lần lượt từng ảnh.'); } catch (caught) { setNotice((caught as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Không thể đưa cảnh vào hàng đợi tạo ảnh.'); } };
@@ -214,7 +229,7 @@ function App() {
 
   return <main className="studio">
     <header className="topbar"><div className="brand"><Clapperboard size={30} /><strong>VIDEO IMAGE STUDIO</strong></div><nav aria-label="Các bước studio">{[[FileText, '1. Phân tích'], [Image, '2. Tạo ảnh'], [Square, '3. Tiến trình'], [Folder, '4. Dự án'], [Scissors, '5. Tách ảnh'], [VideoIcon, '6. Dựng video']].map(([Icon, label], index) => <button className={'nav-item ' + (index === activeMenu ? 'active' : '')} key={String(label)} type="button" onClick={() => setActiveMenu(index)}><Icon size={23} /><span>{label}</span></button>)}</nav><div className="top-tools"><span className={bridgeConnected ? 'top-connection online' : 'top-connection offline'}>{bridgeConnected ? '● Đã kết nối' : '● Chưa kết nối'}</span><button type="button" className="connect-button" onClick={() => setShowConnection(true)}>Kết nối ChatGPT</button><Settings size={18} /><span>Cài đặt</span><i>AI</i></div></header>
-    {showConnection && <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Kết nối ChatGPT"><section className="connection-dialog"><button type="button" className="modal-close" onClick={() => setShowConnection(false)} aria-label="Đóng">×</button><h2>Kết nối ChatGPT</h2><p className={bridgeConnected ? 'modal-status online' : 'modal-status offline'}>{bridgeConnected ? '● Đã kết nối ChatGPT · Extension v0.4.9' : '● Chưa kết nối ChatGPT'}</p>{conversationLabel && <p className="modal-help"><b>Hội thoại đang khóa:</b> {conversationLabel}</p>}<p className="modal-help">Mở đúng hội thoại ChatGPT bạn muốn dùng rồi bấm Kết nối hội thoại đang mở.</p><button type="button" className="analyze-all modal-copy" onClick={bindCurrentConversation}>Kết nối hội thoại đang mở</button>{!bridgeConnected && bridgeMessage && <p className="modal-help"><b>Lý do:</b> {bridgeMessage}</p>}{extensionVersion && extensionVersion !== '0.4.9' && <p className="modal-help"><b>Extension hiện tại: v{extensionVersion} — cần cài v0.4.9.</b></p>}<label>Mã kết nối<code>{sessionId}</code></label><button type="button" className="analyze-all modal-copy" onClick={() => copyPrompt(sessionId)}><Copy size={16} /> Sao chép mã kết nối</button><a className="outline modal-install" href="/resources/VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.9.zip" download>Tải Extension v0.4.9</a></section></div>}
+    {showConnection && <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Kết nối ChatGPT"><section className="connection-dialog"><button type="button" className="modal-close" onClick={() => setShowConnection(false)} aria-label="Đóng">×</button><h2>Kết nối ChatGPT</h2><p className={bridgeConnected ? 'modal-status online' : 'modal-status offline'}>{bridgeConnected ? '● Đã kết nối ChatGPT · Extension v0.4.10' : '● Chưa kết nối ChatGPT'}</p>{conversationLabel && <p className="modal-help"><b>Hội thoại đang khóa:</b> {conversationLabel}</p>}<p className="modal-help">Mở đúng hội thoại ChatGPT bạn muốn dùng rồi bấm Kết nối hội thoại đang mở.</p><button type="button" className="analyze-all modal-copy" onClick={bindCurrentConversation}>Kết nối hội thoại đang mở</button>{!bridgeConnected && bridgeMessage && <p className="modal-help"><b>Lý do:</b> {bridgeMessage}</p>}{extensionVersion && extensionVersion !== '0.4.10' && <p className="modal-help"><b>Extension hiện tại: v{extensionVersion} — cần cài v0.4.10.</b></p>}<label>Mã kết nối<code>{sessionId}</code></label><button type="button" className="analyze-all modal-copy" onClick={() => copyPrompt(sessionId)}><Copy size={16} /> Sao chép mã kết nối</button><a className="outline modal-install" href="/resources/VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.10.zip" download>Tải Extension v0.4.10</a></section></div>}
     {activeMenu === 0 ? <div className="workspace">
       <section className="left-column panel"><div className="panel-heading"><FileText /><div><h1>1. PHÂN TÍCH KỊCH BẢN</h1><p>ChatGPT đọc kịch bản, tự chia thành số phần phù hợp, rồi phân tích chi tiết từng phần thành phân cảnh.</p></div></div>
         <section className="script-box"><h2><FileText size={20} /> Toàn bộ kịch bản</h2><div className="file-row"><FileText size={22} /><div><b>{script.trim() ? 'Kịch bản đang chỉnh sửa' : 'Chưa có kịch bản'}</b><small>{sceneEstimate ? sceneEstimate + ' cảnh nhận diện · ' : ''}{script.length.toLocaleString('vi-VN')} ký tự</small></div><span className="uploaded">● Sẵn sàng</span><button type="button" className="outline"><Folder size={17} /> Thay đổi</button></div><textarea className="screenplay" value={script} onChange={event => changeScript(event.target.value)} placeholder="Dán hoặc nhập toàn bộ kịch bản tại đây…" /><p className="script-meta">Số ký tự: {script.length.toLocaleString('vi-VN')} <b>|</b> <span>{session?.status === 'structure_processing' ? 'ChatGPT đang phân tích cấu trúc' : storedParts.length ? 'Đã chia ' + storedParts.length + ' phần' : 'Chưa phân tích'}</span></p><div className="analysis-controls"><button className="analyze-all split-button" type="button" onClick={analyzeStructure} disabled={busy || session?.activeJob?.type === 'script_structure'}><Play size={18} fill="currentColor" /> {busy ? 'Đang khởi tạo…' : 'Phân tích & chia kịch bản'}</button><button className="danger split-button stop-analysis" type="button" onClick={stopWork} disabled={session?.activeJob?.type !== 'script_structure'}><Square size={16} /> Dừng phân tích</button><button className="outline split-button" type="button" onClick={captureResult} disabled={!session?.activeJob || session.activeJob.status !== 'waiting'}>Đồng bộ kết quả ngay{pendingSyncCount ? ' (' + pendingSyncCount + ')' : ''}</button></div></section>

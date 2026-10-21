@@ -1,11 +1,11 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_049__) return;
-  window.__VIS_CHAT_BRIDGE_049__ = true;
+  if (window.__VIS_CHAT_BRIDGE_0410__) return;
+  window.__VIS_CHAT_BRIDGE_0410__ = true;
   let currentJobId = '';
   let currentJobType = '';
   let cancelled = false;
   let generation = 0;
-  let baseline = 0;
+  let replyContext = {};
   const finished = new Set();
 
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -23,49 +23,11 @@
     const buttons = [...(form?.querySelectorAll("button[type='submit'], button[data-testid='send-button']") || []), ...document.querySelectorAll(selector)];
     return buttons.find(button => !button.disabled && isVisible(button));
   };
-  const jsonFromPage = kind => {
-    const sources = [
-      ...[...document.querySelectorAll('[data-message-author-role="assistant"]')].slice(baseline).slice(-1).map(node => node.innerText || node.textContent || ''),
-    ];
-    for (const text of sources) {
-      const keys = kind === 'script_structure' ? ['"parts"'] : kind === 'part_analysis' ? ['"scenes"'] : ['"parts"', '"scenes"'];
-      const matches = keys.flatMap(key => [...text.matchAll(new RegExp(key, 'g'))].map(match => match.index ?? -1)).sort((a, b) => b - a);
-      for (const index of matches) {
-        const start = text.lastIndexOf('{', index);
-        if (start < 0) continue;
-        let depth = 0;
-        let quote = false;
-        let escaped = false;
-        for (let cursor = start; cursor < text.length; cursor += 1) {
-          const char = text[cursor];
-          if (quote) {
-            if (escaped) escaped = false;
-            else if (char === '\\') escaped = true;
-            else if (char === '"') quote = false;
-            continue;
-          }
-          if (char === '"') { quote = true; continue; }
-          if (char === '{') depth += 1;
-          if (char === '}') depth -= 1;
-          if (depth === 0) {
-            const candidate = text.slice(start, cursor + 1);
-            try {
-              const parsed = JSON.parse(candidate);
-              if (Array.isArray(parsed?.[kind === 'script_structure' ? 'parts' : 'scenes'])) return candidate;
-            } catch {}
-            break;
-          }
-        }
-      }
-    }
-    return '';
-  };
+  const jsonFromPage = kind => VISReplyReader.read(document, { ...replyContext, type: kind }).text;
   const assistantText = kind => {
     const structured = jsonFromPage(kind);
     if (structured) return structured;
-    const turns = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
-    const last = turns.length > baseline ? turns.at(-1) : null;
-    return (last?.innerText || last?.textContent || '').trim();
+    return (VISReplyReader.sources(document, replyContext).sources.at(-1) || '').trim();
   };
   const emit = payload => chrome.runtime.sendMessage({ type: 'vis-chat-event', payload }).catch(() => null);
 
@@ -115,8 +77,8 @@
     try {
       while (Date.now() < deadline) {
         if (cancelled || token !== generation) throw new Error('Đã dừng tác vụ.');
-        const newTurns = [...document.querySelectorAll('[data-message-author-role="assistant"]')].slice(baseline);
-        if (kind !== 'image_generation' && newTurns.some(node => /creating image|đang tạo (hình )?ảnh/i.test(node.innerText || ''))) {
+        const newTexts = VISReplyReader.sources(document, replyContext).sources;
+        if (kind !== 'image_generation' && newTexts.some(text => /creating image|đang tạo (hình )?ảnh/i.test(text))) {
           stopButton()?.click();
           throw new Error('ChatGPT đã chuyển sang tạo ảnh. Đã yêu cầu dừng; hãy tắt chế độ Tạo ảnh và phân tích lại phần này.');
         }
@@ -221,7 +183,7 @@
     currentJobType = String(command.type || '');
     cancelled = false;
     const token = ++generation;
-    baseline = document.querySelectorAll('[data-message-author-role="assistant"]').length;
+    replyContext = { ...command, before: VISReplyReader.snapshot(document) };
     try {
       if (isGenerating()) throw new Error('ChatGPT đang trả lời. Hãy bấm Dừng trước khi gửi phần tiếp theo.');
       if (command.type !== 'image_generation') await clearImageMode();
@@ -238,7 +200,7 @@
         return;
       }
       const before = assistantText(currentJobType);
-      await fillComposer('TEXT ANALYSIS ONLY. DO NOT GENERATE IMAGES OR USE IMAGE TOOLS. Return only the requested JSON.\n' + command.prompt);
+      await fillComposer('[VIS_JOB_ID:' + command.id + ']\nTEXT ANALYSIS ONLY. DO NOT GENERATE IMAGES OR USE IMAGE TOOLS. Return only the requested JSON.\n' + command.prompt);
       if (token !== generation || cancelled) return;
       if (activeImageMode()) throw new Error('Chế độ Tạo ảnh vẫn bật. Chưa gửi lệnh phân tích.');
       await submit(token);
@@ -260,7 +222,7 @@
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.9', conversationLabel: location.pathname }); return; }
+    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.10', conversationLabel: location.pathname }); return; }
     if (message?.type === 'vis-restore-draft') {
       restoreDraft().then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));
       return true;
@@ -283,16 +245,17 @@
       return;
     }
     if (message?.type === 'vis-capture-result') {
-      if (!currentJobId || currentJobId !== message.jobId || isGenerating()) { sendResponse({ ok: false, error: 'Phần hiện tại chưa có kết quả hoàn chỉnh trong tab này.' }); return; }
+      const context = message.command?.id === message.jobId ? message.command : currentJobId === message.jobId ? replyContext : null;
+      if (!context?.id || isGenerating()) { sendResponse({ ok: false, error: 'Chưa nhận diện được tác vụ đang chờ hoặc ChatGPT vẫn đang trả lời.' }); return; }
       if (String(message.jobType || currentJobType || '') === 'image_generation') {
         const imageUrl = imageUrls().at(-1);
         if (!imageUrl) { sendResponse({ ok: false, error: 'ChatGPT chưa có ảnh để đồng bộ.' }); return; }
         sendResponse({ ok: true, payload: { jobId: String(message.jobId || currentJobId), state: 'completed', imageUrl } });
         return;
       }
-      const text = jsonFromPage(String(message.jobType || currentJobType || ''));
-      if (!text) { sendResponse({ ok: false, error: 'ChatGPT chưa có phản hồi để đồng bộ.' }); return; }
-      sendResponse({ ok: true, payload: { jobId: String(message.jobId || currentJobId), state: 'completed', text } });
+      const result = VISReplyReader.read(document, { ...context, type: context.type || message.jobType || currentJobType });
+      if (!result.text) { sendResponse({ ok: false, error: result.reason === 'latest-user-mismatch' ? 'Tab ChatGPT đang mở không có lệnh của phần cần đồng bộ. Hãy mở đúng hội thoại đã trả lời phần này.' : result.reason === 'invalid-json' ? 'Đã tìm thấy phản hồi đúng phần nhưng JSON chưa đầy đủ hoặc không hợp lệ.' : 'Chưa đọc được câu trả lời sau lệnh của phần này. Giữ tab ChatGPT mở ở cuối phản hồi rồi bấm Đồng bộ lại.' }); return; }
+      sendResponse({ ok: true, payload: { jobId: context.id, state: 'completed', text: result.text } });
     }
   });
 })();

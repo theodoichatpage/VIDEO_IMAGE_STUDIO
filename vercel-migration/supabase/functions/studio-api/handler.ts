@@ -4,7 +4,7 @@ type ResponseLike = { setHeader(name: string, value: string): void; status(code:
 type Scene = { title: string; backdrop: string; content: string; character: string; emotion: string; shot: string; image: string; prompt: string; imageStatus?: string; imageResults?: { url: string; prompt: string; createdAt: number }[]; imagePrompt?: string; imageError?: string };
 type Part = { id: string; title: string; range: string; content: string; status: string; scenes: Scene[]; analysisText: string };
 type Job = { id: string; type: 'script_structure' | 'part_analysis' | 'image_generation'; status: string; prompt: string; partId?: string; sceneKey?: string; protocol: 2 | 3 };
-type Session = { id: string; script: string; status: string; activeJob: Job | null; parts: Part[]; imageJobs: Job[]; updatedAt: number; bridgeLastSeen?: number; finishedJobIds?: string[]; lastError?: string };
+type Session = { id: string; script: string; status: string; activeJob: Job | null; lastJob?: Job; parts: Part[]; imageJobs: Job[]; updatedAt: number; bridgeLastSeen?: number; finishedJobIds?: string[]; lastError?: string };
 
 const idOk = (value: string) => /^[A-Za-z0-9-]{16,64}$/.test(value);
 const newId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -111,6 +111,19 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         part.status = 'processing'; part.scenes = []; part.analysisText = ''; session.lastError = ''; session.status = 'part_processing'; session.activeJob = { id: newId(), type: 'part_analysis', status: 'queued', prompt: partPrompt(part), partId: part.id, protocol: 2 };
         return send(res, 200, { session: await write(session) });
       }
+      if (path[2] === 'parts' && path[3] && path[4] === 'recover' && req.method === 'POST') {
+        const part = session.parts.find(item => item.id === path[3]);
+        if (!part) return fail(res, 'Không tìm thấy phần cần đồng bộ.', 404);
+        if (session.activeJob) {
+          if (session.activeJob.type === 'part_analysis' && session.activeJob.partId === part.id) return send(res, 200, { session });
+          return fail(res, 'Một phần khác đang xử lý. Hãy hoàn tất hoặc dừng phần đó trước.', 409);
+        }
+        if (part.status === 'complete' && part.scenes.length) return send(res, 200, { session });
+        part.status = 'processing'; session.status = 'part_processing'; session.lastError = '';
+        // Waiting means receive an existing response only; never dispatch another ChatGPT prompt.
+        session.activeJob = { id: newId(), type: 'part_analysis', status: 'waiting', prompt: partPrompt(part), partId: part.id, protocol: 2 };
+        return send(res, 200, { session: await write(session) });
+      }
       if (path[2] === 'images' && req.method === 'POST') {
         if (session.activeJob) return fail(res, 'Hãy hoàn tất hoặc dừng tác vụ đang chạy trước.', 409);
         const style = String(body.stylePrompt || '').trim(); const keys = [...new Set(((body.sceneKeys as unknown[]) || []).map(String))]; if (!style || !keys.length) return fail(res, 'Cần chọn cảnh và nhập prompt phong cách chung.');
@@ -120,6 +133,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         session.imageJobs.push(...jobs); nextImage(session); return send(res, 200, { session: await write(session) });
       }
       if (path[2] === 'stop' && req.method === 'POST') {
+        if (session.activeJob) session.lastJob = { ...session.activeJob, status: 'stopped' };
         if (session.activeJob) session.finishedJobIds = [...(session.finishedJobIds || []), session.activeJob.id].slice(-200);
         if (session.activeJob?.type === 'image_generation') { const target = session.activeJob.sceneKey ? findScene(session, session.activeJob.sceneKey) : undefined; if (target?.scene) target.scene.imageStatus = 'stopped'; session.imageJobs = []; }
         else if (session.activeJob?.partId) { const part = session.parts.find(item => item.id === session.activeJob?.partId); if (part) part.status = 'stopped'; }
@@ -132,10 +146,18 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       if (path[2] === 'next' && req.method === 'GET') { const job = session.activeJob; if (!job || !['queued','sending'].includes(job.status)) return send(res, 200, { command: null }); if (!current(job)) { session.activeJob = null; session.status = 'parts_ready'; await write(session); return send(res, 200, { command: null, discarded: true }); } if (job.status === 'queued') { job.status = 'sending'; await write(session); } return send(res, 200, { command: job }); }
       if (path[2] === 'event' && req.method === 'POST') {
         const eventJobId = String(body.jobId || '');
-        const job = session.activeJob;
+        let job = session.activeJob;
+        if (!job && body.state === 'completed' && session.lastJob?.id === eventJobId && session.lastJob.status === 'error' && session.lastJob.type !== 'image_generation') {
+          job = { ...session.lastJob, status: 'waiting' };
+          session.activeJob = job;
+          session.finishedJobIds = (session.finishedJobIds || []).filter(id => id !== eventJobId);
+        }
         if (session.finishedJobIds?.includes(eventJobId) || !job || eventJobId !== job.id) return send(res, 200, { session, acknowledged: true, ignored: true });
         const state = String(body.state || ''); const message = String(body.text || '').trim();
-        if (['completed', 'error'].includes(state)) session.finishedJobIds = [...(session.finishedJobIds || []), job.id].slice(-200);
+        if (['completed', 'error'].includes(state)) {
+          session.finishedJobIds = [...(session.finishedJobIds || []), job.id].slice(-200);
+          session.lastJob = { ...job, status: state };
+        }
         if (state === 'sent') { job.status = 'waiting'; if (job.type === 'image_generation' && job.sceneKey) { const target = findScene(session, job.sceneKey); if (target.scene) target.scene.imageStatus = 'generating'; } return send(res, 200, { session: await write(session) }); }
         if (state === 'error') { if (job.type === 'image_generation') finishImage(session, 'error', '', message || 'ChatGPT không tạo được ảnh.'); else { if (job.partId) { const part = session.parts.find(item => item.id === job.partId); if (part) part.status = 'error'; } session.activeJob = null; session.status = 'error'; session.lastError = message || 'ChatGPT không thể hoàn tất tác vụ.'; } return send(res, 200, { session: await write(session) }); }
         if (state === 'completed' && job.type === 'image_generation') { const url = String(body.imageUrl || ''); if (!/^https?:\/\//.test(url)) return fail(res, 'Không đọc được URL ảnh từ ChatGPT.', 422); finishImage(session, 'complete', url); return send(res, 200, { session: await write(session) }); }

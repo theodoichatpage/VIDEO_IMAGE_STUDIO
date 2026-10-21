@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_WEB_BRIDGE_049__) return;
-  window.__VIS_WEB_BRIDGE_049__ = true;
+  if (window.__VIS_WEB_BRIDGE_0410__) return;
+  window.__VIS_WEB_BRIDGE_0410__ = true;
 
   const postStatus = async () => {
     try {
@@ -55,7 +55,7 @@
     }
     if (event.data.type === 'studio-capture-result') {
       try {
-        const response = await chrome.runtime.sendMessage({ type: 'vis-capture-result', jobId: event.data.jobId });
+        const response = await chrome.runtime.sendMessage({ type: 'vis-capture-result', jobId: event.data.jobId, command: event.data.command });
         if (!response?.ok) throw new Error(response?.error || 'Chưa đồng bộ được kết quả.');
       } catch (error) {
         window.postMessage({ source: 'vis-extension', type: 'studio-error', message: error?.message || String(error) }, '*');

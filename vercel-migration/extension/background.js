@@ -19,7 +19,7 @@ async function ensureChatReceiver() {
     if (pong?.ready) return tab;
   } catch {}
   try {
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['reply-reader.js', 'content.js'] });
   } catch (error) {
     throw new Error('Không thể nạp cầu nối vào tab ChatGPT. Hãy tải lại tab ChatGPT rồi thử lại. ' + (error?.message || ''));
   }
@@ -55,7 +55,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       let error = '';
       try { await ensureChatReceiver(); chatReady = true; } catch (caught) { error = caught?.message || String(caught); }
       const pending = await chrome.storage.local.get(['pendingChatEvents']);
-      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, version: '0.4.9', pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
+      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, version: '0.4.10', pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
       return;
     }
     if (message?.type === 'vis-pair') {
@@ -66,7 +66,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (chosen) await chrome.storage.local.set({ chatTabId: chosen.id });
       await ensureChatReceiver();
       await chrome.storage.local.set({ pairCode, ...(message.studioOrigin ? { studioOrigin: String(message.studioOrigin) } : {}) });
-      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.9' });
+      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.10' });
       await broadcastToStudio({ type: 'vis-status-changed' });
       return;
     }
@@ -80,6 +80,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const stored = await chrome.storage.local.get(['pairCode']);
       if (!stored.pairCode || stored.pairCode !== message.pairCode) throw new Error('Mã kết nối không khớp. Hãy kết nối lại tiện ích.');
       const tab = await ensureChatReceiver();
+      await chrome.storage.local.set({ activeCommand: message.command });
       const result = await chrome.tabs.sendMessage(tab.id, { type: 'vis-command', command: message.command });
       if (!result?.ok) throw new Error(result?.error || 'ChatGPT không nhận được lệnh.');
       await chrome.storage.local.set({ activeJobId: message.command.id, activeJobType: String(message.command.type || ''), chatTabId: tab.id });
@@ -105,11 +106,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
     if (message?.type === 'vis-capture-result') {
-      const stored = await chrome.storage.local.get(['activeJobId', 'activeJobType']);
-      const jobId = String(message.jobId || stored.activeJobId || '');
+      const stored = await chrome.storage.local.get(['activeJobId', 'activeJobType', 'activeCommand', 'pairCode']);
+      let command = message.command;
+      if (!command || (message.jobId && command.id !== message.jobId)) {
+        if (!stored.pairCode) throw new Error('Hãy kết nối tiện ích với web trước khi đồng bộ.');
+        const response = await fetch('https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api?path=' + encodeURIComponent('sessions/' + stored.pairCode));
+        const data = await response.json();
+        if (!response.ok || data.error) throw new Error(data.error || 'Không lấy được tác vụ đang chờ từ web.');
+        command = data.session?.activeJob || (data.session?.lastJob?.status === 'error' ? data.session.lastJob : null);
+      }
+      const jobId = String(message.jobId || command?.id || '');
       if (!jobId) throw new Error('Không có tác vụ nào đang chờ kết quả.');
+      if (!command || command.id !== jobId) throw new Error('Không tìm thấy đúng lệnh đang chờ trong dự án. Tải lại web rồi đồng bộ lại.');
       const tab = await ensureChatReceiver();
-      const result = await chrome.tabs.sendMessage(tab.id, { type: 'vis-capture-result', jobId, jobType: stored.activeJobType || '' });
+      const result = await chrome.tabs.sendMessage(tab.id, { type: 'vis-capture-result', jobId, jobType: command.type, command });
       if (!result?.ok || !result.payload) throw new Error(result?.error || 'Chưa đọc được phản hồi cuối từ ChatGPT.');
       await queueAndBroadcast(result.payload);
       sendResponse({ ok: true });
@@ -126,7 +136,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       await chrome.storage.local.set({ pendingChatEvents: events });
       if (!events.some(item => item?.jobId === message.jobId)) {
         const active = await chrome.storage.local.get(['activeJobId']);
-        if (active.activeJobId === message.jobId) await chrome.storage.local.remove(['activeJobId', 'activeJobType']);
+        if (active.activeJobId === message.jobId) await chrome.storage.local.remove(['activeJobId', 'activeJobType', 'activeCommand']);
       }
       sendResponse({ ok: true });
       return;
