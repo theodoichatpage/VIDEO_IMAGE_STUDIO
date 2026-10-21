@@ -92,3 +92,6 @@ nav { flex: 1; display: flex; gap: 8px; justify-content: center; }
 .import-clipboard { display: flex; align-items: center; gap: 10px; margin-top: 12px; color: #617b9e; font-size: 12px; }
 .import-error { margin-top: 10px; padding: 9px; border-radius: 6px; color: #ad2e2e; background: #fff0f0; font-size: 13px; line-height: 1.5; }
 
+.restart-analysis { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:8px 2px; color:#60799c; font:12px Arial; }
+.restart-analysis button { flex-shrink:0; font:12px Arial; }
+.restart-analysis button:disabled { opacity:.38; cursor:not-allowed; }

@@ -4,7 +4,7 @@ type ResponseLike = { setHeader(name: string, value: string): void; status(code:
 type Scene = { title: string; backdrop: string; content: string; character: string; emotion: string; shot: string; image: string; prompt: string; imageStatus?: string; imageResults?: { url: string; prompt: string; createdAt: number }[]; imagePrompt?: string; imageError?: string };
 type Part = { id: string; title: string; range: string; content: string; status: string; scenes: Scene[]; analysisText: string; receivedAt?: number };
 type Job = { id: string; type: 'script_structure' | 'part_analysis' | 'image_generation'; status: string; prompt: string; partId?: string; sceneKey?: string; protocol: 2 | 3 };
-type Session = { id: string; script: string; status: string; activeJob: Job | null; lastJob?: Job; parts: Part[]; imageJobs: Job[]; updatedAt: number; bridgeLastSeen?: number; finishedJobIds?: string[]; lastError?: string };
+type Session = { id: string; script: string; status: string; activeJob: Job | null; lastJob?: Job; parts: Part[]; imageJobs: Job[]; updatedAt: number; bridgeLastSeen?: number; finishedJobIds?: string[]; lastError?: string; analysisBackup?: { script: string; parts: Part[]; savedAt: number } };
 
 const idOk = (value: string) => /^[A-Za-z0-9-]{16,64}$/.test(value);
 const newId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -127,6 +127,8 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       if (path[2] === 'analysis' && req.method === 'POST') {
         if (session.activeJob && !['completed','error','stopped'].includes(session.activeJob.status)) return fail(res, 'Một tác vụ đang chờ ChatGPT.', 409);
         const script = String(body.script || '').trim(); if (!script) return fail(res, 'Kịch bản không được để trống.');
+        if (session.parts.length && body.confirmReset !== true) return fail(res, 'Kịch bản đã được phân tích. Muốn làm lại, hãy dùng Phân tích lại toàn bộ và xác nhận.', 409);
+        if (session.parts.length) session.analysisBackup = { script: session.script, parts: structuredClone(session.parts), savedAt: Date.now() };
         session.script = script; session.parts = []; session.lastError = ''; session.status = 'structure_processing'; session.activeJob = { id: newId(), type: 'script_structure', status: 'queued', prompt: structurePrompt(script), protocol: 2 };
         return send(res, 200, { session: await write(session) });
       }

@@ -36,6 +36,9 @@ test('analysis results, repeated delivery, late error, stop and next part remain
     let job = response.session.activeJob.id;
     await call('POST', `bridge/${id}/event`, { jobId: job, state: 'completed', text: JSON.stringify({ parts: [{ title: 'Phần 1', content: 'Sự kiện một.' }, { title: 'Phần 2', content: 'Sự kiện hai.' }] }) });
     const first = stored.parts[0].id, second = stored.parts[1].id;
+    const beforeAccidentalReset = JSON.stringify(stored);
+    await call('POST', `sessions/${id}/analysis`, { script: 'Một câu chuyện gồm hai sự kiện.' }, 409);
+    assert.equal(JSON.stringify(stored), beforeAccidentalReset);
     response = await call('POST', `sessions/${id}/parts/${first}/analysis`);
     job = response.session.activeJob.id;
     const completed = { jobId: job, state: 'completed', text: JSON.stringify({ scenes: [{ title: 'Cảnh 1', content: 'Nội dung', prompt: 'Scene one' }] }) };
@@ -114,6 +117,11 @@ test('analysis results, repeated delivery, late error, stop and next part remain
     assert.equal(stored.parts[1].status, 'complete');
     response = await call('POST', `sessions/${id}/parts/${second}/analysis`);
     assert.equal(response.session.activeJob.type, 'part_analysis');
+    await call('POST', `sessions/${id}/stop`);
+    const preservedParts = JSON.stringify(stored.parts);
+    response = await call('POST', `sessions/${id}/analysis`, { script: 'Kịch bản mới đã xác nhận.', confirmReset: true });
+    assert.equal(response.session.parts.length, 0);
+    assert.equal(JSON.stringify(response.session.analysisBackup.parts), preservedParts);
   } finally {
     globalThis.fetch = originalFetch;
     for (const [name, value] of [['SUPABASE_URL', originalEnv.url], ['SUPABASE_SECRET_KEY', originalEnv.key]]) {
