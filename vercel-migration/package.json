@@ -4,7 +4,9 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
+    "predev": "python3 scripts/apply_image_separation_tab.py",
     "dev": "vite",
+    "prebuild": "python3 scripts/apply_image_separation_tab.py",
     "build": "vite build",
     "preview": "vite preview"
   },
