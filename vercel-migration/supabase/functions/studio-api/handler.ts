@@ -106,7 +106,7 @@ function normalizeScenes(value: unknown): Scene[] {
   if (!Array.isArray(value) || !value.length) throw new Error('ChatGPT chưa trả về scenes.');
   return value.slice(0, 30).map((item, index) => { const row = item && typeof item === 'object' ? item as Record<string, unknown> : {}; return { title: String(row.title || 'Cảnh ' + (index + 1)), backdrop: String(row.backdrop || 'Theo kịch bản'), content: String(row.content || ''), character: String(row.character || 'Theo kịch bản'), emotion: String(row.emotion || 'Theo ngữ cảnh'), shot: String(row.shot || 'Góc máy điện ảnh'), image: String(row.image || 'Theo nội dung cảnh'), prompt: String(row.prompt || ''), imageStatus: 'waiting', imageResults: [] }; });
 }
-function imagePrompt(style: string, scene: Scene, ratio: string) { return 'Generate exactly ONE standalone image for a YouTube video slide. Do not create a collage, contact sheet, split panel, text, logo, or watermark. Aspect ratio: ' + ratio + '.\n\nGLOBAL STYLE:\n' + style + '\n\nSCENE:\n' + scene.prompt; }
+function imagePrompt(style: string, scene: Scene, ratio: string) { const template = style.trim(); const scenePrompt = scene.prompt.trim(); const placeholder = /\{\{\s*SCENE_PROMPT\s*\}\}/gi; if (placeholder.test(template)) return template.replace(placeholder, scenePrompt); return [template, 'SCENE:\n' + scenePrompt].filter(Boolean).join('\n\n'); }
 
 export default async function handler(req: RequestLike, res: ResponseLike) {
   res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Access-Control-Allow-Headers', 'Content-Type'); res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
