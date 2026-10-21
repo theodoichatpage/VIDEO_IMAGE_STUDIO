@@ -6,6 +6,35 @@ import { readFileSync } from 'node:fs';
 const context = vm.createContext({});
 vm.runInContext(readFileSync(new URL('../extension/reply-reader.js', import.meta.url), 'utf8'), context);
 const reader = context.VISReplyReader;
+function wordStreamPage(prompt, response, later = '') {
+  const nodes = [prompt, response, later].filter(Boolean).map((value, index) => ({
+    innerText: value, textContent: value,
+    getAttribute: name => name === 'class' ? index === 0 ? 'UserBubble-a TextBase-b' : 'DiResponseRoot-HfQrEh Reveal-k2IWvM' : '',
+    matches: selector => index > 0 && selector.includes('ResponseRoot-'),
+    closest() { return null; }, querySelector() { return null; }, querySelectorAll() { return []; },
+    contains(other) { return this === other; },
+    compareDocumentPosition(other) { return nodes.indexOf(this) < nodes.indexOf(other) ? 4 : 2; },
+  }));
+  return { querySelectorAll(selector) {
+    if (selector === '[class*="ResponseRoot-"]') return nodes.slice(1);
+    if (selector === 'div, p') return nodes;
+    return [];
+  } };
+}
+
+test('reads 15 scenes from the ResponseRoot word-stream markup observed in the user screenshot', () => {
+  const prompt = 'PHẦN: Phần 3 - Nghệ thuật NỘI DUNG: ' + 'Một câu chuyện tiền sử về chuỗi vỏ sò. '.repeat(6);
+  const scenes = Array.from({ length: 15 }, (_, i) => ({ title: 'Cảnh ' + (i + 1), prompt: 'Camera shot ' + (i + 1) }));
+  const result = reader.readStreaming(wordStreamPage(prompt + ' Show more', JSON.stringify({ scenes }), JSON.stringify({ scenes: [{ title: 'Unrelated later answer', prompt: 'Other' }] })), { id: 'recovered-job-3', type: 'part_analysis', prompt });
+  assert.equal(result.complete, true);
+  assert.equal(JSON.parse(result.text).scenes.length, 15);
+});
+
+test('does not attach a ResponseRoot answer to a different part', () => {
+  const prompt = 'PHẦN: Phần 3 NỘI DUNG: ' + 'Một câu chuyện về nghệ thuật. '.repeat(6);
+  const result = reader.read(wordStreamPage(prompt, '{"scenes":[{"prompt":"A shell"}]}'), { type: 'part_analysis', prompt: prompt.replace('Phần 3', 'Phần 5') });
+  assert.equal(result.text, '');
+});
 const scene = title => JSON.stringify({ scenes: [{ title, content: 'A {scene} with "quoted text"', prompt: 'A cinematic shot' }] });
 test('matches a collapsed legacy prompt by exact part title and source opening', () => {
   const head = 'PHẦN: Phần 5 - Buồn chán đánh thức trí tưởng tượng\nNỘI DUNG:\n';

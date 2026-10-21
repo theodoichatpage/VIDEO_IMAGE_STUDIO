@@ -1,12 +1,14 @@
 (() => {
   const normalize = text => String(text || '').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
   const text = node => node?.innerText || node?.textContent || '';
+  const wordResponse = node => String(node?.getAttribute?.('class') || '').includes('ResponseRoot-');
   const roleOf = node => {
     const direct = node.getAttribute?.('data-message-author-role') || node.getAttribute?.('data-turn');
     if (['user', 'assistant'].includes(direct)) return direct;
     const parent = node.closest?.('[data-message-author-role], [data-turn="user"], [data-turn="assistant"]');
     const parentRole = parent?.getAttribute('data-message-author-role') || parent?.getAttribute('data-turn');
     if (['user', 'assistant'].includes(parentRole)) return parentRole;
+    if (wordResponse(node)) return 'assistant';
     const hasUser = node.querySelector?.('[data-message-author-role="user"]');
     const hasAssistant = node.querySelector?.('[data-message-author-role="assistant"]');
     if (hasUser && hasAssistant) return '';
@@ -17,17 +19,28 @@
     if (/^(chatgpt said|chatgpt đã nói|chatgpt nói)\s*:?$/i.test(heading)) return 'assistant';
     return '';
   };
-  function turns(document) {
+  function turns(document, context = {}) {
+    // The user's page renders messages as ResponseRoot + data-stream-word,
+    // without article/role/markdown attributes. Locate prompt blocks outside
+    // response roots, then preserve DOM order to pair the matching reply.
+    const wordRoots = [...document.querySelectorAll('[class*="ResponseRoot-"]')].filter(wordResponse);
+    const promptBlocks = wordRoots.length && context.prompt ? [...document.querySelectorAll('div, p')].filter(node => {
+      if (wordResponse(node) || wordResponse(node.closest?.('[class*="ResponseRoot-"]')) || wordResponse(node.querySelector?.('[class*="ResponseRoot-"]'))) return false;
+      const value = normalize(text(node));
+      return value.includes('[VIS_JOB_ID:') || /PHẦN:.*NỘI DUNG:/.test(value) || matchesPrompt(value, context);
+    }) : [];
+    const hintedUsers = new Set(promptBlocks);
+    const role = node => hintedUsers.has(node) ? 'user' : roleOf(node);
     const headings = [...document.querySelectorAll('h5, h6, [role="heading"]')].filter(node => /^(you said|bạn đã nói|bạn nói|chatgpt said|chatgpt đã nói|chatgpt nói)\s*:?$/i.test(normalize(node.textContent)));
     const semanticTurns = headings.map(node => node.closest?.('article, [data-testid*="conversation-turn"], [data-turn]') || node.parentElement).filter(Boolean);
     const candidates = [...document.querySelectorAll('[data-testid^="conversation-turn-"], [data-testid="conversation-turn"], [data-turn="user"], [data-turn="assistant"], main article, [role="main"] article, article'), ...semanticTurns, ...document.querySelectorAll('article[data-testid^="conversation-turn-"], article[data-turn]'), ...document.querySelectorAll('[data-message-author-role="user"], [data-message-author-role="assistant"]'), ...document.querySelectorAll('main .markdown, main .agent-turn')];
-    const nodes = [...new Set(candidates)].filter(node => ['user', 'assistant'].includes(roleOf(node)));
-    const top = nodes.filter((node, index) => !nodes.some((parent, other) => index !== other && roleOf(parent) === roleOf(node) && parent.contains?.(node)));
+    const nodes = [...new Set([...candidates, ...wordRoots, ...promptBlocks])].filter(node => ['user', 'assistant'].includes(role(node)));
+    const top = nodes.filter((node, index) => !nodes.some((parent, other) => index !== other && role(parent) === role(node) && parent.contains?.(node)));
     top.sort((a, b) => {
       const position = a.compareDocumentPosition?.(b) || 0;
       return position & 4 ? -1 : position & 2 ? 1 : 0;
     });
-    return top.map(node => ({ role: roleOf(node), node, text: text(node) }));
+    return top.map(node => ({ role: role(node), node, text: text(node) }));
   }
   function fingerprint(turn) {
     const identity = turn.node.getAttribute?.('data-message-id') || turn.node.getAttribute?.('data-testid') || '';
@@ -47,7 +60,7 @@
     return Boolean(shown && shown[1] === match[1] && shown[2].startsWith(match[2].slice(0, 80)));
   }
   function sources(document, context = {}) {
-    const messages = turns(document);
+    const messages = turns(document, context);
     const latestUser = messages.findLastIndex(turn => turn.role === 'user');
     let answers;
     if (latestUser >= 0) {
@@ -59,10 +72,11 @@
       if (!Array.isArray(context.before)) return { sources: [], reason: 'no-user-anchor' };
       answers = messages.filter(turn => turn.role === 'assistant' && !context.before.includes(fingerprint(turn)));
     }
-    const answer = answers.at(-1);
+    const answer = answers.find(turn => wordResponse(turn.node)) || answers.at(-1);
     if (!answer) return { sources: [], reason: 'no-new-answer' };
     const code = [...(answer.node.querySelectorAll?.('pre code, pre') || [])].map(node => node.textContent || text(node));
-    return { sources: [...new Set([...code, answer.text, answer.node.textContent || ''].filter(Boolean))], reason: 'matched' };
+    const words = [...(answer.node.querySelectorAll?.('[data-stream-word], [data-d-stream-word]') || [])].map(node => node.textContent || '').join(' ');
+    return { sources: [...new Set([...code, answer.text, answer.node.textContent || '', words].filter(Boolean))], reason: 'matched' };
   }
   function extract(source, kind) {
     const key = kind === 'script_structure' ? 'parts' : kind === 'part_analysis' ? 'scenes' : '';
@@ -101,7 +115,7 @@
     return { text: '', reason: found.reason === 'matched' ? 'invalid-json' : found.reason };
   }
   function diagnose(document, context) {
-    const messages = turns(document);
+    const messages = turns(document, context);
     return 'user=' + messages.filter(turn => turn.role === 'user').length + ', assistant=' + messages.filter(turn => turn.role === 'assistant').length + ', reason=' + read(document, context).reason;
   }
   function readStreaming(document, context) {

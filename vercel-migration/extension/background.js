@@ -124,7 +124,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       let error = '';
       try { await ensureChatReceiver(); chatReady = true; } catch (caught) { error = caught?.message || String(caught); }
       const pending = await chrome.storage.local.get(['pendingChatEvents']);
-      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic, version: '0.4.13', pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
+      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic, version: '0.4.14', pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
       return;
     }
     if (message?.type === 'vis-pair') {
@@ -135,7 +135,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (chosen) await chrome.storage.local.set({ chatTabId: chosen.id });
       await ensureChatReceiver();
       await chrome.storage.local.set({ pairCode, ...(message.studioOrigin ? { studioOrigin: String(message.studioOrigin) } : {}) });
-      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.13' });
+      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.14' });
       await broadcastToStudio({ type: 'vis-status-changed' });
       return;
     }
