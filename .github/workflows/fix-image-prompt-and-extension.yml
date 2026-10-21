@@ -1,0 +1,46 @@
+name: Apply image prompt and extension fixes
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Patch source
+        shell: python
+        run: |
+          from pathlib import Path
+
+          handler = Path('vercel-migration/supabase/functions/studio-api/handler.ts')
+          text = handler.read_text(encoding='utf-8')
+          old = "function imagePrompt(style: string, scene: Scene, ratio: string) { return 'Generate exactly ONE standalone image for a YouTube video slide. Do not create a collage, contact sheet, split panel, text, logo, or watermark. Aspect ratio: ' + ratio + '.\\n\\nGLOBAL STYLE:\\n' + style + '\\n\\nSCENE:\\n' + scene.prompt; }"
+          new = "function imagePrompt(style: string, scene: Scene, ratio: string) { const template = style.trim(); const scenePrompt = scene.prompt.trim(); const placeholder = /\\{\\{\\s*SCENE_PROMPT\\s*\\}\\}/gi; if (placeholder.test(template)) return template.replace(placeholder, scenePrompt); return [template, 'SCENE:\\n' + scenePrompt].filter(Boolean).join('\\n\\n'); }"
+          if old not in text:
+              raise SystemExit('Expected imagePrompt source not found')
+          handler.write_text(text.replace(old, new), encoding='utf-8')
+
+          app = Path('vercel-migration/src/App.tsx')
+          text = app.read_text(encoding='utf-8')
+          text = text.replace("['0.4.10', '0.4.11', '0.4.12', '0.4.13', '0.4.14'].includes(extensionVersion)", "['0.4.10', '0.4.11', '0.4.12', '0.4.13', '0.4.14', '0.4.15'].includes(extensionVersion)")
+          text = text.replace("extensionVersion !== '0.4.14'", "extensionVersion !== '0.4.15'")
+          text = text.replace('cần cài v0.4.14.', 'cần cài v0.4.15.')
+          text = text.replace('/resources/VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.14.zip', '/resources/VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.15.zip')
+          text = text.replace('Tải Extension v0.4.14', 'Tải Extension v0.4.15')
+          app.write_text(text, encoding='utf-8')
+      - name: Commit patch
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add vercel-migration/supabase/functions/studio-api/handler.ts vercel-migration/src/App.tsx
+          git commit -m "fix: use scene placeholder and publish extension 0.4.15"
+          git push origin HEAD:main
