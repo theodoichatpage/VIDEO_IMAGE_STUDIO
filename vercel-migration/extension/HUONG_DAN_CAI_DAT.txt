@@ -1,10 +1,11 @@
-VIDEO IMAGE STUDIO — ChatGPT Bridge v0.4.15
+VIDEO IMAGE STUDIO — ChatGPT Bridge v0.4.16
 
 1. Mở chrome://extensions hoặc edge://extensions, gỡ hoặc tắt bản tiện ích cũ.
-2. Giải nén ZIP VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.15.zip.
+2. Giải nén ZIP VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.16.zip.
 3. Bật Chế độ nhà phát triển, bấm Tải tiện ích đã giải nén, chọn thư mục chứa manifest.json.
 4. Tải lại cả tab web và tab ChatGPT. Trên web bấm Kết nối ChatGPT rồi kết nối lại.
-5. Bản v0.4.15 hỗ trợ thumbnail ảnh nhẹ để Web Studio hiển thị ảnh kết quả mà không lưu lại ảnh gốc.
+5. Bản v0.4.16 hỗ trợ thumbnail ảnh nhẹ để Web Studio hiển thị ảnh kết quả mà không lưu lại ảnh gốc.
+6. Prompt tạo ảnh dùng đúng Prompt phong cách đã cài và thay {{SCENE_PROMPT}} bằng nội dung phân cảnh tương ứng.
 
 Nội dung còn trong ô ChatGPT được lưu dự phòng trước khi thay bằng lệnh mới của Studio.
 Không tự gửi bản nháp cũ. Muốn lấy lại: mở tiện ích > Khôi phục bản nháp (khi ô ChatGPT trống).
