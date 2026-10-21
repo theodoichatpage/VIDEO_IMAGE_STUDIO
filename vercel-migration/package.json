@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "python3 scripts/apply_prompt_extension_0415.py",
     "build": "vite build",
     "preview": "vite preview"
   },
