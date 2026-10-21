@@ -1,0 +1,37 @@
+import { execFileSync } from 'node:child_process';
+import assert from 'node:assert/strict';
+const endpoint = 'https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api';
+const id = 'bridge-smoke-20261021-' + Date.now();
+console.log('Verification session:', id);
+function call(method, path, body) {
+  const args = ['--max-time', '55', '-sS', '-X', method, '-H', 'Content-Type: application/json'];
+  if (body !== undefined) args.push('-d', JSON.stringify(body));
+  args.push(endpoint + '?path=' + encodeURIComponent(path));
+  const data = JSON.parse(execFileSync('curl', args, { encoding: 'utf8' }));
+  assert.equal(data.error, undefined, data.error);
+  return data;
+}
+call('POST', 'sessions', { id });
+console.log('Create session: PASS');
+let result = call('POST', `sessions/${id}/analysis`, { script: 'Kiểm thử đồng bộ: một nhân vật mở cửa rồi đi ra vườn.' });
+const structureJob = result.session.activeJob.id;
+result = call('POST', `bridge/${id}/event`, { jobId: structureJob, state: 'completed', text: JSON.stringify({ parts: [{ title: 'Phần 1', content: 'Một nhân vật mở cửa.' }, { title: 'Phần 2', content: 'Đi ra vườn.' }] }) });
+assert.equal(result.session.parts.length, 2);
+console.log('Structure JSON saved without false error: PASS');
+const partId = result.session.parts[0].id;
+result = call('POST', `sessions/${id}/parts/${partId}/analysis`);
+const jobId = result.session.activeJob.id;
+const completed = { jobId, state: 'completed', text: JSON.stringify({ scenes: [{ title: 'Cảnh 1', content: 'Mở cửa', prompt: 'A person opens a door, medium shot.' }] }) };
+result = call('POST', `bridge/${id}/event`, completed);
+assert.equal(result.session.parts[0].status, 'complete');
+console.log('Scenes saved as complete: PASS');
+result = call('POST', `bridge/${id}/event`, completed);
+assert.equal(result.ignored, true);
+assert.equal(result.session.parts[0].status, 'complete');
+console.log('Repeated JSON acknowledged: PASS');
+const secondId = result.session.parts[1].id;
+call('POST', `sessions/${id}/parts/${secondId}/analysis`);
+result = call('POST', `sessions/${id}/stop`);
+assert.equal(result.session.activeJob, null);
+assert.equal(result.session.parts[1].status, 'stopped');
+console.log('Stop returns success and releases next part: PASS');
