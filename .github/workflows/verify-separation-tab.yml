@@ -15,5 +15,14 @@ jobs:
         with:
           node-version: 22
       - run: npm install
-      - run: npm run build
-      - run: python3 -m py_compile local-engine/app.py local-engine/sam2_adapter.py local-engine/layers.py local-engine/semantic.py local-engine/install.py
+      - id: webbuild
+        run: npm run build > build.log 2>&1 || echo "failed=true" >> "$GITHUB_OUTPUT"
+      - run: python3 -m py_compile local-engine/app.py local-engine/sam2_adapter.py local-engine/layers.py local-engine/semantic.py local-engine/install.py > python.log 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: separation-build-logs
+          path: |
+            vercel-migration/build.log
+            vercel-migration/python.log
+      - if: steps.webbuild.outputs.failed == 'true'
+        run: cat build.log && exit 1
