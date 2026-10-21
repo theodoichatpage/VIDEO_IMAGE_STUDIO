@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_0416__) return;
-  window.__VIS_CHAT_BRIDGE_0416__ = true;
+  if (window.__VIS_CHAT_BRIDGE_0417__) return;
+  window.__VIS_CHAT_BRIDGE_0417__ = true;
   let currentJobId = '';
   let currentJobType = '';
   let cancelled = false;
@@ -217,7 +217,7 @@
         return;
       }
       const before = assistantText(currentJobType);
-      await fillComposer('[VIS_JOB_ID:' + command.id + ']\nTEXT ANALYSIS ONLY. DO NOT GENERATE IMAGES OR USE IMAGE TOOLS. Return only the requested JSON.\n' + command.prompt);
+      await fillComposer('[VIS_JOB_ID:' + command.id + ']\nTEXT ANALYSIS ONLY. DO NOT GENERATE IMAGES OR USE IMAGE TOOLS. ' + (command.type === 'transcript_rewrite' ? 'Return only the rewritten script, without JSON or markdown.\n' : 'Return only the requested JSON.\n') + command.prompt);
       if (token !== generation || cancelled) return;
       if (activeImageMode()) throw new Error('Chế độ Tạo ảnh vẫn bật. Chưa gửi lệnh phân tích.');
       await submit(token);
@@ -239,7 +239,7 @@
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.16', conversationLabel: location.pathname }); return; }
+    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.17', conversationLabel: location.pathname }); return; }
     if (message?.type === 'vis-restore-draft') {
       restoreDraft().then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));
       return true;

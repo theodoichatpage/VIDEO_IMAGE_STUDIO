@@ -17,7 +17,7 @@ async function ensureChatReceiver(preferredId) {
   let existing;
   try { existing = await chrome.tabs.sendMessage(tab.id, { type: 'vis-ping' }); } catch {}
   if (existing?.ready) {
-    if (existing.version !== '0.4.16') throw new Error('Tab ChatGPT còn cầu nối cũ v' + (existing.version || '?') + '. Hãy F5 tab ChatGPT để nạp Extension 0.4.16.');
+    if (existing.version !== '0.4.17') throw new Error('Tab ChatGPT còn cầu nối cũ v' + (existing.version || '?') + '. Hãy F5 tab ChatGPT để nạp Extension 0.4.17.');
     return tab;
   }
   try {
@@ -27,7 +27,7 @@ async function ensureChatReceiver(preferredId) {
   }
   try {
     const pong = await chrome.tabs.sendMessage(tab.id, { type: 'vis-ping' });
-    if (pong?.ready && pong.version === '0.4.16') return tab;
+    if (pong?.ready && pong.version === '0.4.17') return tab;
   } catch {}
   throw new Error('Tab ChatGPT chưa sẵn sàng nhận lệnh. Hãy F5 tab ChatGPT rồi kết nối lại.');
 }
@@ -117,6 +117,39 @@ async function persistAndDeliver(payload) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
+    if (message?.type === 'vis-transcript-send') {
+      const stored = await chrome.storage.local.get(['pairCode', 'transcriptJobs', 'activeJobId']);
+      if (!stored.pairCode || stored.pairCode !== message.pairCode) throw new Error('Hãy kết nối ChatGPT với đúng dự án trước khi tạo Mindmap.');
+      const command = message.command;
+      if (!command?.id || !command.prompt || !['transcript_mindmap','transcript_rewrite'].includes(command.type)) throw new Error('Lệnh Transcript không hợp lệ.');
+      const existing = stored.transcriptJobs?.[command.id];
+      if (existing) { sendResponse({ok:true,duplicate:true}); return; }
+      if (stored.activeJobId && stored.transcriptJobs?.[stored.activeJobId] && !stored.transcriptJobs?.[stored.activeJobId]?.result && stored.transcriptJobs?.[stored.activeJobId]?.state !== 'stopped') throw new Error('ChatGPT đang xử lý tác vụ khác. Hãy đợi hoàn tất hoặc Dừng trước.');
+      const tab = await ensureChatReceiver();
+      const jobs = Object.fromEntries(Object.entries(stored.transcriptJobs || {}).slice(-19));
+      jobs[command.id] = {command, pairCode:stored.pairCode, tabId:tab.id, state:'sending'};
+      await chrome.storage.local.set({transcriptJobs:jobs});
+      try {
+        const result = await chrome.tabs.sendMessage(tab.id, {type:'vis-command',command});
+        if (!result?.ok) throw new Error(result?.error || 'ChatGPT không nhận được lệnh.');
+        await chrome.storage.local.set({activeJobId:command.id,activeJobType:command.type,activeCommand:command,chatTabId:tab.id});
+      } catch (error) {
+        const latest = await chrome.storage.local.get(['transcriptJobs']);
+        if (latest.transcriptJobs?.[command.id]) latest.transcriptJobs[command.id].state = 'stopped';
+        await chrome.storage.local.set({transcriptJobs:latest.transcriptJobs || {}});
+        throw error;
+      }
+      sendResponse({ok:true}); return;
+    }
+    if (message?.type === 'vis-transcript-ack') {
+      const stored = await chrome.storage.local.get(['transcriptJobs','activeJobId']);
+      const job = stored.transcriptJobs?.[message.jobId];
+      if (job?.result) {
+        job.acknowledged = true;
+        await chrome.storage.local.set({transcriptJobs:stored.transcriptJobs,...(stored.activeJobId === message.jobId ? {activeJobId:'',activeJobType:''} : {})});
+      }
+      sendResponse({ok:true});return;
+    }
     if (message?.type === 'vis-status') {
       await deliverPending();
       void reconcileWaitingResult();
@@ -125,8 +158,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       let chatReady = false;
       let error = '';
       try { await ensureChatReceiver(); chatReady = true; } catch (caught) { error = caught?.message || String(caught); }
-      const pending = await chrome.storage.local.get(['pendingChatEvents']);
-      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic, version: '0.4.16', pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
+      const pending = await chrome.storage.local.get(['pendingChatEvents','transcriptJobs']);
+      const transcriptEvents = Object.values(pending.transcriptJobs || {}).filter(job => job.pairCode === stored.pairCode && job.result && !job.acknowledged && job.state !== 'stopped').map(job => job.result);
+      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic, version: '0.4.17', transcriptEvents, pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
       return;
     }
     if (message?.type === 'vis-pair') {
@@ -137,7 +171,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (chosen) await chrome.storage.local.set({ chatTabId: chosen.id });
       await ensureChatReceiver();
       await chrome.storage.local.set({ pairCode, ...(message.studioOrigin ? { studioOrigin: String(message.studioOrigin) } : {}) });
-      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.16' });
+      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.17' });
       await broadcastToStudio({ type: 'vis-status-changed' });
       return;
     }
@@ -162,12 +196,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const bound = await chrome.storage.local.get(['chatTabId']);
       const tabs = await chatTabs();
       await Promise.all(tabs.filter(tab => tab.id === bound.chatTabId).map(tab => chrome.tabs.sendMessage(tab.id, { type: 'vis-stop' }).catch(() => null)));
-      const stored = await chrome.storage.local.get(['activeJobId', 'pendingChatEvents']);
+      const stored = await chrome.storage.local.get(['activeJobId', 'pendingChatEvents', 'transcriptJobs']);
+      if (stored.transcriptJobs?.[stored.activeJobId]) { stored.transcriptJobs[stored.activeJobId].state = 'stopped'; await chrome.storage.local.set({transcriptJobs:stored.transcriptJobs}); }
       await chrome.storage.local.set({ activeJobId: '', activeJobType: '', pendingChatEvents: (stored.pendingChatEvents || []).filter(event => event.jobId !== stored.activeJobId) });
       sendResponse({ ok: true });
       return;
     }
     if (message?.type === 'vis-chat-event' && sender.tab?.url?.startsWith(CHATGPT_PREFIX)) {
+      const stored = await chrome.storage.local.get(['transcriptJobs']);
+      const job = stored.transcriptJobs?.[message.payload?.jobId];
+      if (job) {
+        if (job.state === 'stopped' || job.result || sender.tab.id !== job.tabId) {sendResponse({ok:true,ignored:true});return;}
+        const payload = {...message.payload,kind:job.command.kind,sectionId:job.command.sectionId};
+        job.state = payload.state;
+        if (['completed','error'].includes(payload.state)) job.result = payload;
+        await chrome.storage.local.set({transcriptJobs:stored.transcriptJobs});
+        await broadcastToStudio({type:'vis-transcript-event',payload});
+        sendResponse({ok:true});return;
+      }
+      if (String(message.payload?.jobId || '').startsWith('transcript-')) {sendResponse({ok:true,ignored:true});return;}
+
       if (message.payload?.state === 'sent') {
         await broadcastToStudio({ type: 'vis-chat-event', payload: message.payload });
         sendResponse({ ok: true }); return;
@@ -179,6 +227,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === 'vis-capture-result') {
       const stored = await chrome.storage.local.get(['activeJobId', 'activeJobType', 'activeCommand', 'pairCode']);
       let command = message.command;
+      if (!command && ['transcript_mindmap','transcript_rewrite'].includes(stored.activeCommand?.type) && stored.activeJobId === stored.activeCommand.id) command = stored.activeCommand;
       if (!command || (message.jobId && command.id !== message.jobId)) {
         if (!stored.pairCode) throw new Error('Hãy kết nối tiện ích với web trước khi đồng bộ.');
         const response = await fetch('https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api?path=' + encodeURIComponent('sessions/' + stored.pairCode));
@@ -189,7 +238,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const jobId = String(message.jobId || command?.id || '');
       if (!jobId) throw new Error('Không có tác vụ nào đang chờ kết quả.');
       if (!command || command.id !== jobId) throw new Error('Không tìm thấy đúng lệnh đang chờ trong dự án. Tải lại web rồi đồng bộ lại.');
-      await queueAndBroadcast(await captureCommand(command));
+      const payload = await captureCommand(command);
+      if (['transcript_mindmap','transcript_rewrite'].includes(command.type)) {
+        const latest = await chrome.storage.local.get(['transcriptJobs']);const job=latest.transcriptJobs?.[command.id];
+        if (!job || job.state === 'stopped') throw new Error('Tác vụ Transcript đã dừng.');
+        const event={...payload,kind:command.kind,sectionId:command.sectionId};if(['completed','error'].includes(payload.state))job.result=event;job.state=payload.state;
+        await chrome.storage.local.set({transcriptJobs:latest.transcriptJobs});
+        await broadcastToStudio({type:'vis-transcript-event',payload:event});
+      } else await queueAndBroadcast(payload);
       sendResponse({ ok: true });
       return;
     }

@@ -83,7 +83,7 @@
     return { node: answer.node, sources: [...new Set([...code, answer.text, answer.node.textContent || '', words].filter(Boolean))], reason: 'matched' };
   }
   function extract(source, kind) {
-    const key = kind === 'script_structure' ? 'parts' : kind === 'part_analysis' ? 'scenes' : '';
+    const key = kind === 'transcript_mindmap' ? 'branches' : kind === 'script_structure' ? 'parts' : kind === 'part_analysis' ? 'scenes' : '';
     if (!key) return '';
     const value = String(source || '').replace(/[\u200B\uFEFF]/g, '');
     for (let start = 0; start < value.length; start += 1) {
@@ -112,6 +112,7 @@
   }
   function read(document, context) {
     const found = sources(document, context);
+    if (context.type === 'transcript_rewrite' && found.sources.length) return {text: found.sources[0].trim(), reason:'matched'};
     for (const source of found.sources) {
       const json = extract(source, context.type);
       if (json) return { text: json, reason: 'matched' };

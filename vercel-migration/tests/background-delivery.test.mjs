@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 
-function worker(tabs = [], activeJob = null, version = '0.4.16') {
+function worker(tabs = [], activeJob = null, version = '0.4.17') {
   let listener, offline = false;
   let stored = { pairCode: 'session-three', studioOrigin: 'https://video-image-studio.vercel.app' };
   const received = [];
