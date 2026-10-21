@@ -17,6 +17,11 @@ const settingsModal='    {showSettings && <div className="connection-modal" role
 if(!s.includes('local-engine-download')&&s.includes(modalAnchor))s=s.replace(modalAnchor,settingsModal+modalAnchor);
 fs.writeFileSync(p,s,'utf8');
 
+const cssPath=path.resolve('src/index.css');let css=fs.readFileSync(cssPath,'utf8');
+const settingsCss='.settings-launch { height: 38px; min-width: 124px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 11px; border: 1px solid #c8d2df; border-radius: 6px; background: #fff; color: #4d6387; font-size: 13px; font-weight: 400; white-space: nowrap; } .settings-launch svg { width: 18px; height: 18px; }\n';
+if(!css.includes('.settings-launch {'))css += '\n'+settingsCss;
+fs.writeFileSync(cssPath,css,'utf8');
+
 // Publish a tiny updater/installer. It always downloads the Local Engine files from the current production deployment,
 // so the same Settings button remains valid for future engine updates.
 const publicDir=path.resolve('public/resources/local-engine');fs.mkdirSync(publicDir,{recursive:true});
