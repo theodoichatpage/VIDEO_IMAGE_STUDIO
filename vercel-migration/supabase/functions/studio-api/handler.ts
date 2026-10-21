@@ -136,6 +136,13 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         part.status = 'processing'; part.scenes = []; part.analysisText = ''; session.lastError = ''; session.status = 'part_processing'; session.activeJob = { id: newId(), type: 'part_analysis', status: 'queued', prompt: partPrompt(part), partId: part.id, protocol: 2 };
         return send(res, 200, { session: await write(session) });
       }
+      if (path[2] === 'parts' && path[3] && path[4] === 'reset' && req.method === 'POST') {
+        const part = session.parts.find(item => item.id === path[3]);
+        if (!part) return fail(res, 'Không tìm thấy phần kịch bản.', 404);
+        if (session.activeJob?.partId === part.id || part.scenes.length || part.status !== 'error') return fail(res, 'Chỉ có thể đặt lại phần lỗi cũ chưa có kết quả và không đang xử lý.', 409);
+        part.status = 'ready';
+        return send(res, 200, { session: await write(session) });
+      }
       if (path[2] === 'parts' && path[3] && path[4] === 'recover' && req.method === 'POST') {
         const part = session.parts.find(item => item.id === path[3]);
         if (!part) return fail(res, 'Không tìm thấy phần cần đồng bộ.', 404);

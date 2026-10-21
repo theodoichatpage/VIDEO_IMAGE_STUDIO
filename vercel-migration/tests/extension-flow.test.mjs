@@ -103,9 +103,11 @@ test('rejects a second job while busy and stop immediately releases the content 
 
 test('manual sync recovers a completed part after the extension was reloaded', () => {
   const page = bridge();
+  page.hooks.setActive('existing-part-3');
   page.turns([{ role: 'user', text: 'TEXT ANALYSIS ONLY. Analyze the original part 3' }, { role: 'assistant', text: '{"scenes":[{"title":"Part 3 result","prompt":"A cinematic shot"}]}' }]);
   const result = page.message({ type: 'vis-capture-result', jobId: 'existing-part-3', command: { id: 'existing-part-3', type: 'part_analysis', prompt: 'Analyze the original part 3' } });
   assert.equal(result.ok, true);
   assert.equal(result.payload.jobId, 'existing-part-3');
   assert.equal(JSON.parse(result.payload.text).scenes[0].title, 'Part 3 result');
+  assert.equal(page.hooks.current(), '');
 });

@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_0410__) return;
-  window.__VIS_CHAT_BRIDGE_0410__ = true;
+  if (window.__VIS_CHAT_BRIDGE_0411__) return;
+  window.__VIS_CHAT_BRIDGE_0411__ = true;
   let currentJobId = '';
   let currentJobType = '';
   let cancelled = false;
@@ -222,7 +222,7 @@
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.10', conversationLabel: location.pathname }); return; }
+    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.11', conversationLabel: location.pathname }); return; }
     if (message?.type === 'vis-restore-draft') {
       restoreDraft().then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));
       return true;
@@ -254,7 +254,15 @@
         return;
       }
       const result = VISReplyReader.read(document, { ...context, type: context.type || message.jobType || currentJobType });
-      if (!result.text) { sendResponse({ ok: false, error: result.reason === 'latest-user-mismatch' ? 'Tab ChatGPT đang mở không có lệnh của phần cần đồng bộ. Hãy mở đúng hội thoại đã trả lời phần này.' : result.reason === 'invalid-json' ? 'Đã tìm thấy phản hồi đúng phần nhưng JSON chưa đầy đủ hoặc không hợp lệ.' : 'Chưa đọc được câu trả lời sau lệnh của phần này. Giữ tab ChatGPT mở ở cuối phản hồi rồi bấm Đồng bộ lại.' }); return; }
+      if (!result.text) { sendResponse({ ok: false, error: (result.reason === 'latest-user-mismatch' ? 'Tab ChatGPT đang mở không có lệnh của phần cần đồng bộ. Hãy mở đúng hội thoại đã trả lời phần này.' : result.reason === 'invalid-json' ? 'Đã tìm thấy phản hồi đúng phần nhưng JSON chưa đầy đủ hoặc không hợp lệ.' : 'Chưa đọc được câu trả lời sau lệnh của phần này. Giữ tab ChatGPT mở ở cuối phản hồi rồi bấm Đồng bộ lại.' ) + ' [' + VISReplyReader.diagnose(document, context) + ']' }); return; }
+      // Capturing a valid reply ends the matching waiter without stopping ChatGPT.
+      // Recovery may use a new job ID for the exact same original prompt.
+      if (currentJobId && (currentJobId === context.id || (replyContext.prompt && replyContext.prompt === context.prompt))) {
+        finished.add(currentJobId);
+        generation += 1;
+        currentJobId = ''; currentJobType = ''; cancelled = false;
+      }
+      finished.add(context.id);
       sendResponse({ ok: true, payload: { jobId: context.id, state: 'completed', text: result.text } });
     }
   });

@@ -84,6 +84,14 @@ test('analysis results, repeated delivery, late error, stop and next part remain
     stored.parts[1].status = 'error'; stored.parts[1].scenes = []; stored.parts[1].analysisText = '';
     response = await call('POST', `sessions/${id}/parts/${second}/recover`);
     const importJobId = response.session.activeJob.id;
+    stored.parts[0].status = 'error';
+    await call('POST', `sessions/${id}/parts/${first}/reset`, {}, 409);
+    stored.parts[0].status = 'complete';
+    await call('POST', `sessions/${id}/parts/${second}/reset`, {}, 409);
+    stored.parts.push({ id: 'old-failed-part', title: 'Old failure', content: 'Future part', status: 'error', scenes: [], analysisText: '' });
+    response = await call('POST', `sessions/${id}/parts/old-failed-part/reset`, {});
+    assert.equal(response.session.parts[2].status, 'ready');
+    assert.equal(response.session.activeJob.id, importJobId);
     const beforeImport = JSON.stringify(stored);
     await call('POST', `sessions/${id}/parts/${second}/result`, { text: '{"scenes":[', expectedJobId: importJobId }, 422);
     assert.equal(JSON.stringify(stored), beforeImport);

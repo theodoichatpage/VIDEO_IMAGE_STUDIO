@@ -9,11 +9,11 @@ async function chatTabs() {
   return (await chrome.tabs.query({})).filter(tab => tab.url?.startsWith(CHATGPT_PREFIX));
 }
 
-async function ensureChatReceiver() {
+async function ensureChatReceiver(preferredId) {
   const tabs = await chatTabs();
   if (!tabs.length) throw new Error('Chưa có tab ChatGPT. Hãy mở chatgpt.com và đăng nhập.');
   const stored = await chrome.storage.local.get(['chatTabId']);
-  const tab = tabs.find(item => item.id === stored.chatTabId) || tabs.find(item => item.active) || tabs[0];
+  const tab = tabs.find(item => item.id === preferredId) || tabs.find(item => item.id === stored.chatTabId) || tabs.find(item => item.active) || tabs[0];
   try {
     const pong = await chrome.tabs.sendMessage(tab.id, { type: 'vis-ping' });
     if (pong?.ready) return tab;
@@ -36,26 +36,50 @@ async function broadcastToStudio(message) {
   await Promise.all(tabs.map(tab => chrome.tabs.sendMessage(tab.id, message).catch(() => null)));
 }
 
+let deliveryQueue = Promise.resolve();
+function deliverPending() {
+  deliveryQueue = deliveryQueue.catch(() => {}).then(async () => {
+    const stored = await chrome.storage.local.get(['pendingChatEvents', 'pairCode']);
+    for (const event of (stored.pendingChatEvents || [])) {
+      const sessionId = event._sessionId;
+      if (!sessionId || sessionId !== stored.pairCode) continue;
+      const { _sessionId, ...payload } = event;
+      try {
+        const response = await fetch('https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api?path=' + encodeURIComponent('bridge/' + sessionId + '/event'), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(15000)
+        });
+        const data = await response.json();
+        if (!response.ok || data.error) continue;
+        const latest = await chrome.storage.local.get(['pendingChatEvents']);
+        await chrome.storage.local.set({ pendingChatEvents: (latest.pendingChatEvents || []).filter(item => !(item.jobId === event.jobId && item.state === event.state && item._sessionId === sessionId)) });
+      } catch { /* Persisted result will retry on the next status poll. */ }
+    }
+  });
+  return deliveryQueue;
+}
+
 async function queueAndBroadcast(payload) {
   if (!payload?.jobId || !['completed', 'error'].includes(payload.state)) return;
-  const stored = await chrome.storage.local.get(['pendingChatEvents']);
+  const stored = await chrome.storage.local.get(['pendingChatEvents', 'pairCode']);
   if ((stored.pendingChatEvents || []).some(item => item.jobId === payload.jobId && item.state === 'completed')) return;
   const events = Array.isArray(stored.pendingChatEvents) ? stored.pendingChatEvents.filter(item => item?.jobId !== payload.jobId) : [];
-  events.push(payload);
+  events.push({ ...payload, _sessionId: stored.pairCode });
   await chrome.storage.local.set({ pendingChatEvents: events.slice(-10) });
+  await deliverPending();
   await broadcastToStudio({ type: 'vis-chat-event', payload });
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     if (message?.type === 'vis-status') {
+      await deliverPending();
       if (message.studioOrigin) await chrome.storage.local.set({ studioOrigin: String(message.studioOrigin) });
       const stored = await chrome.storage.local.get(['pairCode']);
       let chatReady = false;
       let error = '';
       try { await ensureChatReceiver(); chatReady = true; } catch (caught) { error = caught?.message || String(caught); }
       const pending = await chrome.storage.local.get(['pendingChatEvents']);
-      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, version: '0.4.10', pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
+      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, version: '0.4.11', pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
       return;
     }
     if (message?.type === 'vis-pair') {
@@ -66,7 +90,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (chosen) await chrome.storage.local.set({ chatTabId: chosen.id });
       await ensureChatReceiver();
       await chrome.storage.local.set({ pairCode, ...(message.studioOrigin ? { studioOrigin: String(message.studioOrigin) } : {}) });
-      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.10' });
+      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.11' });
       await broadcastToStudio({ type: 'vis-status-changed' });
       return;
     }
@@ -118,9 +142,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const jobId = String(message.jobId || command?.id || '');
       if (!jobId) throw new Error('Không có tác vụ nào đang chờ kết quả.');
       if (!command || command.id !== jobId) throw new Error('Không tìm thấy đúng lệnh đang chờ trong dự án. Tải lại web rồi đồng bộ lại.');
-      const tab = await ensureChatReceiver();
-      const result = await chrome.tabs.sendMessage(tab.id, { type: 'vis-capture-result', jobId, jobType: command.type, command });
-      if (!result?.ok || !result.payload) throw new Error(result?.error || 'Chưa đọc được phản hồi cuối từ ChatGPT.');
+      const bound = await chrome.storage.local.get(['chatTabId']);
+      const candidates = await chatTabs();
+      candidates.sort((a, b) => Number(b.id === bound.chatTabId) - Number(a.id === bound.chatTabId));
+      let result, matchedTab, errors = [];
+      for (const candidate of candidates) {
+        try {
+          const tab = await ensureChatReceiver(candidate.id);
+          const reply = await chrome.tabs.sendMessage(tab.id, { type: 'vis-capture-result', jobId, jobType: command.type, command });
+          if (reply?.ok && reply.payload) { result = reply; matchedTab = tab.id; break; }
+          errors.push(reply?.error || 'Không đọc được phản hồi.');
+        } catch (error) { errors.push(error.message); }
+      }
+      if (!result) throw new Error(errors.join(' | ') || 'Chưa có tab ChatGPT để đồng bộ.');
+      await chrome.storage.local.set({ chatTabId: matchedTab });
       await queueAndBroadcast(result.payload);
       sendResponse({ ok: true });
       return;
