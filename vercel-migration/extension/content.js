@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_0411__) return;
-  window.__VIS_CHAT_BRIDGE_0411__ = true;
+  if (window.__VIS_CHAT_BRIDGE_0412__) return;
+  window.__VIS_CHAT_BRIDGE_0412__ = true;
   let currentJobId = '';
   let currentJobType = '';
   let cancelled = false;
@@ -222,7 +222,7 @@
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.11', conversationLabel: location.pathname }); return; }
+    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.12', conversationLabel: location.pathname }); return; }
     if (message?.type === 'vis-restore-draft') {
       restoreDraft().then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));
       return true;

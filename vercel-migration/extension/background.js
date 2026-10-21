@@ -58,6 +58,45 @@ function deliverPending() {
   return deliveryQueue;
 }
 
+async function captureCommand(command) {
+  const jobId = command.id;
+  const bound = await chrome.storage.local.get(['chatTabId']);
+  const candidates = await chatTabs();
+  candidates.sort((a, b) => Number(b.id === bound.chatTabId) - Number(a.id === bound.chatTabId));
+  let result, matchedTab, errors = [];
+  for (const candidate of candidates) {
+    try {
+      const tab = await ensureChatReceiver(candidate.id);
+      const reply = await chrome.tabs.sendMessage(tab.id, { type: 'vis-capture-result', jobId, jobType: command.type, command });
+      if (reply?.ok && reply.payload) { result = reply; matchedTab = tab.id; break; }
+      errors.push(reply?.error || 'Không đọc được phản hồi.');
+    } catch (error) { errors.push(error.message); }
+  }
+  if (!result) throw new Error(errors.join(' | ') || 'Chưa có tab ChatGPT để đồng bộ.');
+  await chrome.storage.local.set({ chatTabId: matchedTab });
+  return result.payload;
+}
+
+let reconciliation = null;
+let syncDiagnostic = '';
+function reconcileWaitingResult() {
+  if (reconciliation) return reconciliation;
+  reconciliation = (async () => {
+    const stored = await chrome.storage.local.get(['pairCode']);
+    if (!stored.pairCode) return;
+    try {
+      const response = await fetch('https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api?path=' + encodeURIComponent('sessions/' + stored.pairCode), { signal: AbortSignal.timeout(10000) });
+      const data = await response.json();
+      if (!response.ok || data.error) return;
+      const command = data.session?.activeJob;
+      if (!command || !['sent', 'waiting'].includes(command.status) || !['part_analysis', 'script_structure'].includes(command.type)) { syncDiagnostic = ''; return; }
+      await queueAndBroadcast(await captureCommand(command));
+      syncDiagnostic = '';
+    } catch (error) { syncDiagnostic = error?.message || String(error); }
+  })().finally(() => { reconciliation = null; });
+  return reconciliation;
+}
+
 async function queueAndBroadcast(payload) {
   if (!payload?.jobId || !['completed', 'error'].includes(payload.state)) return;
   const stored = await chrome.storage.local.get(['pendingChatEvents', 'pairCode']);
@@ -73,13 +112,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     if (message?.type === 'vis-status') {
       await deliverPending();
+      void reconcileWaitingResult();
       if (message.studioOrigin) await chrome.storage.local.set({ studioOrigin: String(message.studioOrigin) });
       const stored = await chrome.storage.local.get(['pairCode']);
       let chatReady = false;
       let error = '';
       try { await ensureChatReceiver(); chatReady = true; } catch (caught) { error = caught?.message || String(caught); }
       const pending = await chrome.storage.local.get(['pendingChatEvents']);
-      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, version: '0.4.11', pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
+      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic, version: '0.4.12', pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
       return;
     }
     if (message?.type === 'vis-pair') {
@@ -90,7 +130,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (chosen) await chrome.storage.local.set({ chatTabId: chosen.id });
       await ensureChatReceiver();
       await chrome.storage.local.set({ pairCode, ...(message.studioOrigin ? { studioOrigin: String(message.studioOrigin) } : {}) });
-      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.11' });
+      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.12' });
       await broadcastToStudio({ type: 'vis-status-changed' });
       return;
     }
@@ -142,21 +182,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const jobId = String(message.jobId || command?.id || '');
       if (!jobId) throw new Error('Không có tác vụ nào đang chờ kết quả.');
       if (!command || command.id !== jobId) throw new Error('Không tìm thấy đúng lệnh đang chờ trong dự án. Tải lại web rồi đồng bộ lại.');
-      const bound = await chrome.storage.local.get(['chatTabId']);
-      const candidates = await chatTabs();
-      candidates.sort((a, b) => Number(b.id === bound.chatTabId) - Number(a.id === bound.chatTabId));
-      let result, matchedTab, errors = [];
-      for (const candidate of candidates) {
-        try {
-          const tab = await ensureChatReceiver(candidate.id);
-          const reply = await chrome.tabs.sendMessage(tab.id, { type: 'vis-capture-result', jobId, jobType: command.type, command });
-          if (reply?.ok && reply.payload) { result = reply; matchedTab = tab.id; break; }
-          errors.push(reply?.error || 'Không đọc được phản hồi.');
-        } catch (error) { errors.push(error.message); }
-      }
-      if (!result) throw new Error(errors.join(' | ') || 'Chưa có tab ChatGPT để đồng bộ.');
-      await chrome.storage.local.set({ chatTabId: matchedTab });
-      await queueAndBroadcast(result.payload);
+      await queueAndBroadcast(await captureCommand(command));
       sendResponse({ ok: true });
       return;
     }

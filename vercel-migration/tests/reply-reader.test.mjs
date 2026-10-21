@@ -7,6 +7,16 @@ const context = vm.createContext({});
 vm.runInContext(readFileSync(new URL('../extension/reply-reader.js', import.meta.url), 'utf8'), context);
 const reader = context.VISReplyReader;
 const scene = title => JSON.stringify({ scenes: [{ title, content: 'A {scene} with "quoted text"', prompt: 'A cinematic shot' }] });
+test('matches a collapsed legacy prompt by exact part title and source opening', () => {
+  const head = 'PHẦN: Phần 5 - Buồn chán đánh thức trí tưởng tượng\nNỘI DUNG:\n';
+  const source = 'Nhưng chán đâu chỉ đẻ ra nghệ thuật với âm nhạc, nó còn vô tình kích hoạt một thứ vũ khí đáng sợ hơn nhiều. ';
+  const prompt = 'Return JSON. ' + head + source + 'The rest of a long script is hidden.';
+  const after = page([turn('user', 'Return JSON. ' + head + source + '... Show more'), turn('assistant', scene('Part 5'))]);
+  const job = { id: 'recovery-job-5', type: 'part_analysis', prompt };
+  assert.equal(JSON.parse(reader.read(after, job).text).scenes[0].title, 'Part 5');
+  assert.equal(reader.read(after, { ...job, prompt: prompt.replace('Phần 5', 'Phần 4') }).text, '');
+  assert.equal(reader.read(after, { ...job, prompt: prompt.replace(source, 'A different story with the same part title. '.repeat(5)) }).text, '');
+});
 function turn(role, value, { article = false, code = '' } = {}) {
   return {
     innerText: value, textContent: value,

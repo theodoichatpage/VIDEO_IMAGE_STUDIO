@@ -28,15 +28,25 @@
     return identity + ':' + normalize(turn.text);
   }
   function snapshot(document) { return turns(document).filter(turn => turn.role === 'assistant').map(fingerprint); }
+  function matchesPrompt(user, context) {
+    const expected = normalize(context.prompt);
+    if (context.id && user.includes('[VIS_JOB_ID:' + context.id + ']')) return true;
+    if (expected && user.includes(expected)) return true;
+    // ChatGPT may mount only the collapsed prompt preview. A recovered job has
+    // a new ID, so match both the exact part title AND its distinctive source.
+    if (context.type !== 'part_analysis') return false;
+    const match = expected.match(/PHẦN:\s*(.+?)\s*NỘI DUNG:\s*(.+)$/);
+    if (!match || match[2].length < 80) return false;
+    const shown = user.match(/PHẦN:\s*(.+?)\s*NỘI DUNG:\s*(.+)$/);
+    return Boolean(shown && shown[1] === match[1] && shown[2].startsWith(match[2].slice(0, 80)));
+  }
   function sources(document, context = {}) {
     const messages = turns(document);
     const latestUser = messages.findLastIndex(turn => turn.role === 'user');
     let answers;
     if (latestUser >= 0) {
       const userTexts = [normalize(messages[latestUser].text), normalize(messages[latestUser].node.textContent)];
-      const expected = normalize(context.prompt);
-      const marker = context.id ? '[VIS_JOB_ID:' + context.id + ']' : '';
-      const matches = userTexts.some(user => Boolean((marker && user.includes(marker)) || (expected && user.includes(expected))));
+      const matches = userTexts.some(user => matchesPrompt(user, context));
       if (!matches) return { sources: [], reason: 'latest-user-mismatch' };
       answers = messages.slice(latestUser + 1).filter(turn => turn.role === 'assistant');
     } else {

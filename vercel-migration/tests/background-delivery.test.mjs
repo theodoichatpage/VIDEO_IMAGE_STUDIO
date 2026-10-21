@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 
-function worker(tabs = []) {
+function worker(tabs = [], activeJob = null) {
   let listener, offline = false;
   let stored = { pairCode: 'session-three', studioOrigin: 'https://video-image-studio.vercel.app' };
   const received = [];
@@ -17,6 +17,7 @@ function worker(tabs = []) {
   };
   const context = vm.createContext({ chrome, URL, AbortSignal, fetch: async (url, options) => {
     if (offline) throw Error('Offline');
+    if (!options?.body) return { ok: true, async json() { return { session: { activeJob } }; } };
     received.push({ url, body: JSON.parse(options.body) });
     return { ok: true, async json() { return { session: {} }; } };
   } });
@@ -51,4 +52,20 @@ test('manual sync finds the matching response when another ChatGPT tab is select
   assert.equal(result.ok, true);
   assert.equal(w.stored().chatTabId, 2);
   assert.equal(w.received[0].body.jobId, 'part-3-job');
+});
+
+test('status poll recovers an existing completed answer after ChatGPT F5 lost its waiter', async () => {
+  const w = worker([{ id: 2, url: 'https://chatgpt.com/c/part5' }], { id: 'part-5-job', type: 'part_analysis', status: 'waiting', prompt: 'Analyze part 5' });
+  await w.message({ type: 'vis-status' });
+  await new Promise(setImmediate);
+  assert.equal(w.received.length, 1);
+  assert.equal(w.received[0].body.jobId, 'part-5-job');
+  assert.equal(w.received[0].body.state, 'completed');
+});
+
+test('automatic recovery never captures an answer for an unsent queued job', async () => {
+  const w = worker([{ id: 2, url: 'https://chatgpt.com/c/part5' }], { id: 'part-6-job', type: 'part_analysis', status: 'queued', prompt: 'Analyze part 6' });
+  await w.message({ type: 'vis-status' });
+  await new Promise(setImmediate);
+  assert.equal(w.received.length, 0);
 });

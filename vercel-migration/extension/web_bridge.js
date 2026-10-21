@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_WEB_BRIDGE_0411__) return;
-  window.__VIS_WEB_BRIDGE_0411__ = true;
+  if (window.__VIS_WEB_BRIDGE_0412__) return;
+  window.__VIS_WEB_BRIDGE_0412__ = true;
 
   const postStatus = async () => {
     try {
@@ -15,6 +15,7 @@
         chatReady: Boolean(response?.chatReady),
         version: response?.version || '',
         pendingCount: Array.isArray(response?.pendingEvents) ? response.pendingEvents.length : 0,
+        syncDiagnostic: response?.syncDiagnostic || '',
         message: response?.error || ''
       }, '*');
     } catch (error) {
