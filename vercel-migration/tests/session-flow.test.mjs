@@ -54,6 +54,11 @@ test('analysis results, repeated delivery, late error, stop and next part remain
     response = await call('POST', `sessions/${id}/parts/${second}/analysis`);
     assert.equal(response.session.activeJob.type, 'part_analysis');
     assert.match(response.session.activeJob.prompt, /KHÔNG TẠO ẢNH/);
+    stored.parts[0].status = 'error';
+    stored.lastError = 'Ô ChatGPT còn nội dung chưa gửi.';
+    response = await call('GET', `sessions/${id}`);
+    assert.equal(response.session.parts[0].status, 'complete');
+    assert.equal(response.session.parts[0].scenes[0].prompt, 'Scene one');
   } finally {
     globalThis.fetch = originalFetch;
     for (const [name, value] of [['SUPABASE_URL', originalEnv.url], ['SUPABASE_SECRET_KEY', originalEnv.key]]) {

@@ -38,8 +38,14 @@ async function read(id: string): Promise<Session | null> {
   const rows = await database('studio_sessions?id=eq.' + encodeURIComponent(id) + '&select=record') as { record: Session }[];
   const value = rows?.[0]?.record;
   if (!value) return null;
-  const recovered = /Unexpected end of JSON input/i.test(value.lastError || '');
-  return { ...value, parts: (value.parts || []).map(part => recovered && part.status === 'error' && part.scenes?.length ? { ...part, status: 'complete' } : part), imageJobs: value.imageJobs || [], finishedJobIds: value.finishedJobIds || [] };
+  const parts = (value.parts || []).map(part => {
+    if (part.status !== 'error' || !part.scenes?.length || !part.analysisText) return part;
+    try {
+      const parsed = jsonReply(part.analysisText);
+      return Array.isArray(parsed.scenes) && parsed.scenes.length === part.scenes.length ? { ...part, status: 'complete' } : part;
+    } catch { return part; }
+  });
+  return { ...value, parts, imageJobs: value.imageJobs || [], finishedJobIds: value.finishedJobIds || [] };
 }
 async function write(session: Session) {
   session.updatedAt = Date.now();

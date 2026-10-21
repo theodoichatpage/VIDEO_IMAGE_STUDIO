@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_048__) return;
-  window.__VIS_CHAT_BRIDGE_048__ = true;
+  if (window.__VIS_CHAT_BRIDGE_049__) return;
+  window.__VIS_CHAT_BRIDGE_049__ = true;
   let currentJobId = '';
   let currentJobType = '';
   let cancelled = false;
@@ -161,7 +161,31 @@
     await sleep(300);
   }
 
-  const draftText = node => (node?.value || node?.innerText || node?.textContent || '').trim();
+  const draftText = node => {
+    if (!node) return '';
+    const text = typeof node.value === 'string' ? node.value : typeof node.innerText === 'string' ? node.innerText : node.textContent || '';
+    return text.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  };
+  async function prepareDraft(command) {
+    const node = await waitForComposer();
+    const text = draftText(node);
+    if (!text) return;
+    const stored = await chrome.storage.local.get(['studioDraftBackups']);
+    const backups = Array.isArray(stored.studioDraftBackups) ? stored.studioDraftBackups : [];
+    const previous = backups.at(-1);
+    if (previous?.text === text && previous.chatUrl === location.href) return;
+    await chrome.storage.local.set({ studioDraftBackups: [...backups, { text, chatUrl: location.href, jobId: command.id, createdAt: Date.now() }].slice(-10) });
+  }
+  async function restoreDraft() {
+    if (currentJobId || isGenerating()) throw new Error('Hãy đợi tác vụ hoàn tất hoặc bấm Dừng trước khi khôi phục bản nháp.');
+    const node = await waitForComposer();
+    if (draftText(node)) throw new Error('Ô ChatGPT hiện có nội dung. Bản nháp vẫn được lưu, chưa ghi đè.');
+    const stored = await chrome.storage.local.get(['studioDraftBackups']);
+    const backup = (stored.studioDraftBackups || []).filter(item => item.chatUrl === location.href).at(-1);
+    if (!backup) throw new Error('Hội thoại này chưa có bản nháp được lưu dự phòng.');
+    await fillComposer(backup.text);
+    return { ok: true };
+  }
   const userTurnCount = () => document.querySelectorAll('[data-message-author-role="user"]').length;
 
   async function waitForSendButton(node) {
@@ -200,8 +224,9 @@
     baseline = document.querySelectorAll('[data-message-author-role="assistant"]').length;
     try {
       if (isGenerating()) throw new Error('ChatGPT đang trả lời. Hãy bấm Dừng trước khi gửi phần tiếp theo.');
-      if (draftText(composer())) throw new Error('Ô ChatGPT còn nội dung chưa gửi. Hãy gửi hoặc xóa nội dung đó trước.');
       if (command.type !== 'image_generation') await clearImageMode();
+      await prepareDraft(command);
+      if (token !== generation || cancelled) return;
       if (command.type === 'image_generation') {
         const beforeImages = imageUrls();
         await fillComposer(command.prompt);
@@ -235,7 +260,11 @@
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.8', conversationLabel: location.pathname }); return; }
+    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.9', conversationLabel: location.pathname }); return; }
+    if (message?.type === 'vis-restore-draft') {
+      restoreDraft().then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));
+      return true;
+    }
     if (message?.type === 'vis-stop') {
       cancelled = true;
       generation += 1;

@@ -55,7 +55,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       let error = '';
       try { await ensureChatReceiver(); chatReady = true; } catch (caught) { error = caught?.message || String(caught); }
       const pending = await chrome.storage.local.get(['pendingChatEvents']);
-      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, version: '0.4.8', pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
+      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, version: '0.4.9', pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
       return;
     }
     if (message?.type === 'vis-pair') {
@@ -66,7 +66,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (chosen) await chrome.storage.local.set({ chatTabId: chosen.id });
       await ensureChatReceiver();
       await chrome.storage.local.set({ pairCode, ...(message.studioOrigin ? { studioOrigin: String(message.studioOrigin) } : {}) });
-      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.8' });
+      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.9' });
       await broadcastToStudio({ type: 'vis-status-changed' });
       return;
     }
@@ -113,6 +113,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!result?.ok || !result.payload) throw new Error(result?.error || 'Chưa đọc được phản hồi cuối từ ChatGPT.');
       await queueAndBroadcast(result.payload);
       sendResponse({ ok: true });
+      return;
+    }
+    if (message?.type === 'vis-restore-draft') {
+      const tab = await ensureChatReceiver();
+      sendResponse(await chrome.tabs.sendMessage(tab.id, { type: 'vis-restore-draft' }));
       return;
     }
     if (message?.type === 'vis-event-ack') {

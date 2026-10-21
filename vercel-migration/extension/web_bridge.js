@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_WEB_BRIDGE_048__) return;
-  window.__VIS_WEB_BRIDGE_048__ = true;
+  if (window.__VIS_WEB_BRIDGE_049__) return;
+  window.__VIS_WEB_BRIDGE_049__ = true;
 
   const postStatus = async () => {
     try {
