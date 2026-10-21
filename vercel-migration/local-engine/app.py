@@ -20,6 +20,7 @@ def preflight(_path):return ('',204)
 def classify(layer):
     name=str(layer.get('file',''))
     if name.startswith(('nen_','background_')):return 'background'
+    if name.startswith('cum_nguoi_'):return 'person_group'
     if name.startswith('nguoi_'):return 'person'
     if name.startswith('chu_'):return 'text'
     return 'other'
@@ -35,7 +36,7 @@ def run_job(jid,rgb,fill):
     except Exception as exc:update(jid,status='error',message=str(exc),error=str(exc),updatedAt=time.time())
 @app.get('/v1/health')
 def health():
-    caps=adapter.capabilities();return jsonify(ok=True,version='1.0.0',sam2=caps['sam2'],device=caps['device'],ffmpeg=False)
+    caps=adapter.capabilities();return jsonify(ok=True,version='1.1.0',sam2=caps['sam2'],device=caps['device'],ffmpeg=False)
 @app.post('/v1/separate')
 def separate():
     if any(j['status'] in ('queued','processing') for j in jobs.values()):return jsonify(error='Đang xử lý một ảnh. Vui lòng đợi.'),409
