@@ -37,3 +37,11 @@ Existing npm test configuration limitation: Vitest reports “No test suite foun
 - vercel-api-route.test.mjs
 
 No backend or database change is included in this fix. The extension ZIP and web's version/download references are updated together. Update the existing unpacked extension directory and reload it to retain pending extension results and pairing.
+
+## Follow-up: immediate sync feedback
+
+The existing capture/recovery messages were only rendered in the Analysis tab. Image recovery also relied on the periodic extension poll instead of dispatching capture immediately.
+
+The image tab now sends capture as soon as recovery returns a job; shows pending/complete/error feedback beside the buttons; disables duplicate clicks; releases pending UI after errors or a 45-second no-response timeout; and preserves the server task for retry. A matching saved result is required before showing success. A request for another scene shows a useful message. Stop invalidates an in-flight recovery request. Preview load failures show a message instead of silently hiding the image, and refreshed image URLs mount a fresh preview.
+
+The browser regression failed on the old build waiting for the missing feedback element. On the fixed build it verifies immediate pending feedback, disabled duplicate buttons, successful recovery, explicit extension error and retry, and recovery from a 403 preview URL. It verifies no additional ChatGPT prompt is submitted. Extension remains 0.4.18; no extension/backend changes in this follow-up.

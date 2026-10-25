@@ -13,7 +13,7 @@ try{
  const png=Buffer.from(await chat.evaluate(()=>{const c=document.createElement('canvas');c.width=1024;c.height=576;const g=c.getContext('2d');g.fillStyle='#1877c9';g.fillRect(0,0,c.width,c.height);return c.toDataURL('image/png').split(',')[1]}),'base64');
  const id='image-browser-test-12345';
  let record={id,script:'Original script',status:'parts_ready',activeJob:null,imageJobs:[],parts:[{id:'p1',title:'Phần 1',content:'Original',status:'complete',scenes:[{title:'Cảnh 1 - Cầu thang',prompt:'Police walking upstairs in a historic building.',imageStatus:'error',imageError:'Lỗi tải ảnh từ lần trước',imageResults:[]}]}],updatedAt:Date.now()};
- const files=new Map();let fallbackFetches=0;
+ const files=new Map();let fallbackFetches=0,previewFailure=false;
  // The unmodified production handler runs against in-memory DB/Storage.
  process.env.SUPABASE_URL='https://db.test';process.env.SUPABASE_SECRET_KEY='fixture-only';
  globalThis.fetch=async(url,init={})=>{
@@ -30,9 +30,9 @@ try{
  const {default:handler}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
  const call=async(url,init={})=>{let status=200,data;const path=new URL(url).searchParams.get('path');await handler({method:init.method||'GET',query:{path:path.split('/')},body:init.body?JSON.parse(init.body):undefined,headers:{}},{setHeader(){},status(n){status=n;return{json(value){data=value}}}});return{status,data}};
  await page.route('**/functions/v1/studio-api?**',async r=>{const v=await call(r.request().url(),{method:r.request().method(),body:r.request().postData()});await r.fulfill({status:v.status,json:v.data})});
- await page.route('https://db.test/storage/**',async r=>{const path=new URL(r.request().url()).pathname.split('/studio-images/')[1];await r.fulfill({contentType:'image/png',body:files.get(path)||png})});
- let receiver;const stored={pairCode:id,studioOrigin:'https://video-image-studio.vercel.app'};
- const chrome={storage:{local:{get:async()=>structuredClone(stored),set:async v=>Object.assign(stored,structuredClone(v)),remove:async keys=>keys.forEach(k=>delete stored[k])}},scripting:{executeScript:async()=>{}},runtime:{onMessage:{addListener:fn=>receiver=fn}},tabs:{query:async()=>[{id:2,url:'https://chatgpt.com/c/fixture'},{id:3,url:'https://video-image-studio.vercel.app/'}],sendMessage:async(tab,m)=>tab===2?chat.evaluate(m=>new Promise(r=>{if(!window.receiver(m,{},r))r({ok:true})}),m):page.evaluate(m=>window.receiver(m),m)}};
+ await page.route('https://db.test/storage/**',async r=>{if(previewFailure){await r.fulfill({status:403,body:'Expired preview'});return;}const path=new URL(r.request().url()).pathname.split('/studio-images/')[1];await r.fulfill({contentType:'image/png',body:files.get(path)||png})});
+ let receiver,blockCapture=false,captureFailure='';const captureWaiters=[];const stored={pairCode:id,studioOrigin:'https://video-image-studio.vercel.app'};
+ const chrome={storage:{local:{get:async()=>structuredClone(stored),set:async v=>Object.assign(stored,structuredClone(v)),remove:async keys=>keys.forEach(k=>delete stored[k])}},scripting:{executeScript:async()=>{}},runtime:{onMessage:{addListener:fn=>receiver=fn}},tabs:{query:async()=>[{id:2,url:'https://chatgpt.com/c/fixture'},{id:3,url:'https://video-image-studio.vercel.app/'}],sendMessage:async(tab,m)=>{if(tab===2&&m.type==='vis-capture-result'){if(blockCapture)await new Promise(r=>captureWaiters.push(r));if(captureFailure)return{ok:false,error:captureFailure}}return tab===2?chat.evaluate(m=>new Promise(r=>{if(!window.receiver(m,{},r))r({ok:true})}),m):page.evaluate(m=>window.receiver(m),m)}}};
  const worker=vm.createContext({chrome,URL,AbortSignal,Uint8Array,btoa,fetch:async(url,init={})=>{
   if(String(url).startsWith('https://images.oaiusercontent.com/')){fallbackFetches++;return new Response(png,{headers:{'Content-Type':'application/octet-stream'}})}
   const v=await call(url,init);return{ok:v.status<400,status:v.status,json:async()=>v.data};
@@ -57,12 +57,34 @@ try{
  // Recovery receives existing image bytes only; it must not submit another prompt.
  record.parts[0].scenes[0].imageResults=[];record.parts[0].scenes[0].imageStatus='error';record.parts[0].scenes[0].imageError='Kết quả chưa đồng bộ';record.updatedAt=Date.now();
  await page.reload();await page.addScriptTag({path:root+'/extension/web_bridge.js'});await page.getByRole('alert').filter({hasText:'Kết quả chưa đồng bộ'}).waitFor();
+ blockCapture=true;
  await page.getByRole('button',{name:'Đồng bộ lại ảnh',exact:true}).click();
+ await page.locator('.image-sync-feedback').filter({hasText:'Đang'}).waitFor({timeout:1500});
+ assert.equal(await page.getByRole('button',{name:'Đang đồng bộ…',exact:true}).isDisabled(),true);
+ assert.equal(await page.getByRole('button',{name:'Đồng bộ ngay',exact:true}).isDisabled(),true);
+ blockCapture=false;captureWaiters.splice(0).forEach(resolve=>resolve());
  await page.waitForFunction(()=>document.querySelector('.scene-row .chip')?.textContent==='Hoàn tất',null,{timeout:20000});
  assert.equal(await chat.locator('[data-message-author-role="user"]').count(),1);
  // Download through the page's routed signed URL, rather than authenticated ChatGPT URLs.
  const imageBytes=await page.evaluate(async()=>Array.from(new Uint8Array(await(await fetch(document.querySelector('img.generated-image').src)).arrayBuffer())));
  assert.deepEqual(Buffer.from(imageBytes),png);
+ await page.locator('.image-sync-feedback').filter({hasText:'Đã đồng bộ'}).waitFor();
+ captureFailure='Không tìm thấy ảnh đúng cảnh (kiểm thử)';
+ await page.getByRole('button',{name:'Đồng bộ lại ảnh',exact:true}).click();
+ await page.locator('.image-sync-feedback').filter({hasText:captureFailure}).waitFor();
+ assert.equal(await page.getByRole('button',{name:'Đồng bộ ngay',exact:true}).isEnabled(),true);
+ captureFailure='';await page.getByRole('button',{name:'Đồng bộ ngay',exact:true}).click();
+ await page.locator('.image-sync-feedback').filter({hasText:'Đã đồng bộ'}).waitFor({timeout:15000});
+ assert.equal(await chat.locator('[data-message-author-role="user"]').count(),1);
+
+ // A failed preview must be visible as a message, then a new URL must render normally.
+ previewFailure=true;await page.reload();await page.addScriptTag({path:root+'/extension/web_bridge.js'});
+ await page.locator('.image-sync-feedback').filter({hasText:'chưa tải được bản xem trước'}).waitFor();
+ previewFailure=false;await page.getByRole('button',{name:'Đồng bộ lại ảnh',exact:true}).click();
+ await page.locator('.image-sync-feedback').filter({hasText:'Đã đồng bộ'}).waitFor({timeout:15000});
+ await page.waitForFunction(()=>document.querySelector('img.generated-image')?.naturalWidth===1024);
+ assert.equal(await page.locator('img.generated-image').isVisible(),true);
+ assert.equal(await chat.locator('[data-message-author-role="user"]').count(),1);
  await page.screenshot({path:root+'/image-sync-verified.png',fullPage:true});
  console.log('PASS real UI -> extension -> matched image sibling -> CORS fallback -> real API handler -> Storage fixture -> complete preview/download; recovery submits no new prompt. Live ChatGPT/DB not used.');
 }finally{globalThis.fetch=originalFetch;await browser.close();server.kill()}
