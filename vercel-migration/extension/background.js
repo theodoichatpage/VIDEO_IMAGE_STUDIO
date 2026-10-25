@@ -1,5 +1,6 @@
 const DEFAULT_STUDIO_MATCH = 'https://video-image-studio.vercel.app/*';
 const CHATGPT_PREFIX = 'https://chatgpt.com/';
+let deliveryDiagnostic = '';
 
 function studioMatch(origin) {
   try { return new URL(origin || '').origin + '/*'; } catch { return DEFAULT_STUDIO_MATCH; }
@@ -17,7 +18,7 @@ async function ensureChatReceiver(preferredId) {
   let existing;
   try { existing = await chrome.tabs.sendMessage(tab.id, { type: 'vis-ping' }); } catch {}
   if (existing?.ready) {
-    if (existing.version !== '0.4.17') throw new Error('Tab ChatGPT còn cầu nối cũ v' + (existing.version || '?') + '. Hãy F5 tab ChatGPT để nạp Extension 0.4.17.');
+    if (existing.version !== '0.4.18') throw new Error('Tab ChatGPT còn cầu nối cũ v' + (existing.version || '?') + '. Hãy F5 tab ChatGPT để nạp Extension 0.4.18.');
     return tab;
   }
   try {
@@ -27,7 +28,7 @@ async function ensureChatReceiver(preferredId) {
   }
   try {
     const pong = await chrome.tabs.sendMessage(tab.id, { type: 'vis-ping' });
-    if (pong?.ready && pong.version === '0.4.17') return tab;
+    if (pong?.ready && pong.version === '0.4.18') return tab;
   } catch {}
   throw new Error('Tab ChatGPT chưa sẵn sàng nhận lệnh. Hãy F5 tab ChatGPT rồi kết nối lại.');
 }
@@ -51,10 +52,11 @@ function deliverPending() {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(45000)
         });
         const data = await response.json();
-        if (!response.ok || data.error) continue;
+        if (!response.ok || data.error) {deliveryDiagnostic='Chưa lưu được ảnh/kết quả lên Studio (HTTP '+response.status+'): '+String(data.error || 'Máy chủ từ chối kết quả.');continue;}
+        deliveryDiagnostic='';
         const latest = await chrome.storage.local.get(['pendingChatEvents']);
         await chrome.storage.local.set({ pendingChatEvents: (latest.pendingChatEvents || []).filter(item => !(item.jobId === event.jobId && item.state === event.state && item._sessionId === sessionId)) });
-      } catch { /* Persisted result will retry on the next status poll. */ }
+      } catch (error) { deliveryDiagnostic='Kết quả đã giữ trong tiện ích, đang chờ gửi lại: '+(error?.message || String(error)); }
     }
   });
   return deliveryQueue;
@@ -117,6 +119,21 @@ async function persistAndDeliver(payload) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
+    if (message?.type === 'vis-fetch-image') {
+      if (!sender.tab?.url?.startsWith(CHATGPT_PREFIX)) throw new Error('Chỉ tab ChatGPT được tải tệp ảnh.');
+      const url = new URL(String(message.url || ''));
+      const trusted = url.hostname === 'chatgpt.com' || url.hostname.endsWith('.oaiusercontent.com') || /^(?:oaidalleapiprodscus|sdmntpr[a-z0-9-]*)\.blob\.core\.windows\.net$/.test(url.hostname);
+      if (url.protocol !== 'https:' || url.username || url.password || !trusted) throw new Error('Địa chỉ ảnh không thuộc máy chủ ChatGPT được phép.');
+      const response = await fetch(url.href, {credentials:url.hostname === 'chatgpt.com'?'include':'omit',signal:AbortSignal.timeout(30000),redirect:'error'});
+      if (!response.ok) throw new Error('Không tải được ảnh ChatGPT (HTTP ' + response.status + ').');
+      if (Number(response.headers.get('content-length')) > 8388608) throw new Error('Ảnh vượt giới hạn 8 MB.');
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.length > 8388608) throw new Error('Ảnh vượt giới hạn 8 MB.');
+      const mime = bytes[0] === 137 && bytes[1] === 80 && bytes[2] === 78 && bytes[3] === 71 ? 'image/png' : bytes[0] === 255 && bytes[1] === 216 ? 'image/jpeg' : bytes[0] === 82 && bytes[1] === 73 && bytes[2] === 70 && bytes[3] === 70 && bytes[8] === 87 && bytes[9] === 69 && bytes[10] === 66 && bytes[11] === 80 ? 'image/webp' : '';
+      if (!mime) throw new Error('Máy chủ chưa trả tệp PNG/JPEG/WebP hợp lệ.');
+      let binary='';for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));
+      sendResponse({ok:true,imageDataUrl:'data:'+mime+';base64,'+btoa(binary)});return;
+    }
     if (message?.type === 'vis-transcript-send') {
       const stored = await chrome.storage.local.get(['pairCode', 'transcriptJobs', 'activeJobId']);
       if (!stored.pairCode || stored.pairCode !== message.pairCode) throw new Error('Hãy kết nối ChatGPT với đúng dự án trước khi tạo Mindmap.');
@@ -160,7 +177,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       try { await ensureChatReceiver(); chatReady = true; } catch (caught) { error = caught?.message || String(caught); }
       const pending = await chrome.storage.local.get(['pendingChatEvents','transcriptJobs']);
       const transcriptEvents = Object.values(pending.transcriptJobs || {}).filter(job => job.pairCode === stored.pairCode && job.result && !job.acknowledged && job.state !== 'stopped').map(job => job.result);
-      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic, version: '0.4.17', transcriptEvents, pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
+      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic:deliveryDiagnostic || syncDiagnostic, version: '0.4.18', transcriptEvents, pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
       return;
     }
     if (message?.type === 'vis-pair') {
@@ -171,7 +188,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (chosen) await chrome.storage.local.set({ chatTabId: chosen.id });
       await ensureChatReceiver();
       await chrome.storage.local.set({ pairCode, ...(message.studioOrigin ? { studioOrigin: String(message.studioOrigin) } : {}) });
-      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.17' });
+      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.18' });
       await broadcastToStudio({ type: 'vis-status-changed' });
       return;
     }

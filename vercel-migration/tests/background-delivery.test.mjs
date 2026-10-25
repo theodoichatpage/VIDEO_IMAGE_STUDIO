@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 
-function worker(tabs = [], activeJob = null, version = '0.4.17') {
-  let listener, offline = false;
+function worker(tabs = [], activeJob = null, version = '0.4.18') {
+  let listener, offline = false, rejection = '';
   let stored = { pairCode: 'session-three', studioOrigin: 'https://video-image-studio.vercel.app' };
   const received = [];
   const chrome = {
@@ -19,11 +19,12 @@ function worker(tabs = [], activeJob = null, version = '0.4.17') {
     if (offline) throw Error('Offline');
     if (!options?.body) return { ok: true, async json() { return { session: { activeJob } }; } };
     received.push({ url, body: JSON.parse(options.body) });
+    if(rejection)return{ok:false,status:422,json:async()=>({error:rejection})};
     return { ok: true, async json() { return { session: {} }; } };
   } });
   vm.runInContext(readFileSync(new URL('../extension/background.js', import.meta.url), 'utf8'), context);
   const message = (payload, sender = {}) => new Promise(resolve => listener(payload, sender, resolve));
-  return { message, received, stored: () => stored, offline: value => { offline = value; } };
+  return { message, received, stored: () => stored, offline: value => { offline = value; }, reject: value => { rejection = value; } };
 }
 
 test('saves completed ChatGPT JSON to server even with no Studio tab open', async () => {
@@ -90,4 +91,12 @@ test('does not report connected while the ChatGPT tab still runs an old content 
  const w = worker([{id:2,url:'https://chatgpt.com/c/existing'}],null,'0.4.14');
  const result = await w.message({type:'vis-status'});
  assert.equal(result.chatReady,false); assert.match(result.error,/F5/);
+});
+
+test('keeps image bytes and reports the actual server rejection instead of silently losing sync',async()=>{
+ const w=worker();w.reject('Storage upload failed');
+ await w.message({type:'vis-chat-event',payload:{jobId:'image-job',state:'completed',imageDataUrl:'data:image/png;base64,iVBORw0KGgo='}},{tab:{url:'https://chatgpt.com/c/image'}});
+ const status=await w.message({type:'vis-status'});
+ assert.match(status.syncDiagnostic,/Storage upload failed/);assert.equal(w.stored().pendingChatEvents.length,1);
+ w.reject('');await w.message({type:'vis-status'});assert.equal(w.stored().pendingChatEvents.length,0);
 });

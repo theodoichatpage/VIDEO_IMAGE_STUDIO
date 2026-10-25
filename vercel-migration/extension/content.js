@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_0417__) return;
-  window.__VIS_CHAT_BRIDGE_0417__ = true;
+  if (window.__VIS_CHAT_BRIDGE_0418__) return;
+  window.__VIS_CHAT_BRIDGE_0418__ = true;
   let currentJobId = '';
   let currentJobType = '';
   let cancelled = false;
@@ -54,14 +54,27 @@
   async function imagePayload(context) {
     const imageUrl = imageUrls(context).at(-1);
     if (!imageUrl) throw new Error('Chưa tìm thấy ảnh hoàn tất đúng lệnh của cảnh này. Mở đúng hội thoại và cuộn tới ảnh.');
-    const response = await fetch(imageUrl, { credentials: 'include' });
-    if (!response.ok) throw new Error('Không tải được tệp ảnh trong ChatGPT (' + response.status + ').');
-    const blob = await response.blob();
-    if (!/^image\/(png|jpeg|webp)$/.test(blob.type) || blob.size > 8388608) throw new Error('Ảnh phải là PNG/JPEG/WebP, tối đa 8 MB.');
-    const bytes = new Uint8Array(await blob.arrayBuffer()); let binary = '';
-    for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
-    return { jobId: context.id, state: 'completed', imageDataUrl: 'data:' + blob.type + ';base64,' + btoa(binary) };
+    try {
+      const response = await fetch(imageUrl, { credentials: 'include' });
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      const blob = await response.blob();
+      if (blob.size > 8388608) throw new Error('Ảnh vượt giới hạn 8 MB.');
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      const mime = bytes[0] === 137 && bytes[1] === 80 && bytes[2] === 78 && bytes[3] === 71 ? 'image/png' : bytes[0] === 255 && bytes[1] === 216 ? 'image/jpeg' : bytes[0] === 82 && bytes[1] === 73 && bytes[2] === 70 && bytes[3] === 70 && bytes[8] === 87 && bytes[9] === 69 && bytes[10] === 66 && bytes[11] === 80 ? 'image/webp' : '';
+      if (!mime) throw new Error('Tệp nhận được không phải PNG/JPEG/WebP.');
+      let binary = '';
+      for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
+      return { jobId: context.id, state: 'completed', imageDataUrl: 'data:' + mime + ';base64,' + btoa(binary) };
+    } catch (error) {
+      // Displaying a signed cross-origin image does not grant page fetch permission.
+      // The extension worker has narrowly scoped host permissions for this fallback.
+      if (!/^https:\/\//.test(imageUrl)) throw error;
+      const result = await chrome.runtime.sendMessage({type:'vis-fetch-image',url:imageUrl});
+      if (!result?.ok || !result.imageDataUrl) throw new Error('Chưa tải được tệp ảnh: ' + (result?.error || error?.message || String(error)));
+      return {jobId:context.id,state:'completed',imageDataUrl:result.imageDataUrl};
+    }
   }
+
   async function waitForImage(_before, token) {
     const deadline = Date.now() + 10 * 60 * 1000;
     while (Date.now() < deadline) {
@@ -212,6 +225,7 @@
         await submit(token);
         await emit({ jobId: command.id, state: 'sent' });
         const payload = await waitForImage(beforeImages, token);
+        if (token !== generation || cancelled) return;
         await emit(payload);
         finished.add(command.id);
         return;
@@ -239,7 +253,7 @@
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.17', conversationLabel: location.pathname }); return; }
+    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.18', conversationLabel: location.pathname }); return; }
     if (message?.type === 'vis-restore-draft') {
       restoreDraft().then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));
       return true;
@@ -266,7 +280,10 @@
       if (!context?.id) { sendResponse({ ok: false, error: 'Chưa nhận diện được tác vụ đang chờ.' }); return; }
       if (String(message.jobType || currentJobType || '') === 'image_generation') {
         if (isGenerating()) { sendResponse({ ok: false, error: 'ChatGPT vẫn đang tạo ảnh.' }); return; }
-        imagePayload(context).then(payload => sendResponse({ ok: true, payload })).catch(error => sendResponse({ ok: false, error: error.message }));
+        imagePayload(context).then(payload => {
+          if (currentJobId && (currentJobId === context.id || replyContext.prompt === context.prompt)) {finished.add(currentJobId);generation += 1;currentJobId='';currentJobType='';cancelled=false;}
+          finished.add(context.id);sendResponse({ ok: true, payload });
+        }).catch(error => sendResponse({ ok: false, error: error.message }));
         return true;
       }
       const result = VISReplyReader.readStreaming(document, { ...context, type: context.type || message.jobType || currentJobType });

@@ -80,7 +80,9 @@
     if (!answer || context.type === 'image_generation' && Array.isArray(context.before) && context.before.includes(fingerprint(answer))) return { sources: [], reason: 'no-new-answer' };
     const code = [...(answer.node.querySelectorAll?.('pre code, pre') || [])].map(node => node.textContent || text(node));
     const words = [...(answer.node.querySelectorAll?.('[data-stream-word], [data-d-stream-word]') || [])].map(node => node.textContent || '').join(' ');
-    return { node: answer.node, sources: [...new Set([...code, answer.text, answer.node.textContent || '', words].filter(Boolean))], reason: 'matched' };
+    const imageTurn = context.type === 'image_generation' ? answer.node.closest?.('article, [data-testid^="conversation-turn-"], [data-turn="assistant"]') : null;
+    const node = imageTurn && !imageTurn.querySelector?.('[data-message-author-role="user"], [data-turn="user"]') ? imageTurn : answer.node;
+    return { node, sources: [...new Set([...code, answer.text, answer.node.textContent || '', words].filter(Boolean))], reason: 'matched' };
   }
   function extract(source, kind) {
     const key = kind === 'transcript_mindmap' ? 'branches' : kind === 'script_structure' ? 'parts' : kind === 'part_analysis' ? 'scenes' : '';

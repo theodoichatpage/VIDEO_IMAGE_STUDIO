@@ -130,3 +130,12 @@ test('image recovery selects the exact older scene answer and never a later scen
  const baseline=reader.snapshot(doc);
  assert.equal(reader.sources(doc,{type:'image_generation',prompt:'STYLE garden END',before:baseline}).node,undefined);
 });
+
+test('image capture includes the generated-image card beside the assistant text in its own turn',()=>{
+ const user=turn('user','SCENE: Police on stairs');
+ const answer=turn('assistant','');
+ const article={querySelector:()=>null,querySelectorAll:()=>[{src:'https://chatgpt.com/backend-api/estuary/content?id=scene'}]};
+ answer.closest=()=>article;
+ const result=reader.sources(page([user,answer]),{type:'image_generation',prompt:'SCENE: Police on stairs'});
+ assert.equal(result.node,article);
+});
