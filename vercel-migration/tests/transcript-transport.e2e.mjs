@@ -39,6 +39,10 @@ try{
  await page.locator('.part-actions button').first().click();await page.waitForFunction(()=>document.querySelector('.final-text').value.includes('Đây là nội dung đã viết lại.'),null,{timeout:15000}).catch(async e=>{console.log('REWRITE DEBUG',JSON.stringify(stored),await page.locator('.transcript-page').innerText(),await chat.locator('body').innerText());throw e});
  const rewritePrompt=await chat.evaluate(()=>window.lastPrompt);assert.match(rewritePrompt,/Giọng văn hoạt ngôn, gần gũi/);assert.match(rewritePrompt,/PHẦN HIỆN TẠI - Mở đầu/);assert.match(rewritePrompt,/Kết thúc câu chuyện/);assert.ok(!rewritePrompt.includes('Return only the requested JSON'));
  assert.equal(await page.locator('.sections-panel .status').first().innerText(),'Đã xử lý');assert.equal(await page.locator('.sections-panel .status').nth(1).innerText(),'Chờ xử lý');assert.equal(backend.length,0);
+ await page.getByRole('button',{name:/Viết lại toàn bộ/}).click();
+ await page.waitForFunction(()=>document.querySelectorAll('.sections-panel .status')[1]?.textContent==='Đã xử lý',null,{timeout:15000});
+ assert.match(await chat.evaluate(()=>window.lastPrompt),/PHẦN HIỆN TẠI - Kết thúc/);
+ assert.equal(await page.getByRole('button',{name:'Dừng xử lý',exact:true}).isDisabled(),true);
  page.once('dialog',d=>d.accept());await chat.evaluate(()=>window.responseDelay=10000);await page.getByRole('button',{name:'Chia lại',exact:true}).click();await page.getByRole('button',{name:'Dừng',exact:true}).click();assert.equal(await page.getByRole('button',{name:'Chia lại',exact:true}).isEnabled(),true);
  await page.screenshot({path:root+'/transcript-transport-verified.png',fullPage:true});
  // Old or missing extensions must produce an actionable error, not an endless busy state.
