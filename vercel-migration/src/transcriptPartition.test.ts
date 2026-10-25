@@ -29,4 +29,12 @@ describe('compact transcript partition',()=>{
  it('accepts an in-flight legacy result without dropping existing content',()=>{
   expect(partitionBranches({branches:[{id:'old',title:'Đã chia',content:source}]},source)[0].content).toBe(source);
  });
+ it('restores 25 parts spanning 562 source units as in the reported result',()=>{
+  const source=Array.from({length:562},(_,i)=>`Câu nguồn số ${i+1}.`).join(' ');
+  expect(transcriptUnits(source)).toHaveLength(562);
+  const branches=Array.from({length:25},(_,i)=>({title:`Phần ${i+1}`,end:Math.floor((i+1)*562/25)}));
+  const result=partitionBranches({branches},source);
+  expect(result).toHaveLength(25);expect(result.map(x=>x.content).join('')).toBe(source);
+ });
+
 });

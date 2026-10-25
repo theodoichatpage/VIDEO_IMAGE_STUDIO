@@ -10,7 +10,7 @@ import { statusLabel } from './rewriteQueue';
 type Props={onUseTranscript:(text:string,title?:string)=>void;projectId?:string};
 const time=(seconds:number)=>{const s=Math.max(0,Math.floor(seconds));const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),x=s%60;return h?`${h}:${String(m).padStart(2,'0')}:${String(x).padStart(2,'0')}`:`${m}:${String(x).padStart(2,'0')}`};
 const downloadText=(text:string,name:string)=>{const blob=new Blob([text],{type:'text/plain;charset=utf-8'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();URL.revokeObjectURL(a.href)};
-type PendingAi={id:string;kind:'mindmap'|'rewrite';sectionId?:string;expires:number};
+type PendingAi={id:string;kind:'mindmap'|'rewrite';sectionId?:string;expires:number;started?:boolean};
 const readPending=(key:string):PendingAi|null=>{try{const value=JSON.parse(localStorage.getItem(key)||'null');return value?.id&&value.expires>Date.now()?value:null}catch{return null}};
 
 export default function TranscriptTab({onUseTranscript,projectId='default'}:Props){
@@ -19,20 +19,37 @@ export default function TranscriptTab({onUseTranscript,projectId='default'}:Prop
  const pendingKey='vis-transcript-pending-'+pairCode;
  const pending=useRef<PendingAi|null>(readPending(pendingKey));
  const timer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
+ const recovery=useRef<{jobId:string;manual:boolean}|null>(null);
+ const recoveryTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
+ const [syncing,setSyncing]=useState(false);
  const [aiStatus,setAiStatus]=useState(pending.current?'Đang chờ kết quả ChatGPT…':'');
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[withTime,setWithTime]=useState(true),[aiBusy,setAiBusy]=useState(pending.current?(pending.current.kind==='mindmap'?'mindmap':pending.current.sectionId||'rewrite'):'');
  const display=useMemo(()=>ws.transcript?(withTime?ws.transcript.segments.map(x=>`[${time(x.start)}] ${x.text}`).join('\n'):ws.transcript.text):'',[ws.transcript,withTime]);
  const finalText=useMemo(()=>assembleRewrittenScript(ws.sections),[ws.sections]);
  useEffect(()=>saveTranscriptWorkspace(projectId,ws),[projectId,ws]);
- const clearPending=()=>{clearTimeout(timer.current);pending.current=null;localStorage.removeItem(pendingKey);setAiBusy('');setAiStatus('')};
+ const finishRecovery=()=>{clearTimeout(recoveryTimer.current);recovery.current=null;setSyncing(false)};
+ const requestResult=(manual=true)=>{
+  const job=pending.current;if(!job||recovery.current)return;
+  recovery.current={jobId:job.id,manual};setSyncing(true);
+  if(manual){setError('');setAiStatus('Đang nhận lại kết quả từ đúng tác vụ ChatGPT…')}
+  recoveryTimer.current=setTimeout(()=>{if(recovery.current?.jobId===job.id){finishRecovery();if(manual)setError('Extension chưa phản hồi kiểm tra kết quả. Giữ đúng hội thoại ChatGPT mở rồi thử Đồng bộ kết quả.')}},20000);
+  window.postMessage({source:'vis-web',type:'studio-capture-result',jobId:job.id},'*');
+ };
+ const clearPending=()=>{finishRecovery();clearTimeout(timer.current);pending.current=null;localStorage.removeItem(pendingKey);setAiBusy('');setAiStatus('')};
  const failPending=(message:string)=>{const sectionId=pending.current?.sectionId;if(sectionId)setWs(s=>({...s,sections:s.sections.map(x=>x.id===sectionId?{...x,status:'error',error:message}:x)}));clearPending();setError(message)};
  const armTimeout=(ms:number,message:string)=>{clearTimeout(timer.current);timer.current=setTimeout(()=>{if(pending.current)failPending(message)},ms)};
  useEffect(()=>{
   const receive=(e:MessageEvent)=>{
-   if(e.source!==window||e.data?.source!=='vis-extension'||e.data?.type!=='studio-transcript-ai-result')return;
+   if(e.source!==window||e.data?.source!=='vis-extension')return;
+   if(e.data.type==='studio-error'){
+    if(recovery.current&&pending.current&&recovery.current.jobId===pending.current.id){const manual=recovery.current?.manual;finishRecovery();if(manual)setError(String(e.data.message||'Chưa đọc được kết quả. Mở đúng hội thoại ChatGPT rồi thử lại.'))}
+    return;
+   }
+   if(e.data.type!=='studio-transcript-ai-result')return;
    const data=e.data,job=pending.current;
    if(!job||data.jobId!==job.id||data.kind!==job.kind||data.sectionId!==job.sectionId)return;
    if(data.state==='accepted'||data.state==='sent'){
+    job.started=true;localStorage.setItem(pendingKey,JSON.stringify(job));
     setAiStatus(data.state==='sent'?'ChatGPT đã nhận lệnh, đang xử lý…':'Extension đã nhận lệnh, đang gửi sang ChatGPT…');
     armTimeout(Math.max(1,job.expires-Date.now()),'ChatGPT chưa trả kết quả trong thời gian chờ. Hãy mở hội thoại và bấm Đồng bộ kết quả trên Extension.');return;
    }
@@ -40,7 +57,9 @@ export default function TranscriptTab({onUseTranscript,projectId='default'}:Prop
     window.postMessage({source:'vis-web',type:'studio-transcript-ack',jobId:job.id},'*');
     failPending(String(data.message||data.text||'Không gửi được lệnh sang ChatGPT.'));return;
    }
+   if(data.state==='progress'){finishRecovery();return;}
    if(data.state!=='completed')return;
+   finishRecovery();
    try{
     if(job.kind==='mindmap'){
      const parsed=typeof data.text==='string'?JSON.parse(data.text):data.text;
@@ -50,12 +69,13 @@ export default function TranscriptTab({onUseTranscript,projectId='default'}:Prop
      const text=String(data.text||'').trim();if(!text)throw new Error('ChatGPT trả về kịch bản trống.');
      setWs(s=>({...s,sections:s.sections.map(x=>x.id===job.sectionId?{...x,status:'done',rewrittenText:text}:x)}));
     }
-    window.postMessage({source:'vis-web',type:'studio-transcript-ack',jobId:job.id},'*');clearPending();
+    window.postMessage({source:'vis-web',type:'studio-transcript-ack',jobId:job.id},'*');setError('');clearPending();
    }catch(err){window.postMessage({source:'vis-web',type:'studio-transcript-ack',jobId:job.id},'*');failPending(err instanceof Error?err.message:'Kết quả ChatGPT không hợp lệ.')}
   };
   window.addEventListener('message',receive);
-  if(pending.current){armTimeout(Math.max(1,pending.current.expires-Date.now()),'Tác vụ Transcript đã quá thời gian chờ.');window.postMessage({source:'vis-web',type:'studio-status'},'*')}
-  return()=>{window.removeEventListener('message',receive);clearTimeout(timer.current)};
+  if(pending.current){pending.current.started=true;armTimeout(Math.max(1,pending.current.expires-Date.now()),'Tác vụ Transcript đã quá thời gian chờ.');window.postMessage({source:'vis-web',type:'studio-status'},'*')}
+  const poll=window.setInterval(()=>{if(pending.current?.started)requestResult(false)},8000);
+  return()=>{window.removeEventListener('message',receive);clearTimeout(timer.current);clearTimeout(recoveryTimer.current);recovery.current=null;window.clearInterval(poll)};
  },[projectId,pairCode,ws.transcript?.text]);
  const sendChat=(prompt:string,kind:'mindmap'|'rewrite',sectionId?:string)=>{
   if(pending.current)return;
@@ -79,7 +99,7 @@ export default function TranscriptTab({onUseTranscript,projectId='default'}:Prop
   {aiStatus&&<div className="transcript-ai-status" role="status">{aiStatus}</div>}
   {error&&<div className="transcript-error">{error}</div>}
   <div className="middle-grid">
-   <div className="panel transcript-part-panel"><header><strong><ListOrdered size={18}/> Nội dung phần đang chọn</strong><div className="grow"/><button className="primary" onClick={createParts} disabled={!ws.transcript||!!aiBusy}><ListOrdered size={15}/> Chia phần để viết lại</button><button onClick={createParts} disabled={!ws.transcript||!!aiBusy||!ws.sections.length}><RotateCcw size={15}/> Chia lại</button><button className="mindmap-stop" onClick={stop} disabled={!aiBusy}><Square size={15}/> Dừng</button></header>{selectedPart?<div className="transcript-part-source"><b>{selectedPart.title}</b><small>{selectedPart.sourceText.length.toLocaleString('vi-VN')} ký tự · Nguyên văn transcript</small><div>{selectedPart.sourceText}</div></div>:<div className="transcript-part-empty">Bấm “Chia phần để viết lại”. ChatGPT chỉ chọn mốc chia; web giữ nguyên nội dung gốc, không cần tạo Mindmap.</div>}</div>
+   <div className="panel transcript-part-panel"><header><strong><ListOrdered size={18}/> Nội dung phần đang chọn</strong><div className="grow"/><button className="primary" onClick={createParts} disabled={!ws.transcript||!!aiBusy}><ListOrdered size={15}/> Chia phần để viết lại</button><button onClick={createParts} disabled={!ws.transcript||!!aiBusy||!ws.sections.length}><RotateCcw size={15}/> Chia lại</button><button onClick={()=>requestResult()} disabled={!aiBusy||syncing}>{syncing?'Đang đồng bộ…':'Đồng bộ kết quả'}</button><button className="mindmap-stop" onClick={stop} disabled={!aiBusy}><Square size={15}/> Dừng</button></header>{selectedPart?<div className="transcript-part-source"><b>{selectedPart.title}</b><small>{selectedPart.sourceText.length.toLocaleString('vi-VN')} ký tự · Nguyên văn transcript</small><div>{selectedPart.sourceText}</div></div>:<div className="transcript-part-empty">Bấm “Chia phần để viết lại”. ChatGPT chỉ chọn mốc chia; web giữ nguyên nội dung gốc, không cần tạo Mindmap.</div>}</div>
    <div className="panel sections-panel"><header><strong>☷ Các phần kịch bản</strong><span className="grow"/>Tổng: {ws.sections.length} phần</header><div className="transcript-sections-scroll"><table><thead><tr><th>#</th><th>Tên phần</th><th>Nội dung đầu phần</th><th>Số ký tự</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>{ws.sections.map((s,i)=><tr key={s.id} className={ws.selectedBranchId===s.branchId?'selected-row':''}><td>{i+1}</td><td><b>{s.title}</b></td><td>{s.summary}</td><td>{s.sourceText.length.toLocaleString('vi-VN')}</td><td><span className={'status '+s.status}>{statusLabel(s.status)}</span></td><td><button onClick={()=>patch({selectedBranchId:s.branchId})}>Xem</button></td></tr>)}</tbody></table></div></div>
   </div>
   <div className="panel rewrite-panel"><header><strong>✎ Prompt phong cách & Viết lại kịch bản</strong></header><div className="rewrite-grid"><div className="style-box"><b>Phong cách cá nhân hóa</b><textarea value={ws.stylePrompt} onChange={e=>patch({stylePrompt:e.target.value})} placeholder="Mô tả cách viết, giọng văn, thói quen, chủ đề yêu thích..."/><button onClick={()=>{localStorage.setItem('vis-transcript-style',ws.stylePrompt)}}><Save size={15}/> Lưu phong cách</button></div><div className="processing"><div className="part-actions"><b>Xử lý từng phần</b>{ws.sections.map((s,i)=><button key={s.id} onClick={()=>rewrite(s)} disabled={!!aiBusy}>{`Phần ${i+1}`}<small>{s.status==='done'?'Đã viết':'Viết lại'}</small></button>)}<button onClick={rewriteAll} disabled={!ws.sections.length||!!aiBusy}>Viết lại toàn bộ<br/><small>(từng phần)</small></button><button className="danger" onClick={stop}><Square size={14}/> Dừng xử lý</button></div><div className="result-head"><b>▣ Kết quả kịch bản đã viết lại</b><div className="grow"/><button onClick={()=>navigator.clipboard?.writeText(finalText)}>Sao chép</button><button onClick={()=>downloadText(finalText,'kich-ban-da-viet-lai.txt')}>Tải xuống (.txt)</button></div><textarea className="final-text" value={finalText} readOnly placeholder="Kịch bản sau khi viết lại sẽ hiển thị tại đây..."/><button className="finish" disabled={!finalText} onClick={()=>onUseTranscript(finalText,ws.transcript?.title)}>Hoàn tất & Đưa kịch bản sang Phân tích →</button></div></div></div>

@@ -12,7 +12,8 @@ try{
  vm.runInContext(fs.readFileSync(root+'/extension/background.js','utf8'),worker);
  const message=(m,sender)=>new Promise(resolve=>listener(m,sender,resolve));
  await page.exposeBinding('extensionMessage',(_,m)=>message(m,{tab:{id:3,url:'https://video-image-studio.vercel.app/'}}));
- await chat.exposeBinding('extensionMessage',(_,m)=>message(m,{tab:{id:2,url:'https://chatgpt.com/c/fixture'}}));
+ let droppedCompletion=false;let notifyDropped;const completionDropped=new Promise(resolve=>notifyDropped=resolve);
+ await chat.exposeBinding('extensionMessage',(_,m)=>{if(process.env.VIS_DROP_TRANSCRIPT_COMPLETION==='1'&&!droppedCompletion&&m.type==='vis-chat-event'&&m.payload?.state==='completed'){droppedCompletion=true;notifyDropped();return{ok:true}}return message(m,{tab:{id:2,url:'https://chatgpt.com/c/fixture'}})});
  for(const p of [page,chat])await p.addInitScript(()=>{window.chrome={storage:{local:{get:async()=>({}),set:async()=>{}}},runtime:{sendMessage:m=>window.extensionMessage(m),onMessage:{addListener:fn=>window.receiver=fn}}}});
  await chat.route('**/*',r=>r.fulfill({contentType:'text/html',body:`<html><head><meta charset="utf-8"></head><body><main></main><form><textarea id="prompt-textarea"></textarea><button type="button" data-testid="send-button">Send</button></form><script>
  document.querySelector('button').onclick=()=>{const box=document.querySelector('textarea'),prompt=box.value;window.lastPrompt=prompt;box.value='';const user=document.createElement('div');user.setAttribute('data-message-author-role','user');user.textContent=prompt;document.querySelector('main').append(user);
@@ -26,7 +27,13 @@ try{
  await page.goto('http://127.0.0.1:4173');await page.addScriptTag({path:root+'/extension/web_bridge.js'});
  await page.getByPlaceholder('https://www.youtube.com/watch?v=...').fill('https://www.youtube.com/watch?v=fixture');await page.getByRole('button',{name:'Lấy Transcript',exact:true}).click();await page.getByText('Đã lấy transcript thành công',{exact:false}).waitFor();
  await page.getByRole('button',{name:'Chia phần để viết lại',exact:true}).click();assert.equal(await page.getByRole('button',{name:'Chia lại',exact:true}).isDisabled(),true);
- await page.locator('.sections-panel tbody tr').first().waitFor({timeout:15000}).catch(async e=>{console.log('DEBUG',JSON.stringify(stored),await page.locator('.transcript-page').innerText(),await chat.locator('body').innerText());throw e});assert.equal(await page.locator('.mindmap-node').count(),0);assert.match(await page.locator('.transcript-part-source').innerText(),/Mở đầu câu chuyện/);assert.equal(await page.locator('.sections-panel tbody tr').count(),2);assert.equal(backend.length,0);
+ if(process.env.VIS_DROP_TRANSCRIPT_COMPLETION==='1'&&(process.env.VIS_MANUAL_RECOVERY==='1'||process.env.VIS_RECOVER_AFTER_RELOAD==='1')){
+  await chat.locator('[data-message-author-role="assistant"]').first().waitFor();await completionDropped;
+  if(process.env.VIS_RECOVER_AFTER_RELOAD==='1'){await page.reload();await page.addScriptTag({path:root+'/extension/web_bridge.js'})}
+  if(process.env.VIS_MANUAL_RECOVERY==='1')await page.getByRole('button',{name:'Đồng bộ kết quả',exact:true}).click();
+ }
+
+ await page.locator('.sections-panel tbody tr').first().waitFor({timeout:15000}).catch(async e=>{console.log('DEBUG',JSON.stringify(stored),await page.locator('.transcript-page').innerText(),await chat.locator('body').innerText());throw e});assert.equal(await page.locator('.mindmap-node').count(),0);assert.match(await page.locator('.transcript-part-source').innerText(),/Mở đầu câu chuyện/);assert.equal(await page.locator('.sections-panel tbody tr').count(),2);assert.equal(await chat.locator('[data-message-author-role="user"]').count(),1);if(process.env.VIS_DROP_TRANSCRIPT_COMPLETION==='1')assert.equal(droppedCompletion,true);assert.equal(backend.length,0);
  assert.match(await chat.evaluate(()=>window.lastPrompt),/Chia transcript/);assert.ok(!(await chat.evaluate(()=>window.lastPrompt)).includes('\"children\"'));assert.equal(await page.getByRole('button',{name:'Chia lại',exact:true}).isEnabled(),true);
  await page.locator('.style-box textarea').fill('Giọng văn hoạt ngôn, gần gũi; không bịa sự kiện.');
  await page.locator('.part-actions button').first().click();await page.waitForFunction(()=>document.querySelector('.final-text').value.includes('Đây là nội dung đã viết lại.'),null,{timeout:15000}).catch(async e=>{console.log('REWRITE DEBUG',JSON.stringify(stored),await page.locator('.transcript-page').innerText(),await chat.locator('body').innerText());throw e});
