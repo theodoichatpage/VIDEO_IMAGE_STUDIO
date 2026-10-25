@@ -43,5 +43,19 @@ try{
  await page.screenshot({path:root+'/transcript-transport-verified.png',fullPage:true});
  // Old or missing extensions must produce an actionable error, not an endless busy state.
  const missing=await context.newPage();await missing.route('**/functions/v1/studio-api?**',r=>r.fulfill({json:{session:{id:'project-b',script:'',parts:[]}}}));await missing.addInitScript(()=>{localStorage.setItem('vis-session','project-b');localStorage.setItem('vis-transcript-workspace-default',JSON.stringify({url:'test',language:'vi',transcript:{text:'test',segments:[]},branches:[],sections:[],stylePrompt:'',selectedBranchId:''}))});await missing.goto('http://127.0.0.1:4173');await missing.getByRole('button',{name:'Chia phần để viết lại',exact:true}).click();await missing.getByText('Extension chưa nhận lệnh.',{exact:false}).waitFor({timeout:10000});assert.equal(await missing.getByRole('button',{name:'Chia phần để viết lại',exact:true}).isEnabled(),true);
+ // Recover a completed answer even when its old pending-job metadata has expired.
+ await page.getByRole('button',{name:'Dán JSON kết quả',exact:true}).click();
+ const oldRows=await page.locator('.sections-panel tbody tr').count();
+ await page.getByRole('textbox',{name:'JSON chia phần',exact:true}).fill('{"branches":[{"title":"Thiếu nội dung","end":1}]}');
+ await page.getByRole('button',{name:'Lưu các phần từ JSON',exact:true}).click();
+ await page.getByRole('alert').waitFor();assert.equal(await page.locator('.sections-panel tbody tr').count(),oldRows);
+ const promptsBefore=await chat.locator('[data-message-author-role="user"]').count();
+ page.once('dialog',d=>d.accept());
+ await page.getByRole('textbox',{name:'JSON chia phần',exact:true}).fill('{"branches":[{"title":"Đã khôi phục","end":2}]}');
+ await page.getByRole('button',{name:'Lưu các phần từ JSON',exact:true}).click();
+ await page.getByRole('dialog',{name:'Nhận JSON chia phần'}).waitFor({state:'hidden'});
+ assert.equal(await page.locator('.sections-panel tbody tr').count(),1);
+ assert.match(await page.locator('.transcript-part-source').innerText(),/Kết thúc câu chuyện/);
+ assert.equal(await chat.locator('[data-message-author-role="user"]').count(),promptsBefore);
  console.log('PASS real web_bridge + background + content + reply-reader: button -> submitted composer -> compact ranges -> original source sections; rewrite plain text; stop; missing extension timeout; no analysis API mutation. ChatGPT response is a test fixture.');
 }finally{await browser.close();server.kill()}
