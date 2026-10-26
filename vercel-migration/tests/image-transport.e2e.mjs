@@ -18,6 +18,8 @@ try{
  process.env.SUPABASE_URL='https://db.test';process.env.SUPABASE_SECRET_KEY='fixture-only';
  globalThis.fetch=async(url,init={})=>{
   if(url.includes('/rest/v1/')){
+   if(url.includes('studio_separations'))return Response.json([]);
+   if(init.method==='PATCH'){const expected=new URL(url).searchParams.get('record->>updatedAt');if(expected!=='eq.'+record.updatedAt)return Response.json([]);record=JSON.parse(init.body).record;return Response.json([{record:structuredClone(record)}])}
    if(init.method==='POST'&&init.body){const body=JSON.parse(init.body);if(body.record)record=body.record;else if(body.session_id)record.bridgeLastSeen=body.seen_at;return new Response('',{status:201})}
    return Response.json([{record:structuredClone(record)}]);
   }
@@ -55,6 +57,7 @@ try{
  assert.equal(record.parts[0].scenes[0].imageStatus,'complete');assert.equal(files.size,1);assert.equal(fallbackFetches>=1,true);assert.deepEqual([...files.values()][0],png);
  assert.equal(await chat.locator('[data-message-author-role="user"]').count(),1);
  // Recovery receives existing image bytes only; it must not submit another prompt.
+ record.activeJob={id:'other-scene-job',type:'image_generation',status:'waiting',prompt:'Different scene B',sceneKey:'p1:1',protocol:3};record.imageJobs=[record.activeJob];record.parts[0].scenes.push({title:'Cảnh 2 - Khác',prompt:'Different scene B',imagePrompt:'Different scene B',imageStatus:'generating',imageResults:[]});
  record.parts[0].scenes[0].imageResults=[];record.parts[0].scenes[0].imageStatus='error';record.parts[0].scenes[0].imageError='Kết quả chưa đồng bộ';record.updatedAt=Date.now();
  await page.reload();await page.addScriptTag({path:root+'/extension/web_bridge.js'});await page.getByRole('alert').filter({hasText:'Kết quả chưa đồng bộ'}).waitFor();
  blockCapture=true;
@@ -69,6 +72,7 @@ try{
  const imageBytes=await page.evaluate(async()=>Array.from(new Uint8Array(await(await fetch(document.querySelector('img.generated-image').src)).arrayBuffer())));
  assert.deepEqual(Buffer.from(imageBytes),png);
  await page.locator('.image-sync-feedback').filter({hasText:'Đã đồng bộ'}).waitFor();
+ assert.equal(record.activeJob.id,'other-scene-job');assert.equal(record.parts[0].scenes[1].imageStatus,'generating');
  captureFailure='Không tìm thấy ảnh đúng cảnh (kiểm thử)';
  await page.getByRole('button',{name:'Đồng bộ lại ảnh',exact:true}).click();
  await page.locator('.image-sync-feedback').filter({hasText:captureFailure}).waitFor();

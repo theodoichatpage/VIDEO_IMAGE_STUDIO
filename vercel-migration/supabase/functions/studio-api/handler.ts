@@ -1,10 +1,10 @@
 type RequestLike = { method?: string; query: { path?: string | string[] }; body?: unknown; headers: Record<string, string | string[] | undefined> };
 type ResponseLike = { setHeader(name: string, value: string): void; status(code: number): { json(value: unknown): void } };
 
-type Scene = { title: string; backdrop: string; content: string; character: string; emotion: string; shot: string; image: string; prompt: string; imageStatus?: string; imageResults?: { url: string; prompt: string; createdAt: number; storagePath?: string; expiresAt?: number }[]; imagePrompt?: string; imageError?: string };
+type Scene = { title: string; backdrop: string; content: string; character: string; emotion: string; shot: string; image: string; prompt: string; imageStatus?: string; imageResults?: { url: string; prompt: string; createdAt: number; storagePath?: string; expiresAt?: number; jobId?: string }[]; imagePrompt?: string; imageError?: string };
 type Part = { id: string; title: string; range: string; content: string; status: string; scenes: Scene[]; analysisText: string; receivedAt?: number };
-type Job = { id: string; type: 'script_structure' | 'part_analysis' | 'image_generation'; status: string; prompt: string; partId?: string; sceneKey?: string; protocol: 2 | 3 };
-type Session = { id: string; script: string; status: string; activeJob: Job | null; lastJob?: Job; parts: Part[]; imageJobs: Job[]; updatedAt: number; bridgeLastSeen?: number; finishedJobIds?: string[]; lastError?: string; analysisQueue?: string[]; batchAnalysis?: boolean; stylePrompt?: string; analysisBackup?: { script: string; parts: Part[]; savedAt: number } };
+type Job = { id: string; type: 'script_structure' | 'part_analysis' | 'image_generation'; status: string; prompt: string; partId?: string; sceneKey?: string; protocol: 2 | 3; expiresAt?: number };
+type Session = { id: string; script: string; status: string; activeJob: Job | null; lastJob?: Job; parts: Part[]; imageJobs: Job[]; imageCaptures?: Job[]; updatedAt: number; bridgeLastSeen?: number; finishedJobIds?: string[]; lastError?: string; analysisQueue?: string[]; batchAnalysis?: boolean; stylePrompt?: string; separations?: Record<string, unknown>[]; analysisBackup?: { script: string; parts: Part[]; savedAt: number } };
 
 const idOk = (value: string) => /^[A-Za-z0-9-]{16,64}$/.test(value);
 const newId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -57,7 +57,7 @@ async function saveImage(session: Session, job: Job, value: unknown) {
   }
   const path = session.id + '/' + job.id + '.' + match[1];
   await storage('object/studio-images/' + path, { method: 'POST', headers: { 'Content-Type': 'image/' + match[1], 'x-upsert': 'true' }, body: bytes });
-  return { ...await signImage(path), storagePath: path, prompt: job.prompt, createdAt: Date.now() };
+  return { ...await signImage(path), storagePath: path, prompt: job.prompt, createdAt: Date.now(), jobId: job.id };
 }
 
 async function read(id: string): Promise<Session | null> {
@@ -75,13 +75,36 @@ async function read(id: string): Promise<Session | null> {
     if (!image.storagePath && /^https:\/\/chatgpt\.com\/backend-api\//.test(image.url)) { scene.imageStatus = 'error'; scene.imageError = 'Ảnh cũ là liên kết ChatGPT cần đăng nhập. Bấm Đồng bộ lại ảnh để lưu tệp về web.'; }
     if (image.storagePath && (!image.expiresAt || image.expiresAt < Date.now() + 3600000)) Object.assign(image, await signImage(image.storagePath));
   }
-  return { ...value, parts, imageJobs: value.imageJobs || [], finishedJobIds: value.finishedJobIds || [] };
+  const savedLayers = await database('studio_separations?session_id=eq.' + encodeURIComponent(id) + '&select=entry,updated_at&order=updated_at.asc') as { entry?: Record<string, unknown>; updated_at?: number }[];
+  const separations = (savedLayers || []).flatMap(item => item.entry ? [item.entry] : []);
+  const updatedAt = Math.max(value.updatedAt || 0, ...(savedLayers || []).map(item => Number(item.updated_at) || 0));
+  return { ...value, updatedAt, separations, parts, imageJobs: value.imageJobs || [], finishedJobIds: value.finishedJobIds || [] };
 }
 async function write(session: Session) {
   session.updatedAt = Date.now();
   await database('studio_sessions?on_conflict=id', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify({ id: session.id, record: session }) });
   return session;
 }
+// Capturing an existing image must not replace a different running job.
+// Commit only onto a fresh record; retry if another task updated it during upload.
+async function commitImageCapture(id: string, job: Job, image: Awaited<ReturnType<typeof saveImage>>) {
+  for (let attempt=0;attempt<5;attempt++) {
+    const rows=await database('studio_sessions?id=eq.'+encodeURIComponent(id)+'&select=record') as {record:Session}[];
+    const fresh=rows?.[0]?.record;if(!fresh)throw new Error('Không tìm thấy dự án nhận ảnh.');
+    const ticket=fresh.imageCaptures?.find(item=>item.id===job.id);
+    const target=findScene(fresh,String(job.sceneKey));
+    if(!ticket||!target.scene||ticket.prompt!==(target.scene.imagePrompt||target.scene.imageResults?.[0]?.prompt))return {session:await read(id),ignored:true};
+    const previous=fresh.updatedAt;
+    target.scene.imageResults=[image];target.scene.imageStatus='complete';target.scene.imageError='';
+    fresh.imageCaptures=(fresh.imageCaptures||[]).filter(item=>item.id!==job.id);
+    fresh.finishedJobIds=[...(fresh.finishedJobIds||[]),job.id].slice(-200);
+    fresh.updatedAt=Math.max(Date.now(),previous+1);
+    const saved=await database('studio_sessions?id=eq.'+encodeURIComponent(id)+'&record->>updatedAt=eq.'+encodeURIComponent(String(previous)),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({record:fresh})}) as unknown[];
+    if(saved?.length)return {session:await read(id)};
+  }
+  throw new Error('Dự án vừa được cập nhật bởi tác vụ khác. Tệp ảnh vẫn được tiện ích giữ và sẽ gửi lại.');
+}
+
 function structurePrompt(script: string) {
   return 'Bạn là biên tập viên kịch bản. Hãy đọc TOÀN BỘ kịch bản và chia thành số phần HỢP LÝ theo mạch nội dung, không cố định 5 phần. Mục tiêu là mỗi phần đủ ngắn để bước sau phân tích thành phân cảnh chi tiết, nhưng tuyệt đối không cắt giữa một ý, sự kiện hoặc đoạn kể đang liền mạch. Chỉ trả MỘT JSON hợp lệ, không markdown, đúng dạng: {"parts":[{"title":"Phần 1 - tên ngắn","range":"mô tả phạm vi nội dung","content":"nguyên văn đầy đủ nội dung thuộc phần này"}]}. Phải bao phủ toàn bộ kịch bản theo đúng thứ tự, không bỏ sót, không viết lại nội dung. KỊCH BẢN:\n' + script;
 }
@@ -153,6 +176,30 @@ function normalizeScenes(value: unknown): Scene[] {
 }
 function imagePrompt(style: string, scene: Scene, _ratio: string) { const template = style.trim(); const scenePrompt = scene.prompt.trim(); if (template.includes('{{SCENE_PROMPT}}')) return template.replaceAll('{{SCENE_PROMPT}}', scenePrompt); return ['SCENE:\n' + scenePrompt, template].filter(Boolean).join('\n\n'); }
 
+function separationMetadata(value: unknown) {
+  if (!value || typeof value !== 'object' || JSON.stringify(value).length > 256000) throw new Error('Metadata kết quả tách ảnh không hợp lệ.');
+  const row = value as Record<string, unknown>;
+  const token = (v: unknown) => { const text = String(v || ''); if (!/^[a-f0-9]{32}$/.test(text)) throw new Error('Mã job/engine không hợp lệ.'); return text; };
+  const dimension = (v: unknown, min = 1) => { if (typeof v !== 'number' || !Number.isInteger(v) || v < min || v > 16000000) throw new Error('Kích thước lớp không hợp lệ.'); return v; };
+  const file = (v: unknown) => { const text = String(v || ''); if (!/^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,79}\.png$/.test(text)) throw new Error('Mã file PNG không hợp lệ.'); return text; };
+  const width = dimension(row.width), height = dimension(row.height);
+  if (width * height > 16000000 || !Array.isArray(row.layers) || !row.layers.length || row.layers.length > 500) throw new Error('Danh sách lớp không hợp lệ.');
+  const seen = new Set<string>();
+  const layers = row.layers.map((value: unknown) => {
+    const item = (value || {}) as Record<string, unknown>; const fileId = file(item.fileId);
+    if (seen.has(fileId) || !['background','person','text'].includes(String(item.kind)) || !['original','filled'].includes(String(item.role))) throw new Error('Lớp tách ảnh không hợp lệ.');
+    seen.add(fileId);
+    const x = dimension(item.x, 0), y = dimension(item.y, 0), w = dimension(item.width), h = dimension(item.height);
+    if (x + w > width || y + h > height) throw new Error('Vị trí lớp nằm ngoài ảnh gốc.');
+    return { fileId, file: fileId, title: String(item.title || fileId).slice(0,160), kind: String(item.kind), role: String(item.role), x, y, width:w, height:h };
+  });
+  const options = (row.options || {}) as Record<string, unknown>;
+  if (['people','text','fill'].some(key => typeof options[key] !== 'boolean')) throw new Error('Tùy chọn tách ảnh không hợp lệ.');
+  return { jobId: token(row.jobId), engineId: token(row.engineId), sourceName: String(row.sourceName || 'image.png').slice(0,160), sourceSceneKey: /^[A-Za-z0-9_]+:[0-9]+$/.test(String(row.sourceSceneKey || '')) ? String(row.sourceSceneKey) : undefined,
+    createdAt: typeof row.createdAt === 'number' && Number.isFinite(row.createdAt) && row.createdAt > 0 ? row.createdAt : Date.now(), width, height, layers, exactReconstruction: row.exactReconstruction === true, backgroundFilled: row.backgroundFilled === true,
+    warnings: Array.isArray(row.warnings) ? row.warnings.slice(0,20).map(item => String(item).slice(0,1000)) : [], options: { people: options.people, text: options.text, fill: options.fill }, files: { original:'anh_goc.png',composite:'ghep_lai.png',zip:'cac_lop.zip',positions:'vi_tri.json' } };
+}
+
 export default async function handler(req: RequestLike, res: ResponseLike) {
   res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Access-Control-Allow-Headers', 'Content-Type'); res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   if (req.method === 'OPTIONS') return send(res, 200, { ok: true });
@@ -169,6 +216,14 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       const session = await read(path[1]);
       if (path.length === 2 && req.method === 'GET') return send(res, 200, { session: session });
       if (!session) return fail(res, 'Không tìm thấy phiên làm việc.', 404);
+      if (path[2] === 'separations' && path.length === 3 && req.method === 'POST') {
+        let entry;
+        try { entry = separationMetadata(body.result); }
+        catch (error) { return fail(res, error instanceof Error ? error.message : 'Kết quả tách ảnh không hợp lệ.', 422); }
+        // Atomically append metadata only; never rewrite an in-flight analysis/image job.
+        await database('rpc/studio_save_separation', { method: 'POST', body: JSON.stringify({ session_id: session.id, entry }) });
+        return send(res, 200, { session: await read(session.id) });
+      }
       if (path[2] === 'analysis' && req.method === 'POST') {
         if (session.activeJob && !['completed','error','stopped'].includes(session.activeJob.status)) return fail(res, 'Một tác vụ đang chờ ChatGPT.', 409);
         const script = String(body.script || '').trim(); if (!script) return fail(res, 'Kịch bản không được để trống.');
@@ -237,6 +292,32 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         session.stylePrompt = String(body.stylePrompt || '');
         return send(res, 200, { session: await write(session) });
       }
+      if (path[2] === 'script' && req.method === 'POST') {
+        if (session.activeJob) return fail(res, 'Hãy hoàn tất hoặc dừng tác vụ đang chạy trước.', 409);
+        session.script = String(body.script || '').trim();
+        return send(res, 200, { session: await write(session) });
+      }
+      if (path[2] === 'images' && path[3] === 'capture' && req.method === 'POST') {
+        const key=String(body.sceneKey||'');
+        for(let attempt=0;attempt<5;attempt++){
+          const rows=await database('studio_sessions?id=eq.'+encodeURIComponent(session.id)+'&select=record') as {record:Session}[];
+          const fresh=rows?.[0]?.record;if(!fresh)return fail(res,'Không tìm thấy dự án.',404);
+          const target=findScene(fresh,key);if(!target.scene)return fail(res,'Không tìm thấy cảnh cần nhận ảnh.',422);
+          if(fresh.activeJob?.type==='image_generation'&&fresh.activeJob.sceneKey===key)return send(res,200,{session:await read(fresh.id),command:fresh.activeJob});
+          const prompt=target.scene.imagePrompt||target.scene.imageResults?.[0]?.prompt;
+          if(!prompt)return fail(res,'Cảnh này chưa có lệnh tạo ảnh để đối chiếu với ChatGPT.',422);
+          fresh.imageCaptures=(fresh.imageCaptures||[]).filter(item=>(item.expiresAt||0)>Date.now());
+          const existing=fresh.imageCaptures.find(item=>item.sceneKey===key&&item.prompt===prompt);
+          if(existing)return send(res,200,{session:await read(fresh.id),command:existing});
+          const command:Job={id:newId(),type:'image_generation',status:'waiting',prompt,sceneKey:key,partId:target.part?.id,protocol:3,expiresAt:Date.now()+600000};
+          fresh.imageCaptures=[...fresh.imageCaptures.filter(item=>item.sceneKey!==key).slice(-9),command];
+          const previous=fresh.updatedAt;fresh.updatedAt=Math.max(Date.now(),previous+1);
+          const saved=await database('studio_sessions?id=eq.'+encodeURIComponent(fresh.id)+'&record->>updatedAt=eq.'+encodeURIComponent(String(previous)),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({record:fresh})}) as unknown[];
+          if(saved?.length)return send(res,200,{session:await read(fresh.id),command});
+        }
+        return fail(res,'Dự án đang được cập nhật. Hãy bấm Đồng bộ lại ảnh sau vài giây.',409);
+      }
+
       if (path[2] === 'images' && path[3] === 'recover' && req.method === 'POST') {
         if (session.activeJob) return fail(res, 'Hãy hoàn tất hoặc dừng tác vụ đang chạy trước.', 409);
         const key = String(body.sceneKey || ''); const target = findScene(session, key);
@@ -269,6 +350,13 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       if (path[2] === 'next' && req.method === 'GET') { const job = session.activeJob; if (!job || !['queued','sending'].includes(job.status)) return send(res, 200, { command: null }); if (!current(job)) { session.activeJob = null; session.status = 'parts_ready'; await write(session); return send(res, 200, { command: null, discarded: true }); } if (job.status === 'queued') { job.status = 'sending'; await write(session); } return send(res, 200, { command: job }); }
       if (path[2] === 'event' && req.method === 'POST') {
         const eventJobId = String(body.jobId || '');
+        const capture=session.imageCaptures?.find(item=>item.id===eventJobId);
+        if(capture){
+          if(body.state!=='completed')return fail(res,'Yêu cầu này chỉ nhận ảnh đã tạo, không tạo ảnh mới.',422);
+          if((capture.expiresAt||0)<Date.now())return send(res,200,{session,acknowledged:true,ignored:true});
+          try{return send(res,200,await commitImageCapture(session.id,capture,await saveImage(session,capture,body.imageDataUrl)));}
+          catch(error){return fail(res,error instanceof Error?error.message:'Không lưu được ảnh đúng cảnh.',422);}
+        }
         let job = session.activeJob;
         if (!job && body.state === 'completed' && session.lastJob?.id === eventJobId && session.lastJob.status === 'error' && session.lastJob.type !== 'image_generation') {
           job = { ...session.lastJob, status: 'waiting' };
@@ -311,4 +399,6 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
     return fail(res, 'Không tìm thấy API.', 404);
   } catch (caught) { return fail(res, caught instanceof Error ? caught.message : 'Máy chủ gặp lỗi.', 500); }
 }
+
+
 
