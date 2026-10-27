@@ -21,9 +21,9 @@ if(s.includes(statusAnchor)&&!s.includes('const [imageToast, setImageToast]')){
 }
 
 // Render toast once at the end of the image workspace.
-const imageEnd=`</section>}\n  </main>`;
-if(s.includes(imageEnd)&&!s.includes('image-status-toast')){
-  s=s.replace(imageEnd,`</section>}{activeMenu===2 && imageToast && <div className="image-status-toast" role="status" aria-live="polite">{imageToast}</div>}\n  </main>`);
+const mainEnd='  </main>;';
+if(s.includes(mainEnd)&&!s.includes('className="image-status-toast"')){
+  s=s.replace(mainEnd,`    {activeMenu===2 && imageToast && <div className="image-status-toast" role="status" aria-live="polite">{imageToast}</div>}\n`+mainEnd);
 }
 
 fs.writeFileSync(appPath,s,'utf8');
@@ -32,6 +32,18 @@ const cssPath=path.resolve('src/index.css');
 let css=fs.readFileSync(cssPath,'utf8');
 const marker='/* compact-image-workspace-v1 */';
 if(!css.includes(marker))css+=`\n${marker}\n.image-status-toast{position:fixed;right:18px;bottom:18px;z-index:1200;max-width:min(520px,calc(100vw - 36px));padding:10px 14px;border:1px solid #9fc8ef;border-radius:8px;background:rgba(248,252,255,.97);box-shadow:0 5px 18px rgba(26,72,112,.18);color:#185b94;font:600 12px/1.4 Arial,sans-serif;pointer-events:none}.production-preview .preview-empty:has(.generated-image){height:min(52vh,500px);min-height:300px;overflow:hidden;padding:8px;display:flex;align-items:center;justify-content:center;background:#f6faff}.production-preview .preview-empty .generated-image{display:block;width:100%;height:100%;max-width:100%;max-height:min(50vh,480px);object-fit:contain;border-radius:4px}.production-preview{min-width:0;overflow:hidden}.production-grid{align-items:stretch}.production-preview .preview-slots,.production-preview .preview-actions{flex-shrink:0}@media(max-height:800px){.production-preview .preview-empty:has(.generated-image){height:390px;min-height:260px}.production-preview .preview-empty .generated-image{max-height:370px}}\n`;
+
+const fitMarker='/* image-preview-viewport-fit */';
+if(!css.includes(fitMarker))css+=`\n${fitMarker}
+.image-workspace{height:calc(100dvh - 56px);min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.image-workspace> *{flex-shrink:0}
+.image-workspace .production-grid{flex:1 1 0;min-height:0;height:auto;grid-template-columns:minmax(0,21fr) minmax(0,36fr) minmax(0,43fr)}
+.production-parts{overflow-y:auto}
+.production-heading{flex-shrink:0}
+.production-preview .preview-empty{min-height:0;overflow:hidden}
+.production-preview .preview-empty:has(.generated-image){flex:1 1 0;height:auto;min-height:0;display:grid;grid-template-rows:minmax(0,1fr);grid-auto-rows:max-content;align-content:stretch}
+.production-preview .preview-empty .generated-image{width:100%;height:100%;max-width:100%;max-height:100%;min-height:0;object-fit:contain}
+`;
 fs.writeFileSync(cssPath,css,'utf8');
 
 // Fail build loudly if the requested transformations did not land.
@@ -39,3 +51,4 @@ const out=fs.readFileSync(appPath,'utf8');
 if(out.includes('className="scene-source"'))throw new Error('scene-source block was not removed');
 if(!out.includes('image-status-toast'))throw new Error('image status toast was not inserted');
 if(out.includes('image-work-summary'))throw new Error('old image status banner still exists');
+
