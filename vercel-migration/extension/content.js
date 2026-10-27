@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_0420__) return;
-  window.__VIS_CHAT_BRIDGE_0420__ = true;
+  if (window.__VIS_CHAT_BRIDGE_0421__) return;
+  window.__VIS_CHAT_BRIDGE_0421__ = true;
   let currentJobId = '';
   let currentJobType = '';
   let cancelled = false;
@@ -57,13 +57,13 @@
     // Long ChatGPT prompts can contain only the preview until Show more is clicked.
     // Expand the user turn, then keep using exact prompt matching (never a style prefix).
     let expanded = false;
-    for (const turn of VISReplyReader.turns(document, context)) {
-      if (turn.role !== 'user') continue;
-      for (const button of turn.node.querySelectorAll('button, [role="button"]')) {
+    const known = VISReplyReader.turns(document, context).filter(turn => turn.role === 'user').flatMap(turn => [...turn.node.querySelectorAll('button, [role="button"]')]);
+    const controls = [...new Set([...known, ...document.querySelectorAll('button, [role="button"]')])];
+    for (const button of controls) {
+        if (button.closest?.('form, #prompt-textarea, [contenteditable="true"]')) continue;
         const label = (button.innerText || button.textContent || button.getAttribute('aria-label') || '').trim();
         if (!/^(show more|read more|see more|xem thêm|hiển thị thêm|mở rộng)$/i.test(label) || expandedImagePrompts.has(button)) continue;
         expandedImagePrompts.add(button);button.click();expanded = true;
-      }
     }
     if (expanded) await sleep(150);
   }
@@ -276,7 +276,7 @@
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.20', conversationLabel: location.pathname }); return; }
+    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.21', conversationLabel: location.pathname }); return; }
     if (message?.type === 'vis-restore-draft') {
       restoreDraft().then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));
       return true;

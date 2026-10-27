@@ -29,12 +29,29 @@
       const value = normalize(text(node));
       return value.includes('[VIS_JOB_ID:') || /PHẦN:.*NỘI DUNG:/.test(value) || matchesPrompt(value, context);
     }) : [];
-    const hintedUsers = new Set(promptBlocks);
-    const role = node => hintedUsers.has(node) ? 'user' : roleOf(node);
+    // Image-only ChatGPT turns may omit role/article/ResponseRoot attributes.
+    // Infer the prompt from its complete text; common prefixes establish only
+    // boundaries, never ownership of an image.
+    const imageMode = context.type === 'image_generation';
+    const prefix = normalize(context.prompt).slice(0, 120);
+    const loose = imageMode && context.prompt ? [...document.querySelectorAll('div, p')].filter(node => {
+      if (node.closest?.('form, [contenteditable="true"], #prompt-textarea') || roleOf(node) === 'assistant') return false;
+      const value = normalize(text(node));
+      return matchesPrompt(value, context) || prefix.length >= 80 && value.startsWith(prefix);
+    }) : [];
+    const leafPrompts = loose.filter(node => !loose.some(child => child !== node && node.contains?.(child)));
+    const bubblePrompts = imageMode ? [...document.querySelectorAll('[class*="UserBubble"], [data-testid="user-message"]')].filter(node => /UserBubble/.test(node.getAttribute?.('class') || '') || node.getAttribute?.('data-testid') === 'user-message') : [];
+    const hintedUsers = new Set([...promptBlocks, ...leafPrompts, ...bubblePrompts]);
+    const imageNodes = imageMode ? [...document.querySelectorAll('img')].filter(image => {
+      const url = image.currentSrc || image.src || '';
+      return image.naturalWidth >= 256 && image.naturalHeight >= 256 && /^(https:\/\/(?:chatgpt\.com|[^/]+\.oaiusercontent\.com|[^/]+\.blob\.core\.windows\.net)\/|blob:)/i.test(url) && roleOf(image) !== 'user' && ![...hintedUsers].some(user => user.contains?.(image));
+    }).map(image => image.parentElement).filter(Boolean) : [];
+    const hintedImages = new Set(imageNodes);
+    const role = node => hintedUsers.has(node) ? 'user' : roleOf(node) || (hintedImages.has(node) ? 'assistant' : '');
     const headings = [...document.querySelectorAll('h5, h6, [role="heading"]')].filter(node => /^(you said|bạn đã nói|bạn nói|chatgpt said|chatgpt đã nói|chatgpt nói)\s*:?$/i.test(normalize(node.textContent)));
     const semanticTurns = headings.map(node => node.closest?.('article, [data-testid*="conversation-turn"], [data-turn]') || node.parentElement).filter(Boolean);
     const candidates = [...document.querySelectorAll('[data-testid^="conversation-turn-"], [data-testid="conversation-turn"], [data-turn="user"], [data-turn="assistant"], main article, [role="main"] article, article'), ...semanticTurns, ...document.querySelectorAll('article[data-testid^="conversation-turn-"], article[data-turn]'), ...document.querySelectorAll('[data-message-author-role="user"], [data-message-author-role="assistant"]'), ...document.querySelectorAll('main .markdown, main .agent-turn')];
-    const nodes = [...new Set([...candidates, ...wordRoots, ...promptBlocks])].filter(node => ['user', 'assistant'].includes(role(node)));
+    const nodes = [...new Set([...candidates, ...wordRoots, ...hintedUsers, ...imageNodes])].filter(node => ['user', 'assistant'].includes(role(node)));
     const top = nodes.filter((node, index) => !nodes.some((parent, other) => index !== other && role(parent) === role(node) && parent.contains?.(node)));
     top.sort((a, b) => {
       const position = a.compareDocumentPosition?.(b) || 0;
@@ -47,7 +64,7 @@
     const images = [...(turn.node.querySelectorAll?.('img') || [])].map(image => image.currentSrc || image.src || '').filter(Boolean).join('|');
     return identity + ':' + normalize(turn.text) + (images ? ':' + images : '');
   }
-  function snapshot(document) { return turns(document).filter(turn => turn.role === 'assistant').map(fingerprint); }
+  function snapshot(document) { return turns(document, {type:'image_generation'}).filter(turn => turn.role === 'assistant').map(fingerprint); }
   function matchesPrompt(user, context) {
     const expected = normalize(context.prompt);
     if (context.id && user.includes('[VIS_JOB_ID:' + context.id + ']')) return true;
@@ -62,9 +79,8 @@
   }
   function sources(document, context = {}) {
     const messages = turns(document, context);
-    const hasUsers = messages.some(turn => turn.role === 'user');
     const latestUser = messages.findLastIndex(turn => turn.role === 'user' && (context.type !== 'image_generation' || [normalize(turn.text), normalize(turn.node.textContent)].some(value => matchesPrompt(value, context))));
-    if (context.type === 'image_generation' && hasUsers && latestUser < 0) return { sources: [], reason: 'latest-user-mismatch' };
+    if (context.type === 'image_generation' && latestUser < 0) return { sources: [], reason: 'latest-user-mismatch' };
     let answers;
     if (latestUser >= 0) {
       const userTexts = [normalize(messages[latestUser].text), normalize(messages[latestUser].node.textContent)];
@@ -76,7 +92,7 @@
       if (!Array.isArray(context.before)) return { sources: [], reason: 'no-user-anchor' };
       answers = messages.filter(turn => turn.role === 'assistant' && !context.before.includes(fingerprint(turn)));
     }
-    const answer = answers.find(turn => wordResponse(turn.node)) || answers.at(-1);
+    const answer = context.type === 'image_generation' ? answers.find(turn => turn.node.querySelectorAll?.('img')?.length) || answers.at(-1) : answers.find(turn => wordResponse(turn.node)) || answers.at(-1);
     if (!answer || context.type === 'image_generation' && Array.isArray(context.before) && context.before.includes(fingerprint(answer))) return { sources: [], reason: 'no-new-answer' };
     const code = [...(answer.node.querySelectorAll?.('pre code, pre') || [])].map(node => node.textContent || text(node));
     const words = [...(answer.node.querySelectorAll?.('[data-stream-word], [data-d-stream-word]') || [])].map(node => node.textContent || '').join(' ');
