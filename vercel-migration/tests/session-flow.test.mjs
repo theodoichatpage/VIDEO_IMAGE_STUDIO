@@ -15,6 +15,7 @@ test('analysis results, repeated delivery, late error, stop and next part remain
   process.env.SUPABASE_SECRET_KEY = 'server-test-key';
   let stored;
   globalThis.fetch = async (_url, init) => {
+    if(init?.method==='PATCH'){if(!stored)return Response.json([]);stored=JSON.parse(init.body).record;return Response.json([{record:structuredClone(stored)}]);}
     if (init?.method === 'POST') {
       stored = JSON.parse(init.body).record;
       // PostgREST return=minimal may return 201 with an empty body.

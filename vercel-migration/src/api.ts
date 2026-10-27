@@ -3,10 +3,10 @@ type ApiData = { session: Session | null; command?: Job | null; ignored?: boolea
 type ApiResponse<T> = { data: T };
 const apiBase = 'https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api';
 
-async function request<T>(method: string, url: string, body?: unknown): Promise<ApiResponse<T>> {
+async function request<T>(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<ApiResponse<T>> {
   const route = url.replace(/^\/api\//, '');
   const response = await fetch(apiBase + '?path=' + encodeURIComponent(route), {
-    method,
+    method, signal,
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -21,6 +21,6 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
 
 export const api = {
   get: <T = ApiData>(url: string) => request<T>('GET', url),
-  post: <T = ApiData>(url: string, body?: unknown) => request<T>('POST', url, body),
+  post: <T = ApiData>(url: string, body?: unknown, signal?: AbortSignal) => request<T>('POST', url, body, signal),
 };
 

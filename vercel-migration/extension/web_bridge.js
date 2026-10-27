@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_WEB_BRIDGE_0418__) return;
-  window.__VIS_WEB_BRIDGE_0418__ = true;
+  if (window.__VIS_WEB_BRIDGE_0419__) return;
+  window.__VIS_WEB_BRIDGE_0419__ = true;
 
   const postStatus = async () => {
     try {
@@ -69,8 +69,8 @@
       return;
     }
     if (event.data.type === 'studio-stop') {
-      await chrome.runtime.sendMessage({ type: 'vis-stop' }).catch(() => null);
-      return;
+      const result=await chrome.runtime.sendMessage({ type:'vis-stop',scope:event.data.scope,cancelledJobIds:event.data.cancelledJobIds }).catch(error=>({ok:false,error:error.message}));
+      window.postMessage({source:'vis-extension',type:'studio-stop-result',requestId:event.data.requestId,ok:Boolean(result?.ok),message:result?.error||''},'*');return;
     }
     if (event.data.type === 'studio-capture-result') {
       try {

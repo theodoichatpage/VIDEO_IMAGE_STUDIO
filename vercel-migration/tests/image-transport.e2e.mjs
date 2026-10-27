@@ -19,7 +19,7 @@ try{
  globalThis.fetch=async(url,init={})=>{
   if(url.includes('/rest/v1/')){
    if(url.includes('studio_separations'))return Response.json([]);
-   if(init.method==='PATCH'){const expected=new URL(url).searchParams.get('record->>updatedAt');if(expected!=='eq.'+record.updatedAt)return Response.json([]);record=JSON.parse(init.body).record;return Response.json([{record:structuredClone(record)}])}
+   if(init.method==='PATCH'){const expected=new URL(url).searchParams.get('record->>updatedAt');if(expected&&expected!=='eq.'+record.updatedAt)return Response.json([]);const epoch=new URL(url).searchParams.get('record->>workEpoch');if(epoch&&epoch!=='eq.'+(record.workEpoch||0))return Response.json([]);if(new URL(url).searchParams.has('or')&&(record.workEpoch||0)!==0)return Response.json([]);record=JSON.parse(init.body).record;return Response.json([{record:structuredClone(record)}])}
    if(init.method==='POST'&&init.body){const body=JSON.parse(init.body);if(body.record)record=body.record;else if(body.session_id)record.bridgeLastSeen=body.seen_at;return new Response('',{status:201})}
    return Response.json([{record:structuredClone(record)}]);
   }
@@ -35,7 +35,7 @@ try{
  await page.route('https://db.test/storage/**',async r=>{if(previewFailure){await r.fulfill({status:403,body:'Expired preview'});return;}const path=new URL(r.request().url()).pathname.split('/studio-images/')[1];await r.fulfill({contentType:'image/png',body:files.get(path)||png})});
  let receiver,blockCapture=false,captureFailure='';const captureWaiters=[];const stored={pairCode:id,studioOrigin:'https://video-image-studio.vercel.app'};
  const chrome={storage:{local:{get:async()=>structuredClone(stored),set:async v=>Object.assign(stored,structuredClone(v)),remove:async keys=>keys.forEach(k=>delete stored[k])}},scripting:{executeScript:async()=>{}},runtime:{onMessage:{addListener:fn=>receiver=fn}},tabs:{query:async()=>[{id:2,url:'https://chatgpt.com/c/fixture'},{id:3,url:'https://video-image-studio.vercel.app/'}],sendMessage:async(tab,m)=>{if(tab===2&&m.type==='vis-capture-result'){if(blockCapture)await new Promise(r=>captureWaiters.push(r));if(captureFailure)return{ok:false,error:captureFailure}}return tab===2?chat.evaluate(m=>new Promise(r=>{if(!window.receiver(m,{},r))r({ok:true})}),m):page.evaluate(m=>window.receiver(m),m)}}};
- const worker=vm.createContext({chrome,URL,AbortSignal,Uint8Array,btoa,fetch:async(url,init={})=>{
+ const worker=vm.createContext({chrome,URL,AbortSignal,AbortController,Uint8Array,btoa,fetch:async(url,init={})=>{
   if(String(url).startsWith('https://images.oaiusercontent.com/')){fallbackFetches++;return new Response(png,{headers:{'Content-Type':'application/octet-stream'}})}
   const v=await call(url,init);return{ok:v.status<400,status:v.status,json:async()=>v.data};
  }});
@@ -108,6 +108,28 @@ try{
  assert.equal((await clickQueue(page.getByRole('button',{name:'Tạo tất cả',exact:true}))).alreadyQueuedCount,2);
  assert.equal(record.imageJobs.filter(j=>j.sceneKey==='p1:0').length,1);
  assert.equal(await chat.locator('[data-message-author-role="user"]').count(),countBefore);
+ // Stop fences an enqueue request whose HTTP response arrives afterward.
+ queueBlocked=true;await page.locator('.scene-row .outline').first().click();
+ await page.locator('.image-action-feedback').filter({hasText:'Đang xếp hàng'}).waitFor();
+ await page.locator('.top-tools').getByRole('button',{name:'Dừng tất cả',exact:true}).click();
+ await page.locator('.image-action-feedback').filter({hasText:'Đã dừng tất cả:'}).waitFor({timeout:15000});
+ assert.equal(record.activeJob,null);assert.equal(record.imageJobs.length,0);assert.equal(record.imageCaptures.length,0);assert.ok(record.workEpoch>0);
+ const staleResponse=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).searchParams.get('path')?.endsWith('/images'));
+ queueBlocked=false;queueResumes.splice(0).forEach(resolve=>resolve());assert.equal((await staleResponse).status(),409);
+ assert.equal(record.activeJob,null);assert.ok(record.parts[0].scenes.every(scene=>!['queued','generating'].includes(scene.imageStatus)));
+ assert.ok(record.parts[0].scenes[0].imageResults.length,'Stop preserves completed files');
+ assert.equal(await chat.locator('[data-message-author-role="user"]').count(),countBefore);
+ // A detached sync is canceled even when it is the only pending operation.
+ blockCapture=true;await page.getByRole('button',{name:'Đồng bộ lại ảnh',exact:true}).click();
+ await page.locator('.image-sync-banner').filter({hasText:'Đang'}).waitFor();
+ await page.locator('.top-tools').getByRole('button',{name:'Dừng tất cả',exact:true}).click();
+ await page.locator('.image-action-feedback').filter({hasText:'Đã dừng tất cả:'}).waitFor({timeout:15000});
+ blockCapture=false;captureWaiters.splice(0).forEach(resolve=>resolve());await page.waitForTimeout(300);
+ assert.equal(record.imageCaptures.length,0);assert.equal(record.activeJob,null);
+ // Work resumes only after a new explicit command, using the new server epoch.
+ await clickQueue(page.locator('.preview-actions').getByRole('button',{name:'Tạo lại',exact:true}));
+ await page.waitForFunction(()=>document.querySelectorAll('.scene-row .chip')[1]?.textContent==='Hoàn tất',null,{timeout:15000});
+ assert.equal(await chat.locator('[data-message-author-role="user"]').count(),countBefore+1);
  await page.screenshot({path:root+'/image-sync-verified.png',fullPage:true});
  console.log('PASS real UI -> extension -> matched image sibling -> CORS fallback -> real API handler -> Storage fixture -> complete preview/download; recovery submits no new prompt. Create/recreate/part/all actions enqueue behind another active scene without duplicates; visible pending/error feedback. Live ChatGPT/DB not used.');
 }finally{globalThis.fetch=originalFetch;await browser.close();server.kill()}

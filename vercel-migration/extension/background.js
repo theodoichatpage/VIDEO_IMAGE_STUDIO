@@ -1,6 +1,8 @@
 const DEFAULT_STUDIO_MATCH = 'https://video-image-studio.vercel.app/*';
 const CHATGPT_PREFIX = 'https://chatgpt.com/';
 let deliveryDiagnostic = '';
+let stopGeneration=0,stopDepth=0;const cancelledJobs=new Set();const downloads=new Map();
+function checkStop(token,id){if(token!==stopGeneration||stopDepth||cancelledJobs.has(id))throw new Error('Tác vụ đã được Dừng. Chỉ bắt đầu lại khi bạn bấm lệnh mới.');}
 
 function studioMatch(origin) {
   try { return new URL(origin || '').origin + '/*'; } catch { return DEFAULT_STUDIO_MATCH; }
@@ -18,7 +20,7 @@ async function ensureChatReceiver(preferredId) {
   let existing;
   try { existing = await chrome.tabs.sendMessage(tab.id, { type: 'vis-ping' }); } catch {}
   if (existing?.ready) {
-    if (existing.version !== '0.4.18') throw new Error('Tab ChatGPT còn cầu nối cũ v' + (existing.version || '?') + '. Hãy F5 tab ChatGPT để nạp Extension 0.4.18.');
+    if (existing.version !== '0.4.19') throw new Error('Tab ChatGPT còn cầu nối cũ v' + (existing.version || '?') + '. Hãy F5 tab ChatGPT để nạp Extension 0.4.19.');
     return tab;
   }
   try {
@@ -28,7 +30,7 @@ async function ensureChatReceiver(preferredId) {
   }
   try {
     const pong = await chrome.tabs.sendMessage(tab.id, { type: 'vis-ping' });
-    if (pong?.ready && pong.version === '0.4.18') return tab;
+    if (pong?.ready && pong.version === '0.4.19') return tab;
   } catch {}
   throw new Error('Tab ChatGPT chưa sẵn sàng nhận lệnh. Hãy F5 tab ChatGPT rồi kết nối lại.');
 }
@@ -42,8 +44,10 @@ async function broadcastToStudio(message) {
 let deliveryQueue = Promise.resolve();
 function deliverPending() {
   deliveryQueue = deliveryQueue.catch(() => {}).then(async () => {
+    const token=stopGeneration;
     const stored = await chrome.storage.local.get(['pendingChatEvents', 'pairCode']);
     for (const event of (stored.pendingChatEvents || [])) {
+      if(token!==stopGeneration||stopDepth)break;
       const sessionId = event._sessionId;
       if (!sessionId || sessionId !== stored.pairCode) continue;
       const { _sessionId, ...payload } = event;
@@ -62,7 +66,7 @@ function deliverPending() {
   return deliveryQueue;
 }
 
-async function captureCommand(command) {
+async function captureCommand(command,token=stopGeneration) {
   const jobId = command.id;
   const bound = await chrome.storage.local.get(['chatTabId']);
   const candidates = await chatTabs();
@@ -70,8 +74,10 @@ async function captureCommand(command) {
   let result, matchedTab, errors = [];
   for (const candidate of candidates) {
     try {
-      const tab = await ensureChatReceiver(candidate.id);
+      checkStop(token,jobId);const tab = await ensureChatReceiver(candidate.id);
+      checkStop(token,jobId);
       const reply = await chrome.tabs.sendMessage(tab.id, { type: 'vis-capture-result', jobId, jobType: command.type, command });
+      checkStop(token,jobId);
       if (reply?.ok && reply.payload) { result = reply; matchedTab = tab.id; break; }
       errors.push(reply?.error || 'Không đọc được phản hồi.');
     } catch (error) { errors.push(error.message); }
@@ -86,15 +92,16 @@ let syncDiagnostic = '';
 function reconcileWaitingResult() {
   if (reconciliation) return reconciliation;
   reconciliation = (async () => {
+    const token=stopGeneration;
     const stored = await chrome.storage.local.get(['pairCode']);
-    if (!stored.pairCode) return;
+    if (!stored.pairCode||stopDepth) return;
     try {
       const response = await fetch('https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api?path=' + encodeURIComponent('sessions/' + stored.pairCode), { signal: AbortSignal.timeout(10000) });
       const data = await response.json();
       if (!response.ok || data.error) return;
       const command = data.session?.activeJob;
       if (!command || !['sent', 'waiting'].includes(command.status) || !['part_analysis', 'script_structure', 'image_generation'].includes(command.type)) { syncDiagnostic = ''; return; }
-      await queueAndBroadcast(await captureCommand(command));
+      await queueAndBroadcast(await captureCommand(command,token),token);
       syncDiagnostic = '';
     } catch (error) { syncDiagnostic = error?.message || String(error); }
   })().finally(() => { reconciliation = null; });
@@ -102,29 +109,34 @@ function reconcileWaitingResult() {
 }
 
 let enqueue = Promise.resolve();
-function queueAndBroadcast(payload) {
-  enqueue = enqueue.catch(() => {}).then(() => persistAndDeliver(payload));
+function queueAndBroadcast(payload,token=stopGeneration) {
+  enqueue = enqueue.catch(() => {}).then(() => token===stopGeneration&&!stopDepth&&!cancelledJobs.has(payload?.jobId)?persistAndDeliver(payload,token):undefined);
   return enqueue;
 }
-async function persistAndDeliver(payload) {
+async function persistAndDeliver(payload,token) {
   if (!payload?.jobId || !['progress', 'completed', 'error'].includes(payload.state)) return;
   const stored = await chrome.storage.local.get(['pendingChatEvents', 'pairCode']);
   if ((stored.pendingChatEvents || []).some(item => item.jobId === payload.jobId && item.state === 'completed' && (!payload.imageDataUrl || item.imageDataUrl))) return;
+  if(token!==stopGeneration||stopDepth||cancelledJobs.has(payload.jobId))return;
   const events = Array.isArray(stored.pendingChatEvents) ? stored.pendingChatEvents.filter(item => item?.jobId !== payload.jobId) : [];
   events.push({ ...payload, _sessionId: stored.pairCode });
   await chrome.storage.local.set({ pendingChatEvents: events.slice(-10) });
+  if(token!==stopGeneration||stopDepth)return;
   await deliverPending();
+  if(token!==stopGeneration||stopDepth)return;
   await broadcastToStudio({ type: 'vis-chat-event', payload, serverManaged: true });
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const token=stopGeneration;if(message?.type==='vis-stop'){stopGeneration++;stopDepth++;}
   (async () => {
     if (message?.type === 'vis-fetch-image') {
       if (!sender.tab?.url?.startsWith(CHATGPT_PREFIX)) throw new Error('Chỉ tab ChatGPT được tải tệp ảnh.');
       const url = new URL(String(message.url || ''));
       const trusted = url.hostname === 'chatgpt.com' || url.hostname.endsWith('.oaiusercontent.com') || /^(?:oaidalleapiprodscus|sdmntpr[a-z0-9-]*)\.blob\.core\.windows\.net$/.test(url.hostname);
       if (url.protocol !== 'https:' || url.username || url.password || !trusted) throw new Error('Địa chỉ ảnh không thuộc máy chủ ChatGPT được phép.');
-      const response = await fetch(url.href, {credentials:url.hostname === 'chatgpt.com'?'include':'omit',signal:AbortSignal.timeout(30000),redirect:'error'});
+      const controller=new AbortController();downloads.set(controller,sender.tab.id);try{
+      const response = await fetch(url.href, {credentials:url.hostname === 'chatgpt.com'?'include':'omit',signal:AbortSignal.any([controller.signal,AbortSignal.timeout(30000)]),redirect:'error'});
       if (!response.ok) throw new Error('Không tải được ảnh ChatGPT (HTTP ' + response.status + ').');
       if (Number(response.headers.get('content-length')) > 8388608) throw new Error('Ảnh vượt giới hạn 8 MB.');
       const bytes = new Uint8Array(await response.arrayBuffer());
@@ -132,7 +144,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const mime = bytes[0] === 137 && bytes[1] === 80 && bytes[2] === 78 && bytes[3] === 71 ? 'image/png' : bytes[0] === 255 && bytes[1] === 216 ? 'image/jpeg' : bytes[0] === 82 && bytes[1] === 73 && bytes[2] === 70 && bytes[3] === 70 && bytes[8] === 87 && bytes[9] === 69 && bytes[10] === 66 && bytes[11] === 80 ? 'image/webp' : '';
       if (!mime) throw new Error('Máy chủ chưa trả tệp PNG/JPEG/WebP hợp lệ.');
       let binary='';for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));
-      sendResponse({ok:true,imageDataUrl:'data:'+mime+';base64,'+btoa(binary)});return;
+      sendResponse({ok:true,imageDataUrl:'data:'+mime+';base64,'+btoa(binary)});return;}finally{downloads.delete(controller);}
     }
     if (message?.type === 'vis-transcript-send') {
       const stored = await chrome.storage.local.get(['pairCode', 'transcriptJobs', 'activeJobId']);
@@ -142,12 +154,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const existing = stored.transcriptJobs?.[command.id];
       if (existing) { sendResponse({ok:true,duplicate:true}); return; }
       if (stored.activeJobId && stored.transcriptJobs?.[stored.activeJobId] && !stored.transcriptJobs?.[stored.activeJobId]?.result && stored.transcriptJobs?.[stored.activeJobId]?.state !== 'stopped') throw new Error('ChatGPT đang xử lý tác vụ khác. Hãy đợi hoàn tất hoặc Dừng trước.');
-      const tab = await ensureChatReceiver();
+      const tab = await ensureChatReceiver();checkStop(token,command.id);
       const jobs = Object.fromEntries(Object.entries(stored.transcriptJobs || {}).slice(-19));
       jobs[command.id] = {command, pairCode:stored.pairCode, tabId:tab.id, state:'sending'};
       await chrome.storage.local.set({transcriptJobs:jobs});
       try {
-        const result = await chrome.tabs.sendMessage(tab.id, {type:'vis-command',command});
+        checkStop(token,command.id);const result = await chrome.tabs.sendMessage(tab.id, {type:'vis-command',command});
+        checkStop(token,command.id);
         if (!result?.ok) throw new Error(result?.error || 'ChatGPT không nhận được lệnh.');
         await chrome.storage.local.set({activeJobId:command.id,activeJobType:command.type,activeCommand:command,chatTabId:tab.id});
       } catch (error) {
@@ -177,7 +190,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       try { await ensureChatReceiver(); chatReady = true; } catch (caught) { error = caught?.message || String(caught); }
       const pending = await chrome.storage.local.get(['pendingChatEvents','transcriptJobs']);
       const transcriptEvents = Object.values(pending.transcriptJobs || {}).filter(job => job.pairCode === stored.pairCode && job.result && !job.acknowledged && job.state !== 'stopped').map(job => job.result);
-      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic:deliveryDiagnostic || syncDiagnostic, version: '0.4.18', transcriptEvents, pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
+      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic:deliveryDiagnostic || syncDiagnostic, version: '0.4.19', transcriptEvents, pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
       return;
     }
     if (message?.type === 'vis-pair') {
@@ -188,7 +201,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (chosen) await chrome.storage.local.set({ chatTabId: chosen.id });
       await ensureChatReceiver();
       await chrome.storage.local.set({ pairCode, ...(message.studioOrigin ? { studioOrigin: String(message.studioOrigin) } : {}) });
-      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.18' });
+      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.19' });
       await broadcastToStudio({ type: 'vis-status-changed' });
       return;
     }
@@ -202,24 +215,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const stored = await chrome.storage.local.get(['pairCode']);
       if (!stored.pairCode || stored.pairCode !== message.pairCode) throw new Error('Mã kết nối không khớp. Hãy kết nối lại tiện ích.');
       const tab = await ensureChatReceiver();
+      checkStop(token,message.command.id);
       await chrome.storage.local.set({ activeCommand: message.command });
+      checkStop(token,message.command.id);
       const result = await chrome.tabs.sendMessage(tab.id, { type: 'vis-command', command: message.command });
+      checkStop(token,message.command.id);
       if (!result?.ok) throw new Error(result?.error || 'ChatGPT không nhận được lệnh.');
       await chrome.storage.local.set({ activeJobId: message.command.id, activeJobType: String(message.command.type || ''), chatTabId: tab.id });
       sendResponse({ ok: true, accepted: true });
       return;
     }
     if (message?.type === 'vis-stop') {
-      const bound = await chrome.storage.local.get(['chatTabId']);
-      const tabs = await chatTabs();
-      await Promise.all(tabs.filter(tab => tab.id === bound.chatTabId).map(tab => chrome.tabs.sendMessage(tab.id, { type: 'vis-stop' }).catch(() => null)));
-      const stored = await chrome.storage.local.get(['activeJobId', 'pendingChatEvents', 'transcriptJobs']);
-      if (stored.transcriptJobs?.[stored.activeJobId]) { stored.transcriptJobs[stored.activeJobId].state = 'stopped'; await chrome.storage.local.set({transcriptJobs:stored.transcriptJobs}); }
-      await chrome.storage.local.set({ activeJobId: '', activeJobType: '', pendingChatEvents: (stored.pendingChatEvents || []).filter(event => event.jobId !== stored.activeJobId) });
-      sendResponse({ ok: true });
-      return;
+      try{
+        const stored=await chrome.storage.local.get(['pairCode','chatTabId','activeJobId','pendingChatEvents','transcriptJobs']);
+        const ids=new Set([stored.activeJobId,...(message.cancelledJobIds||[])].filter(Boolean)),tabs=new Set([stored.chatTabId].filter(Boolean));
+        const jobs=stored.transcriptJobs||{};
+        for(const [id,job] of Object.entries(jobs))if((message.scope==='all'&&job.pairCode===stored.pairCode)||id===stored.activeJobId){if(!['completed','error','stopped'].includes(job.state)&&job.tabId)tabs.add(job.tabId);job.state='stopped';ids.add(id);}
+        for(const id of ids)cancelledJobs.add(id);
+        for(const [controller,tabId] of downloads)if(tabs.has(tabId))controller.abort();
+        await chrome.storage.local.set({transcriptJobs:jobs,activeJobId:'',activeJobType:'',activeCommand:null,pendingChatEvents:(stored.pendingChatEvents||[]).filter(event=>!ids.has(event.jobId)&&!(message.scope==='all'&&event._sessionId===stored.pairCode))});
+        await Promise.all([...tabs].map(id=>chrome.tabs.sendMessage(id,{type:'vis-stop'}).catch(()=>null)));
+        syncDiagnostic='';deliveryDiagnostic='';sendResponse({ok:true,stopped:true});return;
+      }finally{stopDepth--;}
     }
     if (message?.type === 'vis-chat-event' && sender.tab?.url?.startsWith(CHATGPT_PREFIX)) {
+      if(cancelledJobs.has(message.payload?.jobId)||stopDepth){sendResponse({ok:true,ignored:true});return;}
       const stored = await chrome.storage.local.get(['transcriptJobs']);
       const job = stored.transcriptJobs?.[message.payload?.jobId];
       if (job) {
@@ -255,7 +275,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const jobId = String(message.jobId || command?.id || '');
       if (!jobId) throw new Error('Không có tác vụ nào đang chờ kết quả.');
       if (!command || command.id !== jobId) throw new Error('Không tìm thấy đúng lệnh đang chờ trong dự án. Tải lại web rồi đồng bộ lại.');
-      const payload = await captureCommand(command);
+      const payload = await captureCommand(command,token);checkStop(token,command.id);
       if (['transcript_mindmap','transcript_rewrite'].includes(command.type)) {
         const latest = await chrome.storage.local.get(['transcriptJobs']);const job=latest.transcriptJobs?.[command.id];
         if (!job || job.state === 'stopped') throw new Error('Tác vụ Transcript đã dừng.');
@@ -273,7 +293,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     if (message?.type === 'vis-event-ack') {
       const stored = await chrome.storage.local.get(['pendingChatEvents']);
-      const events = Array.isArray(stored.pendingChatEvents) ? stored.pendingChatEvents.filter(item => item?.jobId !== message.jobId) : [];
+      if(token!==stopGeneration||stopDepth||cancelledJobs.has(payload.jobId))return;
+  const events = Array.isArray(stored.pendingChatEvents) ? stored.pendingChatEvents.filter(item => item?.jobId !== message.jobId) : [];
       await chrome.storage.local.set({ pendingChatEvents: events });
       if (!events.some(item => item?.jobId === message.jobId)) {
         const active = await chrome.storage.local.get(['activeJobId']);

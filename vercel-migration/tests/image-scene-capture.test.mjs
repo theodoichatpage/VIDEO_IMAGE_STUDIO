@@ -7,11 +7,11 @@ async function scenario(run){
  let record={id:'capture-scenes-test-12345',script:'Keep original script',status:'image_processing',activeJob:{id:'other-job',type:'image_generation',status:'waiting',prompt:'Scene B',sceneKey:'p1:1',protocol:3},imageJobs:[{id:'other-job',status:'waiting'}],parts:[{id:'p1',status:'complete',content:'Keep content',scenes:[{title:'A',prompt:'Scene A',imagePrompt:'SCENE: Scene A',imageStatus:'stopped',imageResults:[]},{title:'B',prompt:'Scene B',imageStatus:'generating',imageResults:[]}]}],updatedAt:100};
  let uploads=0,afterUpload,conflict=false;
  globalThis.fetch=async(url,init={})=>{
-  if(url.includes('/storage/')){if(url.includes('/object/sign/'))return Response.json({signedURL:'/object/sign/studio-images/'+url.split('/studio-images/')[1]+'?fixture=1'});if(url.includes('/object/studio-images/')){uploads++;afterUpload?.(record)}return Response.json({ok:true})}
+  if(url.includes('/storage/')){if(url.includes('/object/sign/'))return Response.json({signedURL:'/object/sign/studio-images/'+url.split('/studio-images/')[1]+'?fixture=1'});if(url.includes('/object/studio-images/')){uploads++;await afterUpload?.(record)}return Response.json({ok:true})}
   if(url.includes('studio_separations'))return Response.json([]);
   if(init.method==='PATCH'){
    if(conflict){conflict=false;record.script='Concurrent change';record.updatedAt++;return Response.json([])}
-   const expected=new URL(url).searchParams.get('record->>updatedAt');assert.equal(expected,'eq.'+record.updatedAt);
+   const params=new URL(url).searchParams,expected=params.get('record->>updatedAt');if(expected)assert.equal(expected,'eq.'+record.updatedAt);else{const epoch=params.get('record->>workEpoch');if(epoch&&epoch!=='eq.'+(record.workEpoch||0))return Response.json([]);if(params.has('or')&&(record.workEpoch||0)!==0)return Response.json([]);}
    record=JSON.parse(init.body).record;return Response.json([{record:structuredClone(record)}]);
   }
   if(init.method==='POST'){record=JSON.parse(init.body).record;return new Response('',{status:201})}
@@ -59,4 +59,15 @@ test('queue append retries a conditional-save conflict without losing another up
 test('Stop marks queued scenes stopped instead of leaving an orphan queued badge',()=>scenario(async s=>{
  await s.call('sessions/'+s.state().id+'/images',{sceneKeys:['p1:0'],stylePrompt:'SCENE: {{SCENE_PROMPT}}'});
  const r=await s.call('sessions/'+s.state().id+'/stop',{});assert.equal(r.status,200);assert.equal(s.state().activeJob,null);assert.equal(s.state().imageJobs.length,0);assert.equal(s.state().parts[0].scenes[0].imageStatus,'stopped');assert.equal(s.state().parts[0].scenes[1].imageStatus,'stopped');
+}));
+
+test('Stop all clears orphan work, captures and analysis even when no active job remains',()=>scenario(async s=>{
+ const state=s.state();state.activeJob=null;state.imageJobs=[];state.imageCaptures=[{id:'detached',type:'image_generation',prompt:'SCENE: Scene A',sceneKey:'p1:0',expiresAt:Date.now()+60000}];state.analysisQueue=['p1'];state.batchAnalysis=true;state.parts[0].status='processing';state.parts[0].scenes[0].imageStatus='generating';state.parts[0].scenes[1].imageStatus='complete';state.parts[0].scenes[1].imageResults=[{url:'https://db.test/kept.png',prompt:'Keep',createdAt:1}];
+ let r=await s.call('sessions/'+state.id+'/stop',{});assert.equal(r.status,200);assert.equal(s.state().workEpoch,1);assert.equal(s.state().imageCaptures.length,0);assert.equal(s.state().analysisQueue.length,0);assert.equal(s.state().batchAnalysis,false);assert.equal(s.state().parts[0].status,'stopped');assert.equal(s.state().parts[0].scenes[0].imageStatus,'stopped');assert.equal(s.state().parts[0].scenes[1].imageResults[0].url,'https://db.test/kept.png');
+ r=await s.call('bridge/'+state.id+'/event',{jobId:'detached',state:'completed',imageDataUrl:png});assert.equal(r.data.ignored,true);assert.equal(s.uploads(),0);
+ r=await s.call('sessions/'+state.id+'/images',{sceneKeys:['p1:0'],stylePrompt:'SCENE: {{SCENE_PROMPT}}',expectedWorkEpoch:0});assert.equal(r.status,409);assert.equal(s.state().activeJob,null);
+}));
+test('an image upload finishing after Stop cannot resurrect its old job or queue',()=>scenario(async s=>{
+ s.onUpload(async()=>{await s.call('sessions/'+s.state().id+'/stop',{})});
+ const r=await s.call('bridge/'+s.state().id+'/event',{jobId:'other-job',state:'completed',imageDataUrl:png});assert.equal(r.status,200);assert.equal(s.state().activeJob,null);assert.equal(s.state().status,'stopped');assert.equal(s.state().parts[0].scenes[1].imageStatus,'stopped');
 }));

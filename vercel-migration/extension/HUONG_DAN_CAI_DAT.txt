@@ -1,6 +1,6 @@
-VIDEO IMAGE STUDIO — ChatGPT Bridge v0.4.18
+VIDEO IMAGE STUDIO — ChatGPT Bridge v0.4.19
 
-1. Tải ZIP 0.4.18 và giải nén. Tệp nằm trong một thư mục VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.18.
+1. Tải ZIP 0.4.19 và giải nén. Tệp nằm trong một thư mục VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.19.
 2. Nếu đã cài tiện ích: chép đè các tệp mới vào đúng thư mục tiện ích đang dùng, rồi mở chrome://extensions hoặc edge://extensions và bấm Tải lại trên thẻ VIDEO IMAGE STUDIO. Cách này giữ dữ liệu kết nối và kết quả đang chờ trong tiện ích.
 3. Nếu chưa cài: bật Chế độ nhà phát triển, bấm Tải tiện ích đã giải nén và chọn thư mục chứa manifest.json. Chỉ bật một bản tiện ích Studio.
 4. Tải lại cả tab web và tab ChatGPT. Trên web bấm Kết nối ChatGPT rồi kết nối lại.
@@ -13,6 +13,8 @@ Nội dung còn trong ô ChatGPT được lưu dự phòng trước khi thay b�
 Không tự gửi bản nháp cũ. Muốn lấy lại: mở tiện ích > Khôi phục bản nháp (khi ô ChatGPT trống).
 Nếu ChatGPT đang bật chế độ Tạo ảnh trong ô nhập, tắt chế độ đó trước khi phân tích.
 
-9. Tab Get Transcript: Tạo mindmap gửi transcript sang ChatGPT và tự nhận branches; viết lại từng phần nhận văn bản thuần. Cần cài v0.4.18 và F5 cả hai tab.
+9. Tab Get Transcript: Tạo mindmap gửi transcript sang ChatGPT và tự nhận branches; viết lại từng phần nhận văn bản thuần. Cần cài v0.4.19 và F5 cả hai tab.
 
-10. Bản 0.4.18: nhận ảnh ở thẻ tạo ảnh mới của ChatGPT; đọc định dạng từ nội dung tệp và tải qua tiện ích khi trình duyệt chặn CORS. Chỉ nhận ảnh của đúng prompt/cảnh.
+10. Bản 0.4.19: nhận ảnh ở thẻ tạo ảnh mới của ChatGPT; đọc định dạng từ nội dung tệp và tải qua tiện ích khi trình duyệt chặn CORS. Chỉ nhận ảnh của đúng prompt/cảnh.
+
+11. Bản 4.19: Dừng tất cả hủy hàng đợi và đồng bộ của dự án, giải phóng các tác vụ ChatGPT đang liên kết và chặn phản hồi cũ. Chép đè vào thư mục tiện ích đang dùng rồi Tải lại tiện ích; F5 cả hai tab.

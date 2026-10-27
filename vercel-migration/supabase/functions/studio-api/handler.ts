@@ -4,7 +4,7 @@ type ResponseLike = { setHeader(name: string, value: string): void; status(code:
 type Scene = { title: string; backdrop: string; content: string; character: string; emotion: string; shot: string; image: string; prompt: string; imageStatus?: string; imageResults?: { url: string; prompt: string; createdAt: number; storagePath?: string; expiresAt?: number; jobId?: string }[]; imagePrompt?: string; imageError?: string };
 type Part = { id: string; title: string; range: string; content: string; status: string; scenes: Scene[]; analysisText: string; receivedAt?: number };
 type Job = { id: string; type: 'script_structure' | 'part_analysis' | 'image_generation'; status: string; prompt: string; partId?: string; sceneKey?: string; protocol: 2 | 3; expiresAt?: number };
-type Session = { id: string; script: string; status: string; activeJob: Job | null; lastJob?: Job; parts: Part[]; imageJobs: Job[]; imageCaptures?: Job[]; updatedAt: number; bridgeLastSeen?: number; finishedJobIds?: string[]; lastError?: string; analysisQueue?: string[]; batchAnalysis?: boolean; stylePrompt?: string; separations?: Record<string, unknown>[]; analysisBackup?: { script: string; parts: Part[]; savedAt: number } };
+type Session = { id: string; script: string; status: string; activeJob: Job | null; lastJob?: Job; parts: Part[]; imageJobs: Job[]; imageCaptures?: Job[]; workEpoch?: number; updatedAt: number; bridgeLastSeen?: number; finishedJobIds?: string[]; lastError?: string; analysisQueue?: string[]; batchAnalysis?: boolean; stylePrompt?: string; separations?: Record<string, unknown>[]; analysisBackup?: { script: string; parts: Part[]; savedAt: number } };
 
 const idOk = (value: string) => /^[A-Za-z0-9-]{16,64}$/.test(value);
 const newId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -81,9 +81,12 @@ async function read(id: string): Promise<Session | null> {
   return { ...value, updatedAt, separations, parts, imageJobs: value.imageJobs || [], finishedJobIds: value.finishedJobIds || [] };
 }
 async function write(session: Session) {
-  session.updatedAt = Date.now();
-  await database('studio_sessions?on_conflict=id', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify({ id: session.id, record: session }) });
-  return session;
+  session.updatedAt=Date.now();session.workEpoch=session.workEpoch||0;
+  const filter=session.workEpoch?'&record->>workEpoch=eq.'+session.workEpoch:'&or=(record->>workEpoch.is.null,record->>workEpoch.eq.0)';
+  const saved=await database('studio_sessions?id=eq.'+encodeURIComponent(session.id)+filter,{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({record:session})}) as unknown[];
+  if(saved?.length)return session;
+  const latest=await read(session.id);if(latest)return latest;
+  await database('studio_sessions?on_conflict=id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify({id:session.id,record:session})});return session;
 }
 // Capturing an existing image must not replace a different running job.
 // Commit only onto a fresh record; retry if another task updated it during upload.
@@ -224,6 +227,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         await database('rpc/studio_save_separation', { method: 'POST', body: JSON.stringify({ session_id: session.id, entry }) });
         return send(res, 200, { session: await read(session.id) });
       }
+      if(req.method==='POST'&&path[2]!=='stop'&&typeof body.expectedWorkEpoch==='number'&&body.expectedWorkEpoch!==(session.workEpoch||0))return fail(res,'Yêu cầu cũ đã bị Dừng.',409);
       if (path[2] === 'analysis' && req.method === 'POST') {
         if (session.activeJob && !['completed','error','stopped'].includes(session.activeJob.status)) return fail(res, 'Một tác vụ đang chờ ChatGPT.', 409);
         const script = String(body.script || '').trim(); if (!script) return fail(res, 'Kịch bản không được để trống.');
@@ -302,6 +306,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         for(let attempt=0;attempt<5;attempt++){
           const rows=await database('studio_sessions?id=eq.'+encodeURIComponent(session.id)+'&select=record') as {record:Session}[];
           const fresh=rows?.[0]?.record;if(!fresh)return fail(res,'Không tìm thấy dự án.',404);
+          if(typeof body.expectedWorkEpoch==='number'&&body.expectedWorkEpoch!==(fresh.workEpoch||0))return fail(res,'Yêu cầu cũ đã bị Dừng. Bấm lại thao tác nếu muốn làm tiếp.',409);
           const target=findScene(fresh,key);if(!target.scene)return fail(res,'Không tìm thấy cảnh cần nhận ảnh.',422);
           if(fresh.activeJob?.type==='image_generation'&&fresh.activeJob.sceneKey===key)return send(res,200,{session:await read(fresh.id),command:fresh.activeJob});
           const prompt=target.scene.imagePrompt||target.scene.imageResults?.[0]?.prompt;
@@ -334,6 +339,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         for(let attempt=0;attempt<5;attempt++){
           const rows=await database('studio_sessions?id=eq.'+encodeURIComponent(session.id)+'&select=record') as {record:Session}[];
           const fresh=rows?.[0]?.record;if(!fresh)return fail(res,'Không tìm thấy dự án.',404);
+          if(typeof body.expectedWorkEpoch==='number'&&body.expectedWorkEpoch!==(fresh.workEpoch||0))return fail(res,'Yêu cầu cũ đã bị Dừng. Bấm lại thao tác nếu muốn làm tiếp.',409);
           if(fresh.activeJob&&fresh.activeJob.type!=='image_generation')return fail(res,'ChatGPT đang phân tích kịch bản. Hãy đợi phân tích xong hoặc Dừng trước khi tạo ảnh.',409);
           fresh.imageJobs=fresh.imageJobs||[];const jobs:Job[]=[];let alreadyQueuedCount=0;
           for(const key of keys){
@@ -353,14 +359,23 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       }
 
       if (path[2] === 'stop' && req.method === 'POST') {
-        pauseAnalysis(session);
-        if (session.activeJob) session.lastJob = { ...session.activeJob, status: 'stopped' };
-        if (session.activeJob) session.finishedJobIds = [...(session.finishedJobIds || []), session.activeJob.id].slice(-200);
-        if (session.activeJob?.type === 'image_generation') { for(const job of [...session.imageJobs,session.activeJob]){const target=job.sceneKey?findScene(session,job.sceneKey):undefined;if(target?.scene)target.scene.imageStatus='stopped';} session.finishedJobIds=[...(session.finishedJobIds||[]),...session.imageJobs.map(job=>job.id)].slice(-200); session.imageJobs = []; }
-        else if (session.activeJob?.partId) { const part = session.parts.find(item => item.id === session.activeJob?.partId); if (part) part.status = 'stopped'; }
-        session.activeJob = null; session.status = 'stopped'; return send(res, 200, { session: await write(session) });
+        for(let attempt=0;attempt<5;attempt++){
+          const rows=await database('studio_sessions?id=eq.'+encodeURIComponent(session.id)+'&select=record') as {record:Session}[];
+          const fresh=rows?.[0]?.record;if(!fresh)return fail(res,'Không tìm thấy dự án.',404);
+          const cancelled=[fresh.activeJob,...(fresh.imageJobs||[]),...(fresh.imageCaptures||[]),fresh.lastJob?.status==='error'?fresh.lastJob:null].filter(Boolean) as Job[];
+          fresh.finishedJobIds=[...new Set([...(fresh.finishedJobIds||[]),...cancelled.map(job=>job.id)])].slice(-200);
+          if(fresh.activeJob)fresh.lastJob={...fresh.activeJob,status:'stopped'};else if(fresh.lastJob?.status==='error')fresh.lastJob={...fresh.lastJob,status:'stopped'};
+          fresh.activeJob=null;fresh.imageJobs=[];fresh.imageCaptures=[];pauseAnalysis(fresh);
+          for(const part of fresh.parts){if(part.status==='processing')part.status='stopped';for(const scene of part.scenes||[])if(['queued','generating'].includes(scene.imageStatus||''))scene.imageStatus='stopped';}
+          fresh.status='stopped';fresh.lastError='';fresh.workEpoch=(fresh.workEpoch||0)+1;
+          const previous=fresh.updatedAt;fresh.updatedAt=Math.max(Date.now(),previous+1);
+          const saved=await database('studio_sessions?id=eq.'+encodeURIComponent(fresh.id)+'&record->>updatedAt=eq.'+encodeURIComponent(String(previous)),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({record:fresh})}) as unknown[];
+          if(saved?.length)return send(res,200,{session:await read(fresh.id),cancelledJobIds:cancelled.map(job=>job.id)});
+        }
+        return fail(res,'Chưa xác nhận dừng do dự án đang cập nhật. Bấm Dừng tất cả lại.',409);
       }
     }
+
     if (path[0] === 'bridge' && path[1]) {
       const session = await read(path[1]); if (!session) return fail(res, 'Mã ghép không đúng.', 404);
       if (path[2] === 'ping' && req.method === 'POST') { session.bridgeLastSeen = Date.now(); await database('rpc/studio_touch_session', { method: 'POST', body: JSON.stringify({ session_id: session.id, seen_at: session.bridgeLastSeen }) }); return send(res, 200, { session: await read(session.id) }); }

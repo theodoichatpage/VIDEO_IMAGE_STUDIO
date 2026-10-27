@@ -18,7 +18,7 @@ try{
    window.commands=[];window.stops=0;
    window.addEventListener('message',e=>{
     if(e.data?.source!=='vis-web')return;
-    if(e.data.type==='studio-stop')window.stops++;
+    if(e.data.type==='studio-stop'){window.stops++;window.postMessage({source:'vis-extension',type:'studio-stop-result',requestId:e.data.requestId,ok:true},'*');}
     if(e.data.type==='studio-transcript-ai'){
      window.commands.push(e.data.command);
      const c=e.data.command;
@@ -64,5 +64,9 @@ try{
  assert.equal(await stopped.evaluate(()=>window.commands.length),2);
  assert.equal(await stopped.locator('.sections-panel .status').nth(1).innerText(),'Lỗi');
  assert.equal(await stopped.getByRole('button',{name:/Viết lại toàn bộ/}).isEnabled(),true);
+ const global=await setup();await global.getByRole('button',{name:/Viết lại toàn bộ/}).click();await global.waitForFunction(()=>window.commands.length===1);
+ await global.locator('.top-tools').getByRole('button',{name:'Dừng tất cả',exact:true}).click();
+ await global.waitForFunction(()=>localStorage.getItem('vis-transcript-pending-batch-test')===null);
+ await reply(global);await global.waitForTimeout(800);assert.equal(await global.evaluate(()=>window.commands.length),1);assert.equal(await global.locator('.final-text').inputValue(),'Kết quả cũ phần 1');
  console.log('PASS batch rewrite: ordered continuation, skip completed, stop blocks late results, resume unfinished, error pauses queue; fixture transport.');
 }finally{await browser.close();server.kill()}

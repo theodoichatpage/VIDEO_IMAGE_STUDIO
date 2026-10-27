@@ -19,6 +19,7 @@ export default function TranscriptTab({onUseTranscript,projectId='default'}:Prop
  const pendingKey='vis-transcript-pending-'+pairCode;
  const pending=useRef<PendingAi|null>(readPending(pendingKey));
  const batch=useRef(false);
+ const stopGeneration=useRef(0);
  const [batchRunning,setBatchRunning]=useState(false);
  const setBatch=(active:boolean)=>{batch.current=active;setBatchRunning(active)};
  const timer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
@@ -44,6 +45,7 @@ export default function TranscriptTab({onUseTranscript,projectId='default'}:Prop
  const armTimeout=(ms:number,message:string)=>{clearTimeout(timer.current);timer.current=setTimeout(()=>{if(pending.current)failPending(message)},ms)};
  useEffect(()=>{
   const receive=(e:MessageEvent)=>{
+   if(e.source===window&&e.data?.source==='vis-web'&&e.data.type==='studio-stop-all-local'){stopGeneration.current++;setBusy(false);setBatch(false);clearPending();setWs(s=>({...s,sections:s.sections.map(x=>['waiting','processing'].includes(x.status)?{...x,status:'stopped'}:x)}));setAiStatus('Đã dừng tất cả.');return;}
    if(e.source!==window||e.data?.source!=='vis-extension')return;
    if(e.data.type==='studio-error'){
     if(recovery.current&&pending.current&&recovery.current.jobId===pending.current.id){const manual=recovery.current?.manual;finishRecovery();if(manual)setError(String(e.data.message||'Chưa đọc được kết quả. Mở đúng hội thoại ChatGPT rồi thử lại.'))}
@@ -90,7 +92,7 @@ export default function TranscriptTab({onUseTranscript,projectId='default'}:Prop
  };
 
  const patch=(p:Partial<TranscriptWorkspaceState>)=>setWs(s=>({...s,...p}));
- const load=async()=>{if(!ws.url.trim())return;setBusy(true);setError('');try{const transcript=await fetchTranscript({url:ws.url.trim(),language:ws.language});patch({transcript,branches:[],sections:[],selectedBranchId:''});}catch(e){setError(e instanceof Error?e.message:'Không lấy được transcript.')}finally{setBusy(false)}};
+ const load=async()=>{if(!ws.url.trim())return;const generation=stopGeneration.current;setBusy(true);setError('');try{const transcript=await fetchTranscript({url:ws.url.trim(),language:ws.language});if(generation!==stopGeneration.current)return;patch({transcript,branches:[],sections:[],selectedBranchId:''});}catch(e){if(generation===stopGeneration.current)setError(e instanceof Error?e.message:'Không lấy được transcript.')}finally{if(generation===stopGeneration.current)setBusy(false)}};
  const createParts=()=>{if(!ws.transcript||pending.current)return;if(ws.sections.length&&!window.confirm('Chia lại sẽ thay thế danh sách phần và nội dung đã viết lại. Bạn có chắc muốn tiếp tục?'))return;sendChat(buildPartitionPrompt(ws.transcript.text,ws.language),'mindmap')};
  const rewrite=(section:ScriptSection)=>{if(pending.current)return;setWs(s=>({...s,sections:s.sections.map(x=>x.id===section.id?{...x,status:'processing'}:x)}));const idx=ws.sections.findIndex(x=>x.id===section.id);const context=[ws.sections[idx-1]?.summary,ws.sections[idx+1]?.summary].filter(Boolean).join(' | ');sendChat(buildRewritePrompt(section,ws.stylePrompt,context),'rewrite',section.id)};
  const stop=()=>{setBatch(false);const wasPending=!!pending.current;clearPending();setWs(s=>({...s,sections:s.sections.map(x=>x.status==='processing'||x.status==='waiting'?{...x,status:'stopped'}:x)}));if(wasPending)window.postMessage({source:'vis-web',type:'studio-stop'},'*')};

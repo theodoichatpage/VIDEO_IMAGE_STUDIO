@@ -1,12 +1,13 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_0418__) return;
-  window.__VIS_CHAT_BRIDGE_0418__ = true;
+  if (window.__VIS_CHAT_BRIDGE_0419__) return;
+  window.__VIS_CHAT_BRIDGE_0419__ = true;
   let currentJobId = '';
   let currentJobType = '';
   let cancelled = false;
   let generation = 0;
   let replyContext = {};
   const finished = new Set();
+  const downloads=new Set();
 
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const composer = () => document.querySelector('#prompt-textarea') || document.querySelector('div[contenteditable="true"][data-virtualkeyboard="true"]') || document.querySelector('div[contenteditable="true"].ProseMirror');
@@ -54,8 +55,10 @@
   async function imagePayload(context) {
     const imageUrl = imageUrls(context).at(-1);
     if (!imageUrl) throw new Error('Chưa tìm thấy ảnh hoàn tất đúng lệnh của cảnh này. Mở đúng hội thoại và cuộn tới ảnh.');
+    const controller=new AbortController();downloads.add(controller);
+    try{
     try {
-      const response = await fetch(imageUrl, { credentials: 'include' });
+      const response = await fetch(imageUrl, { credentials: 'include',signal:controller.signal });
       if (!response.ok) throw new Error('HTTP ' + response.status);
       const blob = await response.blob();
       if (blob.size > 8388608) throw new Error('Ảnh vượt giới hạn 8 MB.');
@@ -66,6 +69,7 @@
       for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
       return { jobId: context.id, state: 'completed', imageDataUrl: 'data:' + mime + ';base64,' + btoa(binary) };
     } catch (error) {
+      if(controller.signal.aborted)throw new Error('Đã dừng tải ảnh.');
       // Displaying a signed cross-origin image does not grant page fetch permission.
       // The extension worker has narrowly scoped host permissions for this fallback.
       if (!/^https:\/\//.test(imageUrl)) throw error;
@@ -73,6 +77,7 @@
       if (!result?.ok || !result.imageDataUrl) throw new Error('Chưa tải được tệp ảnh: ' + (result?.error || error?.message || String(error)));
       return {jobId:context.id,state:'completed',imageDataUrl:result.imageDataUrl};
     }
+    }finally{downloads.delete(controller);}
   }
 
   async function waitForImage(_before, token) {
@@ -253,13 +258,14 @@
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.18', conversationLabel: location.pathname }); return; }
+    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.19', conversationLabel: location.pathname }); return; }
     if (message?.type === 'vis-restore-draft') {
       restoreDraft().then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));
       return true;
     }
     if (message?.type === 'vis-stop') {
       cancelled = true;
+      for(const controller of downloads)controller.abort();
       generation += 1;
       if (currentJobId) finished.add(currentJobId);
       stopButton()?.click();
