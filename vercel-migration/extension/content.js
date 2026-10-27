@@ -284,7 +284,20 @@
       const body = (document.body?.innerText || '').slice(0, 5000);
       sendResponse({generating:isGenerating(),msgCount:messages.length,lastLen:(last?.innerText || '').length,captcha:/captcha|verify you are human/i.test(body),rateLimit:/too many requests|rate limit|try again later/i.test(body),login:!composer(),lastDomChange,jobId:currentJobId}); return;
     }
-    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.22', conversationLabel: location.pathname }); return; }
+    if (message?.type === 'vis-ping') {
+      (async()=>{
+        const st=await chrome.storage.local.get(['pairCode','activeJobId','activeCommand','conversationUrl','identityJobId']);
+        let tabId=null;try {tabId=(await chrome.runtime.sendMessage({type:'vis-tab-id'}))?.chatTabId ?? null;}catch{}
+        const url=/^\/c\/[^/]+$/.test(location.pathname)?location.origin+location.pathname:null;
+        const turns=document.querySelectorAll('[data-message-author-role="user"]');
+        const last=turns[turns.length-1];
+        const marker=st.activeJobId && last && (last.innerText||'').includes('[VIS_JOB_ID:'+st.activeJobId+']');
+        const imagePrompt=st.activeCommand?.type==='image_generation' && st.activeCommand?.id===st.activeJobId && typeof st.activeCommand.prompt==='string' && st.activeCommand.prompt.length>0 && last && (last.innerText||'').includes(st.activeCommand.prompt);
+        const verified=currentJobId===st.activeJobId && !!currentJobId || Boolean((marker||imagePrompt) && st.identityJobId===st.activeJobId && st.conversationUrl===url);
+        sendResponse({ready:Boolean(composer()),version:'0.4.22',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now()});
+      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.4.22',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
+      return true;
+    }
     if (message?.type === 'vis-restore-draft') {
       restoreDraft().then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));
       return true;

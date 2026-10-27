@@ -130,6 +130,7 @@ async function persistAndDeliver(payload,token) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const token=stopGeneration;if(message?.type==='vis-stop'){stopGeneration++;stopDepth++;}
   (async () => {
+    if (message?.type === 'vis-tab-id') { sendResponse({chatTabId:sender.tab?.id ?? null}); return; }
     if (message?.type === 'vis-fetch-image') {
       if (!sender.tab?.url?.startsWith(CHATGPT_PREFIX)) throw new Error('Chỉ tab ChatGPT được tải tệp ảnh.');
       const url = new URL(String(message.url || ''));
@@ -162,7 +163,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         checkStop(token,command.id);const result = await chrome.tabs.sendMessage(tab.id, {type:'vis-command',command});
         checkStop(token,command.id);
         if (!result?.ok) throw new Error(result?.error || 'ChatGPT không nhận được lệnh.');
-        await chrome.storage.local.set({activeJobId:command.id,activeJobType:command.type,activeCommand:command,chatTabId:tab.id});
+        const u=new URL(tab.url);const conversationUrl=u.origin==='https://chatgpt.com'&&/^\/c\/[^/]+$/.test(u.pathname)?u.origin+u.pathname:null;
+        await chrome.storage.local.set({activeJobId:command.id,activeJobType:command.type,activeCommand:command,chatTabId:tab.id,conversationUrl,identityJobId:command.id});
       } catch (error) {
         const latest = await chrome.storage.local.get(['transcriptJobs']);
         if (latest.transcriptJobs?.[command.id]) latest.transcriptJobs[command.id].state = 'stopped';
@@ -221,7 +223,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const result = await chrome.tabs.sendMessage(tab.id, { type: 'vis-command', command: message.command });
       checkStop(token,message.command.id);
       if (!result?.ok) throw new Error(result?.error || 'ChatGPT không nhận được lệnh.');
-      await chrome.storage.local.set({ activeJobId: message.command.id, activeJobType: String(message.command.type || ''), chatTabId: tab.id });
+      let currentTab=tab;try {currentTab=await chrome.tabs.get(tab.id);}catch{}
+      const conversationUrl = /^https:\/\/chatgpt\.com\/c\/[^/?#]+/.test(currentTab.url || '') ? new URL(currentTab.url).origin + new URL(currentTab.url).pathname : null;
+      await chrome.storage.local.set({ activeJobId: message.command.id, activeJobType: String(message.command.type || ''), chatTabId: tab.id, conversationUrl, identityJobId:message.command.id });
       sendResponse({ ok: true, accepted: true });
       return;
     }
@@ -311,13 +315,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // Monitoring only: the Manager returns no commands in this release.
 async function managerHeartbeat() {
-  const st = await chrome.storage.local.get(['chatTabId','pairCode','activeJobId']);
-  if (!st.chatTabId || !st.pairCode) return;
-  let tab=null, fp=null;
-  try { tab=await chrome.tabs.get(st.chatTabId); } catch {}
-  const valid=Boolean(tab?.url?.startsWith('https://chatgpt.com/'));
-  if(valid) try { fp=await chrome.tabs.sendMessage(st.chatTabId,{type:'MGR_FP'}); } catch {}
-  try { await fetch('http://127.0.0.1:8765/api/ext/heartbeat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pairCode:st.pairCode,activeJobId:st.activeJobId||'',tabAlive:valid,fp,version:'0.4.22'}),signal:AbortSignal.timeout(5000)}); } catch {}
+  const st = await chrome.storage.local.get(['chatTabId','pairCode','activeJobId','conversationUrl','identityJobId']);
+  if (!st.pairCode) return;
+  let candidates=[];
+  try { const bound=await chrome.tabs.get(st.chatTabId); if(bound?.url?.startsWith('https://chatgpt.com/')) candidates.push(bound); } catch {}
+  if(st.activeJobId && st.identityJobId===st.activeJobId && st.conversationUrl) {
+    try { for(const t of await chrome.tabs.query({})) if(t.id!==st.chatTabId && t.url?.split(/[?#]/)[0]===st.conversationUrl) candidates.push(t); } catch {}
+  }
+  let chosen=null, reply=null;
+  for(const t of candidates) {
+    try {
+      const p=await Promise.race([chrome.tabs.sendMessage(t.id,{type:'vis-ping'}),new Promise(resolve=>setTimeout(()=>resolve(null),3000))]);
+      if(p?.pairCode===st.pairCode && (!st.activeJobId || p.activeJobId===st.activeJobId)) {chosen=t;reply=p;break;}
+    } catch {}
+  }
+  const body={pairCode:st.pairCode,activeJobId:st.activeJobId||null,chatTabId:chosen?.id??null,conversationUrl:st.identityJobId===st.activeJobId?st.conversationUrl||null:null,lastHeartbeatAt:reply?.lastHeartbeatAt??null,version:'0.4.22',identityVersion:1};
+  try { await fetch('http://127.0.0.1:8765/api/ext/heartbeat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(5000)}); } catch {}
 }
+chrome.tabs.onUpdated.addListener((tabId,change,tab)=>{ if(!change.url)return; void (async()=>{const st=await chrome.storage.local.get(['chatTabId','activeJobId','identityJobId']); if(tabId!==st.chatTabId||!st.activeJobId||st.activeJobId!==st.identityJobId)return; try {const u=new URL(change.url);if(u.origin==='https://chatgpt.com'&&/^\/c\/[^/]+$/.test(u.pathname))await chrome.storage.local.set({conversationUrl:u.origin+u.pathname});}catch{}})(); });
 chrome.alarms.create('manager-heartbeat',{periodInMinutes:0.5});
 chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name==='manager-heartbeat')void managerHeartbeat();});
