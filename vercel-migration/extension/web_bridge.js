@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_WEB_BRIDGE_0421__) return;
-  window.__VIS_WEB_BRIDGE_0421__ = true;
+  if (window.__VIS_WEB_BRIDGE_0423__) return;
+  window.__VIS_WEB_BRIDGE_0423__ = true;
 
   const postStatus = async () => {
     try {
@@ -16,8 +16,7 @@
         type: 'studio-status',
         pairCode: response?.chatReady ? (response.pairCode || '') : '',
         chatReady: Boolean(response?.chatReady),
-        // Compatibility: the current Studio preview accepts protocol v0.4.22.
-        version: response?.version === '0.4.23' ? '0.4.22' : (response?.version || ''),
+        version: response?.version || '',
         pendingCount: Array.isArray(response?.pendingEvents) ? response.pendingEvents.length : 0,
         syncDiagnostic: response?.syncDiagnostic || '',
         message: response?.error || ''
@@ -96,4 +95,5 @@
 
   void postStatus();
 })();
+
 

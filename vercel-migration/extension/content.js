@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_0421__) return;
-  window.__VIS_CHAT_BRIDGE_0421__ = true;
+  if (window.__VIS_CHAT_BRIDGE_0423__) return;
+  window.__VIS_CHAT_BRIDGE_0423__ = true;
   let currentJobId = '';
   let lastDomChange = Date.now();
   new MutationObserver(() => { lastDomChange = Date.now(); }).observe(document.documentElement, {subtree:true, childList:true, characterData:true});
@@ -346,4 +346,5 @@
     }
   });
 })();
+
 

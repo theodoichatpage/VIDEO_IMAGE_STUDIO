@@ -335,3 +335,4 @@ async function managerHeartbeat() {
 chrome.tabs.onUpdated.addListener((tabId,change,tab)=>{ if(!change.url)return; void (async()=>{const st=await chrome.storage.local.get(['chatTabId','activeJobId','identityJobId']); if(tabId!==st.chatTabId||!st.activeJobId||st.activeJobId!==st.identityJobId)return; try {const u=new URL(change.url);if(u.origin==='https://chatgpt.com'&&/^\/c\/[^/]+$/.test(u.pathname))await chrome.storage.local.set({conversationUrl:u.origin+u.pathname});}catch{}})(); });
 chrome.alarms.create('manager-heartbeat',{periodInMinutes:0.5});
 chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name==='manager-heartbeat')void managerHeartbeat();});
+
