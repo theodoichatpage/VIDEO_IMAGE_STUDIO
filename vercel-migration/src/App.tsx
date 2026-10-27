@@ -180,9 +180,15 @@ function App() {
     let pageHidden = false;
     const signal = () => {
       if (pageHidden) return;
+      let projectName: string | null = null;
+      try {
+        const metadata = JSON.parse(localStorage.getItem('vis-project-meta') || '[]');
+        const name = Array.isArray(metadata) ? metadata.find((p: {id?: string; name?: unknown}) => p.id === sessionId)?.name : null;
+        if (typeof name === 'string' && name.trim()) projectName = name.trim().slice(0, 200);
+      } catch { /* An unavailable name must not break presence. */ }
       void fetch(url, {
         method: 'POST', headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ sessionId, tabId: managerTabId.current, chatReady: bridgeConnected }),
+        body: JSON.stringify({ sessionId, tabId: managerTabId.current, chatReady: bridgeConnected, projectName }),
       }).catch(() => {});
     };
     const close = () => {
@@ -477,6 +483,7 @@ function App() {
 }
 
 export default App;
+
 
 
 
