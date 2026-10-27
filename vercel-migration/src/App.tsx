@@ -173,17 +173,29 @@ function App() {
 
   // Optional, read-only status signal to the local AI MANAGER.
   const [managerWatch, setManagerWatch] = useState(() => localStorage.getItem('vis-manager-watch') === '1');
+  const managerTabId = useRef('tab_' + Math.random().toString(36).slice(2) + Date.now().toString(36));
   useEffect(() => {
     if (!managerWatch) return;
+    const url = 'http://127.0.0.1:8765/api/studio-presence';
     const signal = () => {
-      void fetch('http://127.0.0.1:8765/api/studio-presence', {
+      void fetch(url, {
         method: 'POST', headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ sessionId, chatReady: bridgeConnected }),
-      }).catch(() => { /* Manager may not be running or browser may block local access. */ });
+        body: JSON.stringify({ sessionId, tabId: managerTabId.current, chatReady: bridgeConnected }),
+      }).catch(() => {});
+    };
+    const close = () => {
+      const payload = JSON.stringify({ sessionId, tabId: managerTabId.current, event: 'close' });
+      void fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: payload, keepalive: true }).catch(() => {});
     };
     signal();
+    window.addEventListener('pagehide', close);
+    window.addEventListener('pageshow', signal);
     const timer = window.setInterval(signal, 5000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('pagehide', close);
+      window.removeEventListener('pageshow', signal);
+    };
   }, [managerWatch, sessionId, bridgeConnected]);
   useEffect(() => {
     if (!bridgeConnected || !session?.activeJob || !['queued', 'sending'].includes(session.activeJob.status)) return;
