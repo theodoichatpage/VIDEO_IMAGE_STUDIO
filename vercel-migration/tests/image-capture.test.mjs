@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 function capture(node, {cors=false,mime="image/png",fallbackError=""}={}){
- let calls=[],runtimeCalls=[]; const context=vm.createContext({AbortController,window:{},document:{},VISReplyReader:{sources:()=>({node})},chrome:{runtime:{sendMessage:async message=>{runtimeCalls.push(message);return fallbackError?{ok:false,error:fallbackError}:{ok:true,imageDataUrl:"data:image/png;base64,iVBORw0KGgo="}},onMessage:{addListener(){}}}},Uint8Array,btoa,fetch:async(url,options)=>{calls.push({url,options});if(cors)throw new TypeError("Failed to fetch");return new Response(new Blob([Uint8Array.from([137,80,78,71,13,10,26,10])],{type:mime}));}});
+ let calls=[],runtimeCalls=[]; const context=vm.createContext({AbortController,window:{},document:{},VISReplyReader:{turns:()=>[],sources:()=>({node})},chrome:{runtime:{sendMessage:async message=>{runtimeCalls.push(message);return fallbackError?{ok:false,error:fallbackError}:{ok:true,imageDataUrl:"data:image/png;base64,iVBORw0KGgo="}},onMessage:{addListener(){}}}},Uint8Array,btoa,fetch:async(url,options)=>{calls.push({url,options});if(cors)throw new TypeError("Failed to fetch");return new Response(new Blob([Uint8Array.from([137,80,78,71,13,10,26,10])],{type:mime}));}});
  const src=readFileSync('extension/content.js','utf8').replace('chrome.runtime.onMessage.addListener','globalThis.capture = imagePayload; chrome.runtime.onMessage.addListener');vm.runInContext(src,context);return{run:()=>context.capture({id:'scene-job'}),calls,runtimeCalls};
 }
 test('copies actual image bytes from the matched answer with ChatGPT credentials',async()=>{

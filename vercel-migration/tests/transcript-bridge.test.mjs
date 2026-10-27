@@ -8,7 +8,7 @@ function worker(){
  const context=vm.createContext({URL,AbortSignal,chrome:{
   storage:{local:{get:async()=>structuredClone(stored),set:async x=>Object.assign(stored,structuredClone(x)),remove:async keys=>keys.forEach(k=>delete stored[k])}},
   runtime:{onMessage:{addListener:fn=>listener=fn}},
-  tabs:{query:async()=>[{id:2,url:'https://chatgpt.com/c/test'},{id:3,url:'https://video-image-studio.vercel.app/'}],sendMessage:async(id,msg)=>{if(msg.type==='vis-ping')return{ready:true,version:'0.4.19'};if(msg.type==='vis-command'){sent.push(msg.command);return{ok:true}}out.push(msg);return{ok:true}}}
+  tabs:{query:async()=>[{id:2,url:'https://chatgpt.com/c/test'},{id:3,url:'https://video-image-studio.vercel.app/'}],sendMessage:async(id,msg)=>{if(msg.type==='vis-ping')return{ready:true,version:'0.4.20'};if(msg.type==='vis-command'){sent.push(msg.command);return{ok:true}}out.push(msg);return{ok:true}}}
  },fetch:async(url,opts)=>{requests.push(url);return{ok:true,json:async()=>({session:{}})}}});
  vm.runInContext(readFileSync(new URL('../extension/background.js',import.meta.url),'utf8'),context);
  return{stored,out,requests,sent,message:(m,sender={})=>new Promise(r=>listener(m,sender,r))};

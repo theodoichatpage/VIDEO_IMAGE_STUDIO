@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_0419__) return;
-  window.__VIS_CHAT_BRIDGE_0419__ = true;
+  if (window.__VIS_CHAT_BRIDGE_0420__) return;
+  window.__VIS_CHAT_BRIDGE_0420__ = true;
   let currentJobId = '';
   let currentJobType = '';
   let cancelled = false;
@@ -52,9 +52,25 @@
   }
 
   const imageUrls = (context = replyContext) => [...(VISReplyReader.sources(document, context).node?.querySelectorAll('img') || [])].filter(image => image.complete && image.naturalWidth >= 256 && image.naturalHeight >= 256).map(image => image.currentSrc || image.src || '').filter(url => /^(https?:|blob:)/.test(url));
+  const expandedImagePrompts = new WeakSet();
+  async function expandImagePrompts(context) {
+    // Long ChatGPT prompts can contain only the preview until Show more is clicked.
+    // Expand the user turn, then keep using exact prompt matching (never a style prefix).
+    let expanded = false;
+    for (const turn of VISReplyReader.turns(document, context)) {
+      if (turn.role !== 'user') continue;
+      for (const button of turn.node.querySelectorAll('button, [role="button"]')) {
+        const label = (button.innerText || button.textContent || button.getAttribute('aria-label') || '').trim();
+        if (!/^(show more|read more|see more|xem thêm|hiển thị thêm|mở rộng)$/i.test(label) || expandedImagePrompts.has(button)) continue;
+        expandedImagePrompts.add(button);button.click();expanded = true;
+      }
+    }
+    if (expanded) await sleep(150);
+  }
   async function imagePayload(context) {
+    await expandImagePrompts(context);
     const imageUrl = imageUrls(context).at(-1);
-    if (!imageUrl) throw new Error('Chưa tìm thấy ảnh hoàn tất đúng lệnh của cảnh này. Mở đúng hội thoại và cuộn tới ảnh.');
+    if (!imageUrl) throw new Error('Chưa tìm thấy ảnh hoàn tất đúng lệnh của cảnh này. Mở đúng hội thoại và cuộn tới ảnh. [' + VISReplyReader.sources(document, context).reason + ']');
     const controller=new AbortController();downloads.add(controller);
     try{
     try {
@@ -83,6 +99,8 @@
   async function waitForImage(_before, token) {
     const deadline = Date.now() + 10 * 60 * 1000;
     while (Date.now() < deadline) {
+      if (cancelled || token !== generation) throw new Error('Đã dừng tác vụ tạo ảnh.');
+      await expandImagePrompts(replyContext);
       if (cancelled || token !== generation) throw new Error('Đã dừng tác vụ tạo ảnh.');
       if (imageUrls().length && !isGenerating()) return imagePayload(replyContext);
       await sleep(1500);
@@ -258,7 +276,7 @@
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.19', conversationLabel: location.pathname }); return; }
+    if (message?.type === 'vis-ping') { sendResponse({ ready: Boolean(composer()), version: '0.4.20', conversationLabel: location.pathname }); return; }
     if (message?.type === 'vis-restore-draft') {
       restoreDraft().then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));
       return true;

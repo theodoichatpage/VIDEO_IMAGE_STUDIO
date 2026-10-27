@@ -13,7 +13,7 @@ try{
  const png=Buffer.from(await chat.evaluate(()=>{const c=document.createElement('canvas');c.width=1024;c.height=576;const g=c.getContext('2d');g.fillStyle='#1877c9';g.fillRect(0,0,c.width,c.height);return c.toDataURL('image/png').split(',')[1]}),'base64');
  const id='image-browser-test-12345';
  let record={id,script:'Original script',status:'parts_ready',activeJob:null,imageJobs:[],parts:[{id:'p1',title:'Phần 1',content:'Original',status:'complete',scenes:[{title:'Cảnh 1 - Cầu thang',prompt:'Police walking upstairs in a historic building.',imageStatus:'error',imageError:'Lỗi tải ảnh từ lần trước',imageResults:[]}]}],updatedAt:Date.now()};
- const files=new Map();let fallbackFetches=0,previewFailure=false,queueBlocked=false;const queueResumes=[];
+ const files=new Map(),fetchedImageUrls=[];let fallbackFetches=0,previewFailure=false,queueBlocked=false;const queueResumes=[];
  // The unmodified production handler runs against in-memory DB/Storage.
  process.env.SUPABASE_URL='https://db.test';process.env.SUPABASE_SECRET_KEY='fixture-only';
  globalThis.fetch=async(url,init={})=>{
@@ -36,7 +36,7 @@ try{
  let receiver,blockCapture=false,captureFailure='';const captureWaiters=[];const stored={pairCode:id,studioOrigin:'https://video-image-studio.vercel.app'};
  const chrome={storage:{local:{get:async()=>structuredClone(stored),set:async v=>Object.assign(stored,structuredClone(v)),remove:async keys=>keys.forEach(k=>delete stored[k])}},scripting:{executeScript:async()=>{}},runtime:{onMessage:{addListener:fn=>receiver=fn}},tabs:{query:async()=>[{id:2,url:'https://chatgpt.com/c/fixture'},{id:3,url:'https://video-image-studio.vercel.app/'}],sendMessage:async(tab,m)=>{if(tab===2&&m.type==='vis-capture-result'){if(blockCapture)await new Promise(r=>captureWaiters.push(r));if(captureFailure)return{ok:false,error:captureFailure}}return tab===2?chat.evaluate(m=>new Promise(r=>{if(!window.receiver(m,{},r))r({ok:true})}),m):page.evaluate(m=>window.receiver(m),m)}}};
  const worker=vm.createContext({chrome,URL,AbortSignal,AbortController,Uint8Array,btoa,fetch:async(url,init={})=>{
-  if(String(url).startsWith('https://images.oaiusercontent.com/')){fallbackFetches++;return new Response(png,{headers:{'Content-Type':'application/octet-stream'}})}
+  if(String(url).startsWith('https://images.oaiusercontent.com/')){fallbackFetches++;fetchedImageUrls.push(String(url));return new Response(png,{headers:{'Content-Type':'application/octet-stream'}})}
   const v=await call(url,init);return{ok:v.status<400,status:v.status,json:async()=>v.data};
  }});
  vm.runInContext(fs.readFileSync(root+'/extension/background.js','utf8'),worker);
@@ -45,7 +45,7 @@ try{
  await chat.exposeBinding('extensionMessage',(_,m)=>send(m,{tab:{id:2,url:'https://chatgpt.com/c/fixture'}}));
  for(const p of [page,chat])await p.addInitScript(()=>{window.chrome={storage:{local:{get:async()=>({}),set:async()=>{}}},runtime:{sendMessage:m=>window.extensionMessage(m),onMessage:{addListener:fn=>window.receiver=fn}}}});
  await chat.route('https://images.oaiusercontent.com/**',r=>r.fulfill({body:png,contentType:'application/octet-stream'}));
- await chat.route('http://127.0.0.1:4173/chat-fixture',r=>r.fulfill({contentType:'text/html',body:`<main></main><form><textarea id="prompt-textarea"></textarea><button data-testid="send-button" type="button">Send</button></form><script>document.querySelector('button').onclick=()=>{const box=document.querySelector('textarea'),u=document.createElement('div');u.dataset.messageAuthorRole='user';u.textContent=box.value;box.value='';document.querySelector('main').append(u);setTimeout(()=>{const a=document.createElement('article'),text=document.createElement('div'),image=document.createElement('img');text.dataset.messageAuthorRole='assistant';a.append(text);image.src='https://images.oaiusercontent.com/scene.png';a.append(image);document.querySelector('main').append(a)},100)};</script>`}));
+ await chat.route('http://127.0.0.1:4173/chat-fixture',r=>r.fulfill({contentType:'text/html',body:`<main></main><form><textarea id="prompt-textarea"></textarea><button data-testid="send-button" type="button">Send</button></form><script>document.querySelector('button').onclick=()=>{const box=document.querySelector('textarea'),u=document.createElement('div');u.dataset.messageAuthorRole='user';const full=box.value,preview=document.createElement('span'),more=document.createElement('button');preview.textContent=full.slice(0,45)+'…';more.type='button';more.textContent='Show more';more.onclick=()=>{preview.textContent=full;more.remove()};u.append(preview,more);box.value='';document.querySelector('main').append(u);setTimeout(()=>{const a=document.createElement('article'),text=document.createElement('div'),image=document.createElement('img');text.dataset.messageAuthorRole='assistant';a.append(text);image.src='https://images.oaiusercontent.com/scene.png';a.append(image);document.querySelector('main').append(a)},100)};</script>`}));
  await chat.addInitScript(()=>{const original=window.fetch;window.fetch=(url,opts)=>String(url).startsWith('https://images.oaiusercontent.com/')?Promise.reject(new TypeError('CORS blocked in fixture')):original(url,opts)});
  await chat.goto('http://127.0.0.1:4173/chat-fixture');await chat.addScriptTag({path:root+'/extension/reply-reader.js'});await chat.addScriptTag({path:root+'/extension/content.js'});
  await page.addInitScript(id=>{localStorage.setItem('vis-session',id);localStorage.setItem('vis-active-menu','2')},id);
@@ -58,6 +58,8 @@ try{
  assert.equal(record.parts[0].scenes[0].imageStatus,'complete');assert.equal(files.size,1);assert.equal(fallbackFetches>=1,true);assert.deepEqual([...files.values()][0],png);
  assert.equal(await chat.locator('[data-message-author-role="user"]').count(),1);
  // Recovery receives existing image bytes only; it must not submit another prompt.
+ await chat.evaluate(()=>{const main=document.querySelector('main'),u=document.createElement('div'),a=document.createElement('article'),text=document.createElement('div'),image=document.createElement('img');u.dataset.messageAuthorRole='user';u.textContent='SCENE: Different people in a historic building.';text.dataset.messageAuthorRole='assistant';image.src='https://images.oaiusercontent.com/unrelated-scene.png';a.append(text,image);main.append(u,a)});
+ await chat.evaluate(()=>{const u=document.querySelector('[data-message-author-role="user"]'),full=u.querySelector('span').textContent;u.querySelector('span').textContent=full.slice(0,45)+'…';const more=document.createElement('button');more.textContent='Show more';more.onclick=()=>{u.querySelector('span').textContent=full;more.remove()};u.append(more)});
  record.activeJob={id:'other-scene-job',type:'image_generation',status:'waiting',prompt:'Different scene B',sceneKey:'p1:1',protocol:3};record.imageJobs=[record.activeJob];record.parts[0].scenes.push({title:'Cảnh 2 - Khác',prompt:'Different scene B',imagePrompt:'Different scene B',imageStatus:'generating',imageResults:[]});
  record.parts[0].scenes[0].imageResults=[];record.parts[0].scenes[0].imageStatus='error';record.parts[0].scenes[0].imageError='Kết quả chưa đồng bộ';record.updatedAt=Date.now();
  await page.reload();await page.addScriptTag({path:root+'/extension/web_bridge.js'});await page.getByRole('alert').filter({hasText:'Kết quả chưa đồng bộ'}).waitFor();
@@ -68,19 +70,19 @@ try{
  assert.equal(await page.getByRole('button',{name:'Đồng bộ ngay',exact:true}).isDisabled(),true);
  blockCapture=false;captureWaiters.splice(0).forEach(resolve=>resolve());
  await page.waitForFunction(()=>document.querySelector('.scene-row .chip')?.textContent==='Hoàn tất',null,{timeout:20000});
- assert.equal(await chat.locator('[data-message-author-role="user"]').count(),1);
+ assert.equal(await chat.locator('[data-message-author-role="user"]').count(),2);
  // Download through the page's routed signed URL, rather than authenticated ChatGPT URLs.
  const imageBytes=await page.evaluate(async()=>Array.from(new Uint8Array(await(await fetch(document.querySelector('img.generated-image').src)).arrayBuffer())));
  assert.deepEqual(Buffer.from(imageBytes),png);
  await page.locator('.image-sync-feedback').filter({hasText:'Đã đồng bộ'}).waitFor();
- assert.equal(record.activeJob.id,'other-scene-job');assert.equal(record.parts[0].scenes[1].imageStatus,'generating');
+ assert.equal(record.activeJob.id,'other-scene-job');assert.equal(record.parts[0].scenes[1].imageStatus,'generating');assert.ok(fetchedImageUrls.every(url=>!url.includes('unrelated-scene')), 'Recovery must not fetch the later unrelated scene');
  captureFailure='Không tìm thấy ảnh đúng cảnh (kiểm thử)';
  await page.getByRole('button',{name:'Đồng bộ lại ảnh',exact:true}).click();
  await page.locator('.image-sync-feedback').filter({hasText:captureFailure}).waitFor();
  assert.equal(await page.getByRole('button',{name:'Đồng bộ ngay',exact:true}).isEnabled(),true);
  captureFailure='';await page.getByRole('button',{name:'Đồng bộ ngay',exact:true}).click();
  await page.locator('.image-sync-feedback').filter({hasText:'Đã đồng bộ'}).waitFor({timeout:15000});
- assert.equal(await chat.locator('[data-message-author-role="user"]').count(),1);
+ assert.equal(await chat.locator('[data-message-author-role="user"]').count(),2);
 
  // A failed preview must be visible as a message, then a new URL must render normally.
  previewFailure=true;await page.reload();await page.addScriptTag({path:root+'/extension/web_bridge.js'});
@@ -89,7 +91,7 @@ try{
  await page.locator('.image-sync-feedback').filter({hasText:'Đã đồng bộ'}).waitFor({timeout:15000});
  await page.waitForFunction(()=>document.querySelector('img.generated-image')?.naturalWidth===1024);
  assert.equal(await page.locator('img.generated-image').isVisible(),true);
- assert.equal(await chat.locator('[data-message-author-role="user"]').count(),1);
+ assert.equal(await chat.locator('[data-message-author-role="user"]').count(),2);
  // Every generation action remains usable while another scene owns the active slot.
  const countBefore=await chat.locator('[data-message-author-role="user"]').count();
  queueBlocked=true;await page.locator('.scene-row .outline').first().click();
