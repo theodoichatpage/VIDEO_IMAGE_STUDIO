@@ -1,5 +1,5 @@
 import type { Session, Job } from './types';
-type ApiData = { session: Session | null; command?: Job | null; ignored?: boolean; discarded?: boolean };
+type ApiData = { session: Session | null; command?: Job | null; ignored?: boolean; discarded?: boolean; queuedCount?: number; alreadyQueuedCount?: number };
 type ApiResponse<T> = { data: T };
 const apiBase = 'https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api';
 

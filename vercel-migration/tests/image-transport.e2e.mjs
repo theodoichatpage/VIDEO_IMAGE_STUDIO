@@ -13,7 +13,7 @@ try{
  const png=Buffer.from(await chat.evaluate(()=>{const c=document.createElement('canvas');c.width=1024;c.height=576;const g=c.getContext('2d');g.fillStyle='#1877c9';g.fillRect(0,0,c.width,c.height);return c.toDataURL('image/png').split(',')[1]}),'base64');
  const id='image-browser-test-12345';
  let record={id,script:'Original script',status:'parts_ready',activeJob:null,imageJobs:[],parts:[{id:'p1',title:'Phần 1',content:'Original',status:'complete',scenes:[{title:'Cảnh 1 - Cầu thang',prompt:'Police walking upstairs in a historic building.',imageStatus:'error',imageError:'Lỗi tải ảnh từ lần trước',imageResults:[]}]}],updatedAt:Date.now()};
- const files=new Map();let fallbackFetches=0,previewFailure=false;
+ const files=new Map();let fallbackFetches=0,previewFailure=false,queueBlocked=false;const queueResumes=[];
  // The unmodified production handler runs against in-memory DB/Storage.
  process.env.SUPABASE_URL='https://db.test';process.env.SUPABASE_SECRET_KEY='fixture-only';
  globalThis.fetch=async(url,init={})=>{
@@ -31,7 +31,7 @@ try{
  const js=ts.transpileModule(fs.readFileSync(root+'/supabase/functions/studio-api/handler.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
  const {default:handler}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
  const call=async(url,init={})=>{let status=200,data;const path=new URL(url).searchParams.get('path');await handler({method:init.method||'GET',query:{path:path.split('/')},body:init.body?JSON.parse(init.body):undefined,headers:{}},{setHeader(){},status(n){status=n;return{json(value){data=value}}}});return{status,data}};
- await page.route('**/functions/v1/studio-api?**',async r=>{const v=await call(r.request().url(),{method:r.request().method(),body:r.request().postData()});await r.fulfill({status:v.status,json:v.data})});
+ await page.route('**/functions/v1/studio-api?**',async r=>{if(queueBlocked&&r.request().method()==='POST'&&new URL(r.request().url()).searchParams.get('path')?.endsWith('/images'))await new Promise(resolve=>queueResumes.push(resolve));const v=await call(r.request().url(),{method:r.request().method(),body:r.request().postData()});await r.fulfill({status:v.status,json:v.data})});
  await page.route('https://db.test/storage/**',async r=>{if(previewFailure){await r.fulfill({status:403,body:'Expired preview'});return;}const path=new URL(r.request().url()).pathname.split('/studio-images/')[1];await r.fulfill({contentType:'image/png',body:files.get(path)||png})});
  let receiver,blockCapture=false,captureFailure='';const captureWaiters=[];const stored={pairCode:id,studioOrigin:'https://video-image-studio.vercel.app'};
  const chrome={storage:{local:{get:async()=>structuredClone(stored),set:async v=>Object.assign(stored,structuredClone(v)),remove:async keys=>keys.forEach(k=>delete stored[k])}},scripting:{executeScript:async()=>{}},runtime:{onMessage:{addListener:fn=>receiver=fn}},tabs:{query:async()=>[{id:2,url:'https://chatgpt.com/c/fixture'},{id:3,url:'https://video-image-studio.vercel.app/'}],sendMessage:async(tab,m)=>{if(tab===2&&m.type==='vis-capture-result'){if(blockCapture)await new Promise(r=>captureWaiters.push(r));if(captureFailure)return{ok:false,error:captureFailure}}return tab===2?chat.evaluate(m=>new Promise(r=>{if(!window.receiver(m,{},r))r({ok:true})}),m):page.evaluate(m=>window.receiver(m),m)}}};
@@ -51,6 +51,7 @@ try{
  await page.addInitScript(id=>{localStorage.setItem('vis-session',id);localStorage.setItem('vis-active-menu','2')},id);
  await page.goto('http://127.0.0.1:4173');await page.addScriptTag({path:root+'/extension/web_bridge.js'});
  await page.getByText('Cảnh 1 - Cầu thang',{exact:true}).first().waitFor();await page.getByRole('alert').filter({hasText:'Lỗi tải ảnh từ lần trước'}).waitFor();
+ assert.equal(await page.getByRole('button',{name:'Đồng bộ ngay',exact:true}).isEnabled(),true);await page.getByRole('button',{name:'Đồng bộ ngay',exact:true}).click();await page.locator('.image-sync-banner').filter({hasText:'chưa có lệnh tạo ảnh'}).waitFor();
  await page.locator('.style-bar textarea').fill('SCENE: {{SCENE_PROMPT}}');await page.waitForTimeout(300);await page.getByRole('button',{name:'Tạo ảnh',exact:true}).click();
  await page.locator('img.generated-image').waitFor({timeout:20000}).catch(async error=>{console.log('DEBUG',JSON.stringify({record,stored,fallbackFetches}),await page.locator('body').innerText(),await chat.locator('body').innerText());throw error});
  await page.waitForFunction(()=>document.querySelector('img.generated-image')?.naturalWidth===1024);
@@ -89,6 +90,24 @@ try{
  await page.waitForFunction(()=>document.querySelector('img.generated-image')?.naturalWidth===1024);
  assert.equal(await page.locator('img.generated-image').isVisible(),true);
  assert.equal(await chat.locator('[data-message-author-role="user"]').count(),1);
+ // Every generation action remains usable while another scene owns the active slot.
+ const countBefore=await chat.locator('[data-message-author-role="user"]').count();
+ queueBlocked=true;await page.locator('.scene-row .outline').first().click();
+ await page.locator('.image-action-feedback').filter({hasText:'Đang xếp hàng'}).waitFor();
+ assert.equal(await page.locator('.preview-actions').getByRole('button',{name:'Tạo lại',exact:true}).isDisabled(),true);
+ assert.ok((await page.locator('.image-action-feedback').boundingBox()).y<300);
+ queueBlocked=false;queueResumes.splice(0).forEach(resolve=>resolve());
+ await page.locator('.image-action-feedback').filter({hasText:'Đã xếp 1 cảnh'}).waitFor();
+ assert.equal(record.activeJob.id,'other-scene-job');assert.equal(record.imageJobs.filter(j=>j.sceneKey==='p1:0').length,1);
+ const clickQueue=async button=>{const [response]=await Promise.all([page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).searchParams.get('path')?.endsWith('/images')),button.click()]);assert.equal(response.status(),200);return response.json()};
+ assert.equal((await clickQueue(page.locator('.preview-actions').getByRole('button',{name:'Tạo lại',exact:true}))).queuedCount,0);
+ await page.locator('.image-action-feedback').filter({hasText:'Không gửi lệnh trùng'}).waitFor();
+ await page.getByRole('button',{name:'Cảnh 2 - Khác',exact:true}).click();
+ assert.equal((await clickQueue(page.getByRole('button',{name:'Tạo ảnh cảnh này',exact:true}))).alreadyQueuedCount,1);
+ assert.equal((await clickQueue(page.getByRole('button',{name:'Tạo phần đang chọn',exact:true}))).alreadyQueuedCount,2);
+ assert.equal((await clickQueue(page.getByRole('button',{name:'Tạo tất cả',exact:true}))).alreadyQueuedCount,2);
+ assert.equal(record.imageJobs.filter(j=>j.sceneKey==='p1:0').length,1);
+ assert.equal(await chat.locator('[data-message-author-role="user"]').count(),countBefore);
  await page.screenshot({path:root+'/image-sync-verified.png',fullPage:true});
- console.log('PASS real UI -> extension -> matched image sibling -> CORS fallback -> real API handler -> Storage fixture -> complete preview/download; recovery submits no new prompt. Live ChatGPT/DB not used.');
+ console.log('PASS real UI -> extension -> matched image sibling -> CORS fallback -> real API handler -> Storage fixture -> complete preview/download; recovery submits no new prompt. Create/recreate/part/all actions enqueue behind another active scene without duplicates; visible pending/error feedback. Live ChatGPT/DB not used.');
 }finally{globalThis.fetch=originalFetch;await browser.close();server.kill()}

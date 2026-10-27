@@ -42,3 +42,21 @@ test('capture rejects invalid bytes and unknown scenes without releasing the act
 test('uses the existing active command when capturing that same scene',()=>scenario(async s=>{
  const r=await s.call('sessions/'+s.state().id+'/images/capture',{sceneKey:'p1:1'});assert.equal(r.status,200);assert.equal(r.data.command.id,'other-job');assert.equal(s.state().imageCaptures,undefined);assert.equal(s.state().activeJob.id,'other-job');
 }));
+
+test('queues create/recreate behind an active image and avoids duplicates',()=>scenario(async s=>{
+ const original=structuredClone(s.state().activeJob);
+ let r=await s.call('sessions/'+s.state().id+'/images',{sceneKeys:['p1:0'],stylePrompt:'SCENE: {{SCENE_PROMPT}}'});
+ assert.equal(r.status,200,JSON.stringify(r.data));assert.deepEqual(s.state().activeJob,original);assert.equal(r.data.queuedCount,1);assert.equal(s.state().parts[0].scenes[0].imageStatus,'queued');
+ r=await s.call('sessions/'+s.state().id+'/images',{sceneKeys:['p1:0','p1:1'],stylePrompt:'SCENE: {{SCENE_PROMPT}}'});
+ assert.equal(r.status,200);assert.equal(r.data.queuedCount,0);assert.equal(r.data.alreadyQueuedCount,2);assert.equal(s.state().imageJobs.filter(j=>j.sceneKey==='p1:0').length,1);assert.deepEqual(s.state().activeJob,original);
+ r=await s.call('bridge/'+s.state().id+'/event',{jobId:original.id,state:'completed',imageDataUrl:png});assert.equal(r.status,200);assert.equal(s.state().activeJob.sceneKey,'p1:0');
+}));
+test('queue append retries a conditional-save conflict without losing another update',()=>scenario(async s=>{
+ s.conflict();const r=await s.call('sessions/'+s.state().id+'/images',{sceneKeys:['p1:0'],stylePrompt:'SCENE: {{SCENE_PROMPT}}'});
+ assert.equal(r.status,200);assert.equal(s.state().script,'Concurrent change');assert.equal(s.state().activeJob.id,'other-job');assert.equal(s.state().imageJobs.filter(j=>j.sceneKey==='p1:0').length,1);
+}));
+
+test('Stop marks queued scenes stopped instead of leaving an orphan queued badge',()=>scenario(async s=>{
+ await s.call('sessions/'+s.state().id+'/images',{sceneKeys:['p1:0'],stylePrompt:'SCENE: {{SCENE_PROMPT}}'});
+ const r=await s.call('sessions/'+s.state().id+'/stop',{});assert.equal(r.status,200);assert.equal(s.state().activeJob,null);assert.equal(s.state().imageJobs.length,0);assert.equal(s.state().parts[0].scenes[0].imageStatus,'stopped');assert.equal(s.state().parts[0].scenes[1].imageStatus,'stopped');
+}));

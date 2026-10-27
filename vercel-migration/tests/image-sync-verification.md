@@ -59,3 +59,15 @@ Validation: 58 Node tests + 14 Vitest source tests passed; TypeScript and produc
 Bare npm test still misclassifies the Node-runner files, including the new image-scene-capture.test.mjs, as empty Vitest suites. All 11 such files pass with the Node runner; no test-runner configuration change is included. Live deployment verification is reported separately from fixture browser tests.
 
 Live API verification on v16 also passed in an isolated verification session: prepare existing prompt B, stop that fixture job, queue A, capture B while A remains queued, save a real PNG to private Storage, download identical bytes via the signed URL, and ignore duplicate completion. The fixture's queued work was stopped afterward. No user's project or ChatGPT conversation was used for the live test.
+
+## 2026-10-27: image controls appear unresponsive
+
+The screenshot shows an active image job on scene 2 while other generation buttons are available. The old images endpoint rejected every new generation request with HTTP 409 whenever any job was active. Those errors were placed in Analysis-only notice state, so the image controls appeared to do nothing. Some sync controls were also permanently disabled when a scene had no saved generation prompt, without explaining why.
+
+The image endpoint now appends eligible scenes behind an active image job, preserves that active job, skips active/queued duplicates, and returns accepted/duplicate counts. Conditional record updates preserve concurrent project updates. Text-analysis jobs remain protected with an explicit error. Stop marks all canceled queued scenes stopped. The image tab shows action and sync feedback above the style controls, provides immediate pending feedback, disables generation controls only while an enqueue request is in flight, and explains sync errors instead of permanently disabling the buttons for missing prompt metadata. Extension stays 4.18.
+
+Regression evidence: the old API returned 409 in the new enqueue tests and the old UI failed the enabled-sync-button assertion. The fixed browser test clicks Create, Recreate, Create part and Create all with another active scene, checks visible pending feedback and duplicate protection, and checks sync feedback for a never-generated scene. The existing image capture, preview, download, transcript and rewrite-batch browser cases also pass.
+
+Verification: build and TypeScript pass; 61 Node tests and 14 Vitest source tests pass. Bare npm test still reports the existing 11 Node files as empty Vitest suites; those files pass with node --test. The Edge Function for this follow-up is v17. No schema, authentication, extension ZIP or unrelated tab implementation changes are included.
+
+Live API v17 validation passed in an isolated fixture: append A while B is active, skip a duplicate A/B request, advance automatically to A when B finishes with an error, and Stop A without clearing B's error history. The fixture row was removed afterward. No user's project or ChatGPT conversation was used.

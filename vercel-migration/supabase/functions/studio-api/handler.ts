@@ -328,18 +328,35 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         return send(res, 200, { session: await write(session) });
       }
       if (path[2] === 'images' && path.length === 3 && req.method === 'POST') {
-        if (session.activeJob) return fail(res, 'Hãy hoàn tất hoặc dừng tác vụ đang chạy trước.', 409);
-        const style = String(body.stylePrompt || '').trim(); const keys = [...new Set(((body.sceneKeys as unknown[]) || []).map(String))]; if (!style || !keys.length) return fail(res, 'Cần chọn cảnh và nhập prompt phong cách chung.');
-        const jobs: Job[] = [];
-        for (const key of keys) { const target = findScene(session, key); if (!target.scene?.prompt) continue; const prompt = imagePrompt(style, target.scene, String(body.ratio || '16:9')); target.scene.imageStatus = 'queued'; target.scene.imagePrompt = prompt; target.scene.imageError = ''; jobs.push({ id: newId(), type: 'image_generation', status: 'queued', prompt, partId: target.part?.id, sceneKey: key, protocol: 3 }); }
-        if (!jobs.length) return fail(res, 'Các cảnh được chọn chưa có prompt ảnh.');
-        session.stylePrompt = style; session.imageJobs.push(...jobs); nextImage(session); return send(res, 200, { session: await write(session) });
+        const style=String(body.stylePrompt||'').trim();
+        const keys=[...new Set((Array.isArray(body.sceneKeys)?body.sceneKeys:[]).map(String))];
+        if(!style||!keys.length)return fail(res,'Cần chọn cảnh và nhập prompt phong cách chung.',422);
+        for(let attempt=0;attempt<5;attempt++){
+          const rows=await database('studio_sessions?id=eq.'+encodeURIComponent(session.id)+'&select=record') as {record:Session}[];
+          const fresh=rows?.[0]?.record;if(!fresh)return fail(res,'Không tìm thấy dự án.',404);
+          if(fresh.activeJob&&fresh.activeJob.type!=='image_generation')return fail(res,'ChatGPT đang phân tích kịch bản. Hãy đợi phân tích xong hoặc Dừng trước khi tạo ảnh.',409);
+          fresh.imageJobs=fresh.imageJobs||[];const jobs:Job[]=[];let alreadyQueuedCount=0;
+          for(const key of keys){
+            const target=findScene(fresh,key);if(!target.scene?.prompt)continue;
+            if(fresh.activeJob?.sceneKey===key||fresh.imageJobs.some(item=>item.sceneKey===key&&['queued','sending','sent','waiting'].includes(item.status))){alreadyQueuedCount++;continue;}
+            const prompt=imagePrompt(style,target.scene,String(body.ratio||'16:9'));
+            target.scene.imageStatus='queued';target.scene.imagePrompt=prompt;target.scene.imageError='';
+            jobs.push({id:newId(),type:'image_generation',status:'queued',prompt,partId:target.part?.id,sceneKey:key,protocol:3});
+          }
+          if(!jobs.length){if(alreadyQueuedCount)return send(res,200,{session:await read(fresh.id),queuedCount:0,alreadyQueuedCount});return fail(res,'Các cảnh được chọn chưa có prompt ảnh.',422);}
+          fresh.stylePrompt=style;fresh.imageJobs.push(...jobs);if(!fresh.activeJob)nextImage(fresh);
+          const previous=fresh.updatedAt;fresh.updatedAt=Math.max(Date.now(),previous+1);
+          const saved=await database('studio_sessions?id=eq.'+encodeURIComponent(fresh.id)+'&record->>updatedAt=eq.'+encodeURIComponent(String(previous)),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({record:fresh})}) as unknown[];
+          if(saved?.length)return send(res,200,{session:await read(fresh.id),queuedCount:jobs.length,alreadyQueuedCount});
+        }
+        return fail(res,'Dự án vừa được cập nhật. Hãy thử xếp hàng lại sau vài giây.',409);
       }
+
       if (path[2] === 'stop' && req.method === 'POST') {
         pauseAnalysis(session);
         if (session.activeJob) session.lastJob = { ...session.activeJob, status: 'stopped' };
         if (session.activeJob) session.finishedJobIds = [...(session.finishedJobIds || []), session.activeJob.id].slice(-200);
-        if (session.activeJob?.type === 'image_generation') { const target = session.activeJob.sceneKey ? findScene(session, session.activeJob.sceneKey) : undefined; if (target?.scene) target.scene.imageStatus = 'stopped'; session.imageJobs = []; }
+        if (session.activeJob?.type === 'image_generation') { for(const job of [...session.imageJobs,session.activeJob]){const target=job.sceneKey?findScene(session,job.sceneKey):undefined;if(target?.scene)target.scene.imageStatus='stopped';} session.finishedJobIds=[...(session.finishedJobIds||[]),...session.imageJobs.map(job=>job.id)].slice(-200); session.imageJobs = []; }
         else if (session.activeJob?.partId) { const part = session.parts.find(item => item.id === session.activeJob?.partId); if (part) part.status = 'stopped'; }
         session.activeJob = null; session.status = 'stopped'; return send(res, 200, { session: await write(session) });
       }
