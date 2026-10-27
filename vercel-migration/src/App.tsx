@@ -177,24 +177,38 @@ function App() {
   useEffect(() => {
     if (!managerWatch) return;
     const url = 'http://127.0.0.1:8765/api/studio-presence';
+    let pageHidden = false;
     const signal = () => {
+      if (pageHidden) return;
       void fetch(url, {
         method: 'POST', headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({ sessionId, tabId: managerTabId.current, chatReady: bridgeConnected }),
       }).catch(() => {});
     };
     const close = () => {
+      if (pageHidden) return;
+      pageHidden = true;
       const payload = JSON.stringify({ sessionId, tabId: managerTabId.current, event: 'close' });
-      void fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: payload, keepalive: true }).catch(() => {});
+      const blob = new Blob([payload], { type: 'text/plain' });
+      if (!navigator.sendBeacon || !navigator.sendBeacon(url, blob)) {
+        void fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: payload, keepalive: true }).catch(() => {});
+      }
+    };
+    const resume = () => {
+      if (pageHidden) {
+        managerTabId.current = 'tab_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+        pageHidden = false;
+      }
+      signal();
     };
     signal();
     window.addEventListener('pagehide', close);
-    window.addEventListener('pageshow', signal);
+    window.addEventListener('pageshow', resume);
     const timer = window.setInterval(signal, 5000);
     return () => {
       window.clearInterval(timer);
       window.removeEventListener('pagehide', close);
-      window.removeEventListener('pageshow', signal);
+      window.removeEventListener('pageshow', resume);
     };
   }, [managerWatch, sessionId, bridgeConnected]);
   useEffect(() => {
