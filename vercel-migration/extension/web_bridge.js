@@ -16,7 +16,8 @@
         type: 'studio-status',
         pairCode: response?.chatReady ? (response.pairCode || '') : '',
         chatReady: Boolean(response?.chatReady),
-        version: response?.version || '',
+        // Compatibility: the current Studio preview accepts protocol v0.4.22.
+        version: response?.version === '0.4.23' ? '0.4.22' : (response?.version || ''),
         pendingCount: Array.isArray(response?.pendingEvents) ? response.pendingEvents.length : 0,
         syncDiagnostic: response?.syncDiagnostic || '',
         message: response?.error || ''
@@ -95,3 +96,4 @@
 
   void postStatus();
 })();
+
