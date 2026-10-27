@@ -20,7 +20,7 @@ async function ensureChatReceiver(preferredId) {
   let existing;
   try { existing = await chrome.tabs.sendMessage(tab.id, { type: 'vis-ping' }); } catch {}
   if (existing?.ready) {
-    if (existing.version !== '0.4.21') throw new Error('Tab ChatGPT còn cầu nối cũ v' + (existing.version || '?') + '. Hãy F5 tab ChatGPT để nạp Extension 0.4.21.');
+    if (existing.version !== '0.4.22') throw new Error('Tab ChatGPT còn cầu nối cũ v' + (existing.version || '?') + '. Hãy F5 tab ChatGPT để nạp Extension 0.4.22.');
     return tab;
   }
   try {
@@ -30,7 +30,7 @@ async function ensureChatReceiver(preferredId) {
   }
   try {
     const pong = await chrome.tabs.sendMessage(tab.id, { type: 'vis-ping' });
-    if (pong?.ready && pong.version === '0.4.21') return tab;
+    if (pong?.ready && pong.version === '0.4.22') return tab;
   } catch {}
   throw new Error('Tab ChatGPT chưa sẵn sàng nhận lệnh. Hãy F5 tab ChatGPT rồi kết nối lại.');
 }
@@ -190,7 +190,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       try { await ensureChatReceiver(); chatReady = true; } catch (caught) { error = caught?.message || String(caught); }
       const pending = await chrome.storage.local.get(['pendingChatEvents','transcriptJobs']);
       const transcriptEvents = Object.values(pending.transcriptJobs || {}).filter(job => job.pairCode === stored.pairCode && job.result && !job.acknowledged && job.state !== 'stopped').map(job => job.result);
-      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic:deliveryDiagnostic || syncDiagnostic, version: '0.4.21', transcriptEvents, pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
+      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic:deliveryDiagnostic || syncDiagnostic, version: '0.4.22', transcriptEvents, pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
       return;
     }
     if (message?.type === 'vis-pair') {
@@ -201,7 +201,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (chosen) await chrome.storage.local.set({ chatTabId: chosen.id });
       await ensureChatReceiver();
       await chrome.storage.local.set({ pairCode, ...(message.studioOrigin ? { studioOrigin: String(message.studioOrigin) } : {}) });
-      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.21' });
+      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.22' });
       await broadcastToStudio({ type: 'vis-status-changed' });
       return;
     }
@@ -307,3 +307,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   })().catch(error => sendResponse({ ok: false, error: error?.message || String(error) }));
   return true;
 });
+
+
+// Monitoring only: the Manager returns no commands in this release.
+async function managerHeartbeat() {
+  const st = await chrome.storage.local.get(['chatTabId','pairCode','activeJobId']);
+  if (!st.chatTabId || !st.pairCode) return;
+  let tab=null, fp=null;
+  try { tab=await chrome.tabs.get(st.chatTabId); } catch {}
+  const valid=Boolean(tab?.url?.startsWith('https://chatgpt.com/'));
+  if(valid) try { fp=await chrome.tabs.sendMessage(st.chatTabId,{type:'MGR_FP'}); } catch {}
+  try { await fetch('http://127.0.0.1:8765/api/ext/heartbeat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pairCode:st.pairCode,activeJobId:st.activeJobId||'',tabAlive:valid,fp,version:'0.4.22'}),signal:AbortSignal.timeout(5000)}); } catch {}
+}
+chrome.alarms.create('manager-heartbeat',{periodInMinutes:0.5});
+chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name==='manager-heartbeat')void managerHeartbeat();});
