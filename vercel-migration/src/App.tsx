@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
+import { resolveManagerLaunch } from './managerLaunch.mjs';
 import { Check, Clapperboard, Copy, Download, FileText, Folder, Image, Maximize2, Play, RotateCcw, Scissors, Settings, Square, Trash2, Video as VideoIcon } from 'lucide-react';
 import './index.css';
 import { EXTENSION_VERSION, EXTENSION_DOWNLOAD_URL } from './extensionRelease';
@@ -18,12 +19,15 @@ const shortText = (text: string, limit: number) => text.length > limit ? text.sl
 const partName = (title: string) => title.replace(/^Phần\s*\d+\s*[-–:]?\s*/i, '').trim() || title;
 
 function App() {
+  const [managerLaunch] = useState(() => resolveManagerLaunch(localStorage, location.search));
   const [sessionId] = useState(() => {
-    const id = localStorage.getItem('vis-session') || makeId();
+    if (managerLaunch.error) return localStorage.getItem('vis-session') || 'manager-project-unavailable';
+    const id = managerLaunch.projectId || localStorage.getItem('vis-session') || makeId();
     localStorage.setItem('vis-session', id);
     return id;
   });
   const [session, setSessionState] = useState<Session | null>(() => {
+    if (managerLaunch.error) return null;
     try { const cached = JSON.parse(localStorage.getItem('vis-project-' + sessionId) || 'null'); return cached?.id === sessionId ? cached : null; } catch { return null; }
   });
   const [serverReady, setServerReady] = useState(false);
@@ -32,7 +36,7 @@ function App() {
     previous && next && (previous.updatedAt || 0) > (next.updatedAt || 0) ? previous : next);
   const [script, setScript] = useState(() => localStorage.getItem('vis-script-draft') || '');
   const [stylePrompt, setStylePrompt] = useState(() => localStorage.getItem('vis-style-prompt') || '');
-  const [notice, setNotice] = useState('Nhập toàn bộ kịch bản, sau đó bấm Phân tích & chia kịch bản.');
+  const [notice, setNotice] = useState(managerLaunch.error || 'Nhập toàn bộ kịch bản, sau đó bấm Phân tích & chia kịch bản.');
   const [busy, setBusy] = useState(false);
   const [activePartId, setActivePartId] = useState('pending-0');
   const [activeMenu, setActiveMenu] = useState(0);
@@ -91,6 +95,7 @@ function App() {
   const loadInFlight = useRef(false);
 
   const load = async () => {
+    if (managerLaunch.error) { setNotice(managerLaunch.error); return; }
     if (loadInFlight.current||stopGate.current) return;
     const generation=workGeneration.current;
     loadInFlight.current = true;
@@ -173,7 +178,7 @@ function App() {
   const bridgeConnected = extensionPairCode === sessionId && ['0.4.10', '0.4.11', '0.4.12', '0.4.13', '0.4.14', '0.4.15', '0.4.16', '0.4.17', '0.4.18', '0.4.19', '0.4.20', '0.4.21', '0.4.22', EXTENSION_VERSION].includes(extensionVersion) && chatReady;
 
   // Optional, read-only status signal to the local AI MANAGER.
-  const [managerWatch, setManagerWatch] = useState(() => localStorage.getItem('vis-manager-watch') === '1');
+  const [managerWatch, setManagerWatch] = useState(() => !managerLaunch.error && (Boolean(managerLaunch.runId) || localStorage.getItem('vis-manager-watch') === '1'));
   const managerTabId = useRef('tab_' + Math.random().toString(36).slice(2) + Date.now().toString(36));
   useEffect(() => {
     if (!managerWatch) return;
@@ -194,7 +199,7 @@ function App() {
       } catch { /* An unavailable name must not break presence. */ }
       void fetch(url, {
         method: 'POST', headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ sessionId, activeProjectId: sessionId, studioInstance, tabId: managerTabId.current, chatReady: bridgeConnected, projectName, projects }),
+        body: JSON.stringify({ managerRunId: managerLaunch.runId, origin: location.origin, sessionId, activeProjectId: sessionId, studioInstance, tabId: managerTabId.current, chatReady: bridgeConnected, projectName, projects }),
       }).catch(() => {});
     };
     const close = () => {
@@ -442,6 +447,7 @@ function App() {
   const createAllImages = () => void queueImages(imageParts.flatMap(part => part.scenes.map((_, index) => sceneKey(part.id, index))));
   const selectImagePart = (part: Part) => { setImagePartId(part.id); setImageSceneIndex(0); };
 
+  if (managerLaunch.error) return <main className="studio"><p role="alert">{managerLaunch.error}</p><a href={location.origin}>Mở Studio bình thường</a></main>;
   return <main className="studio">
     <header className="topbar"><div className="brand"><Clapperboard size={30} /><strong>VIDEO IMAGE STUDIO</strong></div><nav aria-label="Các bước studio">{([[FileText, '1. Phân tích'], [Image, '2. Tạo ảnh'], [Square, '3. Tiến trình'], [Folder, '4. Dự án'], [Scissors, '5. Tách ảnh'], [VideoIcon, '6. Dựng video']] as const).map(([Icon, label], index) => <button className={'nav-item ' + (index === activeMenu ? 'active' : '')} key={String(label)} type="button" onClick={() => setActiveMenu(index)}><Icon size={23} /><span>{label}</span></button>)}</nav><div className="top-tools"><button type="button" className="danger" disabled={stopping} onClick={stopWork}><Square size={14}/>{stopping?'Đang dừng…':'Dừng tất cả'}</button><span className={bridgeConnected ? 'top-connection online' : 'top-connection offline'}>{bridgeConnected ? '● Đã kết nối' : '● Chưa kết nối'}</span><button type="button" className="connect-button" onClick={() => setShowConnection(true)}>Kết nối ChatGPT</button><Settings size={18} /><span>Cài đặt</span><i>AI</i></div></header>
     {!serverReady && <div role="status" className="notice">{session?.parts?.length ? 'Đang hiển thị bản lưu dự án trên máy, chờ kết nối máy chủ…' : 'Đang tải dự án từ máy chủ. Không cần phân tích lại kịch bản.'}</div>}
@@ -489,6 +495,7 @@ function App() {
 }
 
 export default App;
+
 
 
 
