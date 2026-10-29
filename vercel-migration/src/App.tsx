@@ -243,7 +243,7 @@ function App() {
       try {
         const draft = managerContent.current.script.trim(), server = String(managerContent.current.session?.script || '').trim();
         const own = localStorage.getItem(workspaceStorageKey(sessionId)) !== null;
-        const transcript = loadTranscriptWorkspace(own ? sessionId : 'default').transcript;
+        const transcript = loadTranscriptWorkspace(sessionId).transcript;
         projectState = { scriptDraftChars: draft.length, serverScriptChars: server.length, scriptSync: !draft ? 'empty' : draft === server ? 'synced' : localStorage.getItem('vis-script-draft-owner') === sessionId ? 'pending' : 'unconfirmed',
           transcript: { exists: Boolean(transcript?.text?.trim()), chars: transcript?.text?.length || 0, segments: transcript?.segments?.length || 0, videoId: transcript?.videoId || '', scope: own ? 'project' : 'shared' },
           pipeline: readManagerTranscriptState() };
@@ -305,12 +305,18 @@ function App() {
   const myLaneJob = session?.laneJobs?.find(job => job.lane === laneId && ['queued', 'sending'].includes(job.status));
   // A Studio tab AI MANAGER opened to run this project (main or extra ChatGPT browser) connects the
   // extension to the project by itself, unless the extension is busy with another job.
-  const autoBound = useRef(false);
+  // Retried every 20 s while not connected (e.g. the ChatGPT tab was not open yet).
+  const autoBound = useRef(0);
   useEffect(() => {
-    if (!(managerLaunch.lane || (managerLaunch.runId && managerLaunch.projectId === sessionId)) || autoBound.current || !extensionVersion || extensionPairCode === sessionId || extensionFacts.activeJobId) return;
-    autoBound.current = true;
-    window.postMessage({ source: 'vis-web', type: 'studio-bind-current-chat', pairCode: sessionId }, '*');
-    setNotice('AI MANAGER: đang kết nối ChatGPT của trình duyệt này với dự án.');
+    if (!(managerLaunch.lane || (managerLaunch.runId && managerLaunch.projectId === sessionId)) || !extensionVersion || extensionPairCode === sessionId || extensionFacts.activeJobId) return;
+    const bind = () => {
+      if (Date.now() - autoBound.current < 20000) return;
+      autoBound.current = Date.now();
+      window.postMessage({ source: 'vis-web', type: 'studio-bind-current-chat', pairCode: sessionId }, '*');
+      setNotice('AI MANAGER: đang kết nối ChatGPT của trình duyệt này với dự án. Cần một tab chatgpt.com đã đăng nhập.');
+    };
+    bind(); const timer = window.setInterval(bind, 5000);
+    return () => window.clearInterval(timer);
   }, [extensionVersion, extensionPairCode, extensionFacts.activeJobId, sessionId]);
   useEffect(() => {
     if (!bridgeConnected || !(pendingShared || myLaneJob)) return;

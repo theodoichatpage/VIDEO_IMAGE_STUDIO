@@ -6,7 +6,10 @@ export type TranscriptWorkspaceState = { url:string; language:string; transcript
 
 export const workspaceStorageKey=(projectId:string)=>`vis-transcript-workspace-${projectId}`;
 export const defaultTranscriptWorkspace=():TranscriptWorkspaceState=>({url:'',language:'vi',transcript:null,branches:[],sections:[],stylePrompt:localStorage.getItem('vis-transcript-style')||'',selectedBranchId:'',updatedAt:Date.now()});
-export function loadTranscriptWorkspace(projectId:string):TranscriptWorkspaceState{try{const raw=localStorage.getItem(workspaceStorageKey(projectId));return raw?{...defaultTranscriptWorkspace(),...JSON.parse(raw)}:defaultTranscriptWorkspace()}catch{return defaultTranscriptWorkspace()}}
+// Each project keeps its own Get Transcript work. The old shared ("default") workspace is handed once to
+// the first project opened after this change, never to a second one, so projects do not overwrite each other.
+export function claimSharedWorkspace(projectId:string){try{if(projectId==='default'||localStorage.getItem(workspaceStorageKey(projectId))!==null||localStorage.getItem('vis-transcript-default-owner'))return;const shared=localStorage.getItem(workspaceStorageKey('default'));localStorage.setItem('vis-transcript-default-owner',projectId);if(shared)localStorage.setItem(workspaceStorageKey(projectId),shared)}catch{}}
+export function loadTranscriptWorkspace(projectId:string):TranscriptWorkspaceState{try{claimSharedWorkspace(projectId);const raw=localStorage.getItem(workspaceStorageKey(projectId));return raw?{...defaultTranscriptWorkspace(),...JSON.parse(raw)}:defaultTranscriptWorkspace()}catch{return defaultTranscriptWorkspace()}}
 export function saveTranscriptWorkspace(projectId:string,state:TranscriptWorkspaceState){localStorage.setItem(workspaceStorageKey(projectId),JSON.stringify({...state,updatedAt:Date.now()}));}
 export function validateMindmapPayload(value:unknown):MindmapBranch[]{
  const root=value as {branches?:unknown}; if(!root||!Array.isArray(root.branches)||!root.branches.length)throw new Error('Mindmap JSON không hợp lệ.');

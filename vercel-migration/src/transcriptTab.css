@@ -47,3 +47,6 @@
 .transcript-page .transcript-part-source{height:230px;overflow:auto;padding:12px;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 Arial}
 .transcript-page .transcript-part-source small{display:block;color:#647a94;margin:4px 0 8px}
 .transcript-page .transcript-part-empty{min-height:160px;padding:26px 18px;color:#647a94;font:12px/1.6 Arial}
+
+.transcript-page .yt-row>input.project-name{flex:1 1 220px;min-width:160px;max-width:340px}
+.transcript-page .yt-row>input.youtube-link{flex:2 1 320px}
