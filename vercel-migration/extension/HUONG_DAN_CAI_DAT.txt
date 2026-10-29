@@ -1,6 +1,6 @@
-VIDEO IMAGE STUDIO — ChatGPT Bridge v0.4.24
+VIDEO IMAGE STUDIO — ChatGPT Bridge v0.4.25
 
-1. Tải ZIP 0.4.24 và giải nén. Tệp nằm trong một thư mục VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.24.
+1. Tải ZIP 0.4.25 và giải nén. Tệp nằm trong một thư mục VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.25.
 2. Nếu đã cài tiện ích: chép đè các tệp mới vào đúng thư mục tiện ích đang dùng, rồi mở chrome://extensions hoặc edge://extensions và bấm Tải lại trên thẻ VIDEO IMAGE STUDIO. Cách này giữ dữ liệu kết nối và kết quả đang chờ trong tiện ích.
 3. Nếu chưa cài: bật Chế độ nhà phát triển, bấm Tải tiện ích đã giải nén và chọn thư mục chứa manifest.json. Chỉ bật một bản tiện ích Studio.
 4. Tải lại cả tab web và tab ChatGPT. Trên web bấm Kết nối ChatGPT rồi kết nối lại.
@@ -26,3 +26,4 @@ Nếu ChatGPT đang bật chế độ Tạo ảnh trong ô nhập, tắt chế �
 
 14. Bản 4.23: web hiển thị đúng phiên bản thực tế của tiện ích, không đổi 4.23 thành 4.22. Tên file ZIP, nút tải và manifest đều lấy phiên bản từ manifest.json. Nếu vừa cập nhật, Tải lại tiện ích rồi F5 Studio và ChatGPT.
 11. Bản 0.4.24: tự nhận kết quả phân tích/chia kịch bản/phân cảnh ngay trong hội thoại đang mở với giao diện ChatGPT mới (không cần đóng/mở lại tab); nhận diện nút "Stop" mới để biết ChatGPT còn đang trả lời và để Dừng tất cả hoạt động; JSON sai thật sau khi ChatGPT xong sẽ báo lỗi cụ thể thay vì chờ mãi. Sau khi cập nhật, F5 tab ChatGPT và tab Studio.
+12. Bản 0.4.25: nếu phân tích/phân cảnh bị báo "quá thời gian" (ví dụ tab ChatGPT bị treo) mà sau khi tải lại tab, câu trả lời đầy đủ vẫn nằm trong đúng hội thoại, tiện ích tự đọc lại và đồng bộ về Studio; không cần chạy lại phần đó.
