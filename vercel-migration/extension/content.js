@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_0432__) return;
-  window.__VIS_CHAT_BRIDGE_0432__ = true;
+  if (window.__VIS_CHAT_BRIDGE_0433__) return;
+  window.__VIS_CHAT_BRIDGE_0433__ = true;
   let currentJobId = '';
   let lastDomChange = Date.now();
   new MutationObserver(() => { lastDomChange = Date.now(); }).observe(document.documentElement, {subtree:true, childList:true, characterData:true});
@@ -287,7 +287,8 @@
       if (token !== generation || cancelled) return;
       if (command.type === 'image_generation') {
         const beforeImages = imageUrls();
-        await fillComposer(command.prompt);
+        // The job marker identifies this scene's prompt even when ChatGPT collapses it ("Show more").
+        await fillComposer('[VIS_JOB_ID:' + command.id + ']' + String.fromCharCode(10) + command.prompt);
         await submit(token);
         await emit({ jobId: command.id, state: 'sent' });
         const payload = await waitForImage(beforeImages, token);
@@ -339,8 +340,8 @@
         const marker=st.activeJobId && last && (last.innerText||'').includes('[VIS_JOB_ID:'+st.activeJobId+']');
         const imagePrompt=st.activeCommand?.type==='image_generation' && st.activeCommand?.id===st.activeJobId && typeof st.activeCommand.prompt==='string' && st.activeCommand.prompt.length>0 && last && (last.innerText||'').includes(st.activeCommand.prompt);
         const verified=currentJobId===st.activeJobId && !!currentJobId || Boolean((marker||imagePrompt) && st.identityJobId===st.activeJobId && st.conversationUrl===url);
-        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.4.32',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now()});
-      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.4.32',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
+        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.4.33',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now()});
+      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.4.33',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
       return true;
     }
     if (message?.type === 'vis-restore-draft') {
