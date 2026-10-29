@@ -22,6 +22,13 @@ Deno.serve(async (request) => {
     setHeader: () => undefined,
     status: (code: number) => ({ json: (value: unknown) => { result.status = code; result.payload = value; } }),
   };
-  await handler({ method: request.method, query: { path }, body, headers: {} }, response);
-  return new Response(JSON.stringify(result.payload), { status: result.status, headers: cors });
+  const worker = url.searchParams.get('worker') || undefined;
+  await handler({ method: request.method, query: { path, worker }, body, headers: {} }, response);
+  const text = JSON.stringify(result.payload);
+  // Compress larger replies (projects are JSON, typically 5-10x smaller gzipped) to cut egress.
+  if (text.length > 1024 && /gzip/i.test(request.headers.get('accept-encoding') || '')) {
+    const zipped = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));
+    return new Response(zipped, { status: result.status, headers: { ...cors, 'Content-Encoding': 'gzip', 'Vary': 'Accept-Encoding' } });
+  }
+  return new Response(text, { status: result.status, headers: cors });
 });

@@ -14,7 +14,26 @@ const idOk = (value: string) => /^[A-Za-z0-9-]{16,64}$/.test(value);
 const newId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 const partId = () => 'part_' + Math.random().toString(36).slice(2, 9);
 const sceneKey = (part: string, index: number) => part + ':' + index;
-const send = (res: ResponseLike, code: number, value: unknown) => res.status(code).json(value);
+// Responses never carry fields the web/extension/Manager do not read: the raw ChatGPT JSON kept per part and
+// the long image prompts kept per scene stay in the database only. This keeps egress small.
+function slim(session: Session | null | undefined) {
+  if (!session || typeof session !== 'object') return session;
+  return { ...session, parts: (session.parts || []).map(part => ({ ...part, analysisText: '', scenes: (part.scenes || []).map(scene => {
+    const { imagePrompt: _p, ...rest } = scene;
+    return { ...rest, imageResults: (scene.imageResults || []).map(({ prompt: _q, ...image }) => image) };
+  }) })) };
+}
+const send = (res: ResponseLike, code: number, value: unknown) => {
+  const body = value && typeof value === 'object' && 'session' in (value as Record<string, unknown>) ? { ...(value as Record<string, unknown>), session: slim((value as { session: Session | null }).session) } : value;
+  return res.status(code).json(body);
+};
+// A small summary stored inside the record so polling can read a few hundred bytes instead of the whole project.
+const compactJob = (job: Job | null | undefined) => job ? { id: job.id, type: job.type, status: job.status, lane: job.lane, partId: job.partId, sceneKey: job.sceneKey } : null;
+function stamp<T extends Session>(session: T): T {
+  (session as Session & { summary?: unknown }).summary = { updatedAt: session.updatedAt, workEpoch: session.workEpoch || 0, status: session.status, lastError: session.lastError || '',
+    activeJob: compactJob(session.activeJob), lastJob: compactJob(session.lastJob), laneJobs: (session.laneJobs || []).map(compactJob), imageJobs: (session.imageJobs || []).filter(job => ['queued', 'sending'].includes(job.status)).length };
+  return session;
+}
 const fail = (res: ResponseLike, message: string, code = 400) => send(res, code, { error: message });
 
 function settings() {
@@ -94,7 +113,7 @@ async function mutate(id: string, change: (fresh: Session) => Change | void): Pr
     if (result.fail) return result;
     if (result.skip) return { ...result, session: await read(id) };
     const previous = fresh.updatedAt; fresh.updatedAt = Math.max(Date.now(), previous + 1);
-    const saved = await database('studio_sessions?id=eq.' + encodeURIComponent(id) + '&record->>updatedAt=eq.' + encodeURIComponent(String(previous)), { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ record: fresh }) }) as unknown[];
+    const saved = await database('studio_sessions?id=eq.' + encodeURIComponent(id) + '&record->>updatedAt=eq.' + encodeURIComponent(String(previous)), { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ record: stamp(fresh) }) }) as unknown[];
     if (saved?.length) return { ...result, session: await read(id) };
   }
   return { fail: ['Dự án đang được cập nhật liên tục. Thử lại sau vài giây.', 409] };
@@ -183,13 +202,27 @@ function laneCommand(fresh: Session, lane: string, path: string[], body: Record<
   }
   return { fail: ['Không tìm thấy API.', 404] };
 }
+type Version = { updatedAt: number; workEpoch: number; status: string; lastError: string; activeJob: ReturnType<typeof compactJob>; lastJob?: ReturnType<typeof compactJob>; laneJobs: ReturnType<typeof compactJob>[]; imageJobs: number; full?: boolean };
+async function version(id: string): Promise<Version | null> {
+  const rows = await database('studio_sessions?id=eq.' + encodeURIComponent(id) + '&select=summary:record->summary') as { summary?: Version | null }[];
+  if (!rows?.length) return null;
+  const layers = await database('studio_separations?session_id=eq.' + encodeURIComponent(id) + '&select=updated_at&order=updated_at.desc&limit=1') as { updated_at?: number }[];
+  const layerAt = Number(layers?.[0]?.updated_at) || 0;
+  let summary = rows[0].summary;
+  if (!summary) {
+    // Record written before summaries existed: compute once from the full record (no write).
+    const session = await read(id); if (!session) return null;
+    summary = { ...((stamp({ ...session }) as Session & { summary: Version }).summary), full: true };
+  }
+  return { ...summary, updatedAt: Math.max(Number(summary.updatedAt) || 0, layerAt) };
+}
 async function write(session: Session) {
   session.updatedAt=Date.now();session.workEpoch=session.workEpoch||0;
   const filter=session.workEpoch?'&record->>workEpoch=eq.'+session.workEpoch:'&or=(record->>workEpoch.is.null,record->>workEpoch.eq.0)';
-  const saved=await database('studio_sessions?id=eq.'+encodeURIComponent(session.id)+filter,{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({record:session})}) as unknown[];
+  const saved=await database('studio_sessions?id=eq.'+encodeURIComponent(session.id)+filter,{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({record:stamp(session)})}) as unknown[];
   if(saved?.length)return session;
   const latest=await read(session.id);if(latest)return latest;
-  await database('studio_sessions?on_conflict=id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify({id:session.id,record:session})});return session;
+  await database('studio_sessions?on_conflict=id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify({id:session.id,record:stamp(session)})});return session;
 }
 // Capturing an existing image must not replace a different running job.
 // Commit only onto a fresh record; retry if another task updated it during upload.
@@ -205,7 +238,7 @@ async function commitImageCapture(id: string, job: Job, image: Awaited<ReturnTyp
     fresh.imageCaptures=(fresh.imageCaptures||[]).filter(item=>item.id!==job.id);
     fresh.finishedJobIds=[...(fresh.finishedJobIds||[]),job.id].slice(-200);
     fresh.updatedAt=Math.max(Date.now(),previous+1);
-    const saved=await database('studio_sessions?id=eq.'+encodeURIComponent(id)+'&record->>updatedAt=eq.'+encodeURIComponent(String(previous)),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({record:fresh})}) as unknown[];
+    const saved=await database('studio_sessions?id=eq.'+encodeURIComponent(id)+'&record->>updatedAt=eq.'+encodeURIComponent(String(previous)),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({record:stamp(fresh)})}) as unknown[];
     if(saved?.length)return {session:await read(id)};
   }
   throw new Error('Dự án vừa được cập nhật bởi tác vụ khác. Tệp ảnh vẫn được tiện ích giữ và sẽ gửi lại.');
@@ -318,6 +351,21 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       const session: Session = { id, script: '', status: 'ready', activeJob: null, parts: [], imageJobs: [], updatedAt: Date.now(), bridgeLastSeen: 0, finishedJobIds: [] };
       return send(res, 200, { session: await write(session) });
     }
+    if (path[0] === 'sessions' && path[1] && path[2] === 'version' && path.length === 3 && req.method === 'GET') {
+      // Polling: a few hundred bytes. The full project is downloaded only when updatedAt changed.
+      if (!idOk(path[1])) return fail(res, 'Mã phiên không hợp lệ.');
+      return send(res, 200, { version: await version(path[1]) });
+    }
+    if (path[0] === 'bridge' && path[1] && path[2] === 'next' && req.method === 'GET') {
+      const worker = String((req.query as Record<string, unknown>).worker || '');
+      const v = await version(path[1]);
+      if (v && !v.full) {
+        const lane = laneOk(worker) ? worker : '';
+        const shared = v.activeJob && ['queued', 'sending'].includes(String(v.activeJob.status)) && (!lane || !v.activeJob.lane || v.activeJob.lane === lane);
+        const mine = lane && (v.laneJobs || []).some((job: { lane?: string; status?: string } | null) => job && job.lane === lane && ['queued', 'sending'].includes(String(job.status)));
+        if (!shared && !mine) return send(res, 200, { command: null });
+      }
+    }
     if (path[0] === 'sessions' && path[1]) {
       const session = await read(path[1]);
       if (path.length === 2 && req.method === 'GET') return send(res, 200, { session: session });
@@ -426,7 +474,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
           const command:Job={id:newId(),type:'image_generation',status:'waiting',prompt,sceneKey:key,partId:target.part?.id,protocol:3,expiresAt:Date.now()+600000};
           fresh.imageCaptures=[...fresh.imageCaptures.filter(item=>item.sceneKey!==key).slice(-9),command];
           const previous=fresh.updatedAt;fresh.updatedAt=Math.max(Date.now(),previous+1);
-          const saved=await database('studio_sessions?id=eq.'+encodeURIComponent(fresh.id)+'&record->>updatedAt=eq.'+encodeURIComponent(String(previous)),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({record:fresh})}) as unknown[];
+          const saved=await database('studio_sessions?id=eq.'+encodeURIComponent(fresh.id)+'&record->>updatedAt=eq.'+encodeURIComponent(String(previous)),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({record:stamp(fresh)})}) as unknown[];
           if(saved?.length)return send(res,200,{session:await read(fresh.id),command});
         }
         return fail(res,'Dự án đang được cập nhật. Hãy bấm Đồng bộ lại ảnh sau vài giây.',409);
@@ -461,7 +509,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
           if(!jobs.length){if(alreadyQueuedCount)return send(res,200,{session:await read(fresh.id),queuedCount:0,alreadyQueuedCount});return fail(res,'Các cảnh được chọn chưa có prompt ảnh.',422);}
           fresh.stylePrompt=style;fresh.imageJobs.push(...jobs);if(!fresh.activeJob)nextImage(fresh);
           const previous=fresh.updatedAt;fresh.updatedAt=Math.max(Date.now(),previous+1);
-          const saved=await database('studio_sessions?id=eq.'+encodeURIComponent(fresh.id)+'&record->>updatedAt=eq.'+encodeURIComponent(String(previous)),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({record:fresh})}) as unknown[];
+          const saved=await database('studio_sessions?id=eq.'+encodeURIComponent(fresh.id)+'&record->>updatedAt=eq.'+encodeURIComponent(String(previous)),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({record:stamp(fresh)})}) as unknown[];
           if(saved?.length)return send(res,200,{session:await read(fresh.id),queuedCount:jobs.length,alreadyQueuedCount});
         }
         return fail(res,'Dự án vừa được cập nhật. Hãy thử xếp hàng lại sau vài giây.',409);
@@ -479,7 +527,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
           for(const part of fresh.parts){if(part.status==='processing')part.status='stopped';for(const scene of part.scenes||[])if(['queued','generating'].includes(scene.imageStatus||''))scene.imageStatus='stopped';}
           fresh.status='stopped';fresh.lastError='';fresh.workEpoch=(fresh.workEpoch||0)+1;
           const previous=fresh.updatedAt;fresh.updatedAt=Math.max(Date.now(),previous+1);
-          const saved=await database('studio_sessions?id=eq.'+encodeURIComponent(fresh.id)+'&record->>updatedAt=eq.'+encodeURIComponent(String(previous)),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({record:fresh})}) as unknown[];
+          const saved=await database('studio_sessions?id=eq.'+encodeURIComponent(fresh.id)+'&record->>updatedAt=eq.'+encodeURIComponent(String(previous)),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({record:stamp(fresh)})}) as unknown[];
           if(saved?.length)return send(res,200,{session:await read(fresh.id),cancelledJobIds:cancelled.map(job=>job.id)});
         }
         return fail(res,'Chưa xác nhận dừng do dự án đang cập nhật. Bấm Dừng tất cả lại.',409);

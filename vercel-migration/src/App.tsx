@@ -129,7 +129,30 @@ function App() {
     } catch (caught) { setNotice('Máy chủ: ' + (caught instanceof Error ? caught.message : 'Không thể kết nối.')); }
     finally { loadInFlight.current = false; }
   };
-  useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 4000); return () => window.clearInterval(timer); }, []);
+  // Polling costs Supabase egress. Ask for the small version stamp and download the project only when it
+  // changed; poll fast only while work runs, slowly when idle, very slowly when the tab is hidden.
+  const sessionRef = useRef(session); sessionRef.current = session;
+  useEffect(() => {
+    let stopped = false, timer: ReturnType<typeof setTimeout> | undefined, versionMissing = false;
+    const busy = () => { const s = sessionRef.current as (Session & { imageJobs?: { status: string }[] }) | null; return Boolean(s?.activeJob || s?.laneJobs?.length || s?.batchAnalysis || s?.imageJobs?.some(job => ['queued', 'sending', 'sent', 'waiting'].includes(job.status))); };
+    const delay = () => document.hidden ? (busy() ? 15000 : 60000) : (busy() ? 4000 : 15000);
+    const tick = async () => {
+      if (stopped) return;
+      try {
+        if (versionMissing || !sessionRef.current) await load();
+        else {
+          const { data } = await api.get<{ version: { updatedAt?: number; workEpoch?: number } | null }>('/api/sessions/' + sessionId + '/version');
+          const current = sessionRef.current;
+          if (!data.version || data.version.updatedAt !== current?.updatedAt || (data.version.workEpoch || 0) !== (current?.workEpoch || 0)) await load();
+        }
+      } catch (caught) { if (/Không tìm thấy API/.test(caught instanceof Error ? caught.message : '')) { versionMissing = true; await load(); } }
+      if (!stopped) timer = setTimeout(() => void tick(), delay());
+    };
+    const wake = () => { if (!document.hidden) { clearTimeout(timer); void tick(); } };
+    void load().then(() => { if (!stopped) timer = setTimeout(() => void tick(), delay()); });
+    document.addEventListener('visibilitychange', wake);
+    return () => { stopped = true; clearTimeout(timer); document.removeEventListener('visibilitychange', wake); };
+  }, []);
 
   useEffect(() => {
     const requestStatus = () => window.postMessage({ source: 'vis-web', type: 'studio-status' }, '*');
@@ -181,7 +204,7 @@ function App() {
     return () => { window.removeEventListener('message', receive); window.clearInterval(timer); };
   }, [sessionId]);
 
-  const bridgeConnected = extensionPairCode === sessionId && ['0.4.10', '0.4.11', '0.4.12', '0.4.13', '0.4.14', '0.4.15', '0.4.16', '0.4.17', '0.4.18', '0.4.19', '0.4.20', '0.4.21', '0.4.22', '0.4.23', '0.4.24', '0.4.25', '0.4.26', '0.4.27', '0.4.28', '0.4.29', '0.4.30', '0.4.31', '0.4.32', '0.4.33', '0.4.34', EXTENSION_VERSION].includes(extensionVersion) && chatReady;
+  const bridgeConnected = extensionPairCode === sessionId && ['0.4.10', '0.4.11', '0.4.12', '0.4.13', '0.4.14', '0.4.15', '0.4.16', '0.4.17', '0.4.18', '0.4.19', '0.4.20', '0.4.21', '0.4.22', '0.4.23', '0.4.24', '0.4.25', '0.4.26', '0.4.27', '0.4.28', '0.4.29', '0.4.30', '0.4.31', '0.4.32', '0.4.33', '0.4.34', '0.5.0', EXTENSION_VERSION].includes(extensionVersion) && chatReady;
 
   // Optional, read-only status signal to the local AI MANAGER.
   const [managerWatch, setManagerWatch] = useState(() => !managerLaunch.error && (Boolean(managerLaunch.runId) || localStorage.getItem('vis-manager-watch') === '1'));

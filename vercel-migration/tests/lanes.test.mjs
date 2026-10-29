@@ -20,6 +20,8 @@ function harness() {
     if (url.includes('/storage/v1/object/sign/')) return Response.json({ signedURL: '/object/sign/x?token=t' });
     if (url.includes('/storage/v1/')) { if (init?.method === 'POST' && url.includes('/object/')) h.uploads++; return Response.json({}); }
     if (url.includes('studio_separations')) return Response.json([]);
+    if (url.includes('select=summary')) { h.summaryReads = (h.summaryReads || 0) + 1; return Response.json(h.stored ? [{ summary: h.stored.summary ?? null }] : []); }
+    if (!init?.method || init.method === 'GET') h.fullReads = (h.fullReads || 0) + 1;
     if (url.includes('rpc/')) return Response.json(null);
     if (init?.method === 'PATCH') {
       if (!h.stored) return Response.json([]);
@@ -105,4 +107,31 @@ test('a shared (non-lane) job goes to only one browser', async () => {
   assert.equal(first.command.id, r.session.activeJob.id);
   assert.equal((await h.call('GET', `bridge/${id}/next`, undefined, 200, { worker: 'laneB01' })).command, null);
   assert.equal((await h.call('GET', `bridge/${id}/next`, undefined, 200, { worker: 'laneA01' })).command.id, first.command.id);
+});
+
+test('egress: polling reads a small stamp, replies drop heavy fields, idle next never loads the project', async () => {
+  const h = harness();
+  await h.call('POST', 'sessions', { id });
+  let r = await h.call('POST', `sessions/${id}/analysis`, { script: 'Hai sự kiện.' });
+  await h.call('POST', `bridge/${id}/event`, { jobId: r.session.activeJob.id, state: 'completed', text: JSON.stringify({ parts: [{ title: 'P1', content: 'Một' }] }) });
+  const p1 = h.stored.parts[0].id;
+  const job = await h.call('POST', `sessions/${id}/lanes/laneA01/parts/${p1}`, {});
+  await h.call('POST', `bridge/${id}/event`, { jobId: job.command.id, state: 'completed', text: scenes(2) });
+  const img = await h.call('POST', `sessions/${id}/lanes/laneA01/images`, { sceneKey: p1 + ':0', stylePrompt: 'Style {{SCENE_PROMPT}}' });
+  r = await h.call('POST', `bridge/${id}/event`, { jobId: img.command.id, state: 'completed', imageDataUrl: PNG });
+  // Stored data keeps everything; replies do not carry the raw JSON or long prompts.
+  assert.ok(h.stored.parts[0].analysisText.length > 0); assert.ok(h.stored.parts[0].scenes[0].imagePrompt);
+  assert.equal(r.session.parts[0].analysisText, ''); assert.equal(r.session.parts[0].scenes[0].imagePrompt, undefined);
+  assert.equal(r.session.parts[0].scenes[0].imageResults[0].prompt, undefined); assert.ok(r.session.parts[0].scenes[0].imageResults[0].url);
+  // Version stamp matches the record and is tiny.
+  h.fullReads = 0;
+  const v = await h.call('GET', `sessions/${id}/version`);
+  assert.equal(v.version.updatedAt, h.stored.updatedAt); assert.equal(v.version.activeJob, null); assert.equal(h.fullReads, 0);
+  assert.ok(JSON.stringify(v).length < 600, 'stamp is small: ' + JSON.stringify(v).length);
+  // Idle: next answers from the stamp without loading the project.
+  assert.equal((await h.call('GET', `bridge/${id}/next`, undefined, 200, { worker: 'laneA01' })).command, null); assert.equal(h.fullReads, 0);
+  // A queued lane job is still delivered.
+  const second = await h.call('POST', `sessions/${id}/lanes/laneA01/images`, { sceneKey: p1 + ':1', stylePrompt: 'S' });
+  assert.equal((await h.call('GET', `bridge/${id}/next`, undefined, 200, { worker: 'laneA01' })).command.id, second.command.id);
+  assert.equal((await h.call('GET', `bridge/${id}/version`.replace('bridge', 'sessions'))).version.laneJobs[0].status, 'sending');
 });

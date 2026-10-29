@@ -1,3 +1,3 @@
 // Generated from extension/manifest.json by scripts/package-extension.mjs.
-export const EXTENSION_VERSION = "0.5.0";
-export const EXTENSION_DOWNLOAD_URL = "/resources/VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.5.0.zip";
+export const EXTENSION_VERSION = "0.5.1";
+export const EXTENSION_DOWNLOAD_URL = "/resources/VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.5.1.zip";

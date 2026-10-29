@@ -90,7 +90,7 @@ test('analysis results, repeated delivery, late error, stop and next part remain
     assert.equal(response.command, null);
     await call('POST', `bridge/${id}/event`, { jobId: recoverId, state: 'completed', text: JSON.stringify({ scenes: [{ title: 'Recovered legacy part', prompt: 'The existing result' }] }) });
     assert.equal(stored.parts[1].status, 'complete');
-    assert.equal(JSON.stringify(stored.parts[0]), savedFirstPart);
+    assert.equal(JSON.stringify({ ...stored.parts[0], analysisText: "" }), savedFirstPart); // replies leave out the raw ChatGPT JSON (egress)
     stored.parts[1].status = 'error'; stored.parts[1].scenes = []; stored.parts[1].analysisText = '';
     response = await call('POST', `sessions/${id}/parts/${second}/recover`);
     const importJobId = response.session.activeJob.id;
@@ -113,7 +113,7 @@ test('analysis results, repeated delivery, late error, stop and next part remain
     assert.equal(response.session.activeJob, null);
     assert.equal(response.session.parts[1].status, 'complete');
     assert.equal(response.session.parts[1].scenes.length, 12);
-    assert.equal(JSON.stringify(stored.parts[0]), savedFirstPart);
+    assert.equal(JSON.stringify({ ...stored.parts[0], analysisText: "" }), savedFirstPart); // replies leave out the raw ChatGPT JSON (egress)
     await call('POST', `bridge/${id}/event`, { jobId: importJobId, state: 'error', text: 'Late extension timeout' });
     assert.equal(stored.parts[1].status, 'complete');
     response = await call('POST', `sessions/${id}/parts/${second}/analysis`);

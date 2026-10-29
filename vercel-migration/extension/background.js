@@ -4,6 +4,11 @@ let deliveryDiagnostic = '';
 // Which ChatGPT account this browser uses (masked label + short hash), so AI MANAGER can tell lanes apart.
 let chatAccount = null;
 // The job this browser works on: the shared job, or this browser's own lane job when several tabs run in parallel.
+const STUDIO_API = 'https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api?path=';
+// Small version stamp of a project (job ids/statuses only). null when the server is older.
+async function studioVersion(pairCode) {
+  try { const response = await fetch(STUDIO_API + encodeURIComponent('sessions/' + pairCode + '/version'), { signal: AbortSignal.timeout(10000) }); if (!response.ok) return null; const data = await response.json(); return data.version && !data.version.full ? data.version : null; } catch { return null; }
+}
 function ownJob(session, id) { return [session?.activeJob, ...(session?.laneJobs || [])].find(job => job && id && job.id === id) || null; }
 let stopGeneration=0,stopDepth=0;const cancelledJobs=new Set();const downloads=new Map();
 function checkStop(token,id){if(token!==stopGeneration||stopDepth||cancelledJobs.has(id))throw new Error('Tác vụ đã được Dừng. Chỉ bắt đầu lại khi bạn bấm lệnh mới.');}
@@ -25,7 +30,7 @@ async function ensureChatReceiver(preferredId) {
   try { existing = await chrome.tabs.sendMessage(tab.id, { type: 'vis-ping' }); } catch {}
   if (existing?.ready) {
     if (existing.account) chatAccount = existing.account;
-    if (existing.version !== '0.5.0') throw new Error('Tab ChatGPT còn cầu nối cũ v' + (existing.version || '?') + '. Hãy F5 tab ChatGPT để nạp Extension 0.5.0.');
+    if (existing.version !== '0.5.1') throw new Error('Tab ChatGPT còn cầu nối cũ v' + (existing.version || '?') + '. Hãy F5 tab ChatGPT để nạp Extension 0.5.1.');
     return tab;
   }
   try {
@@ -35,7 +40,7 @@ async function ensureChatReceiver(preferredId) {
   }
   try {
     const pong = await chrome.tabs.sendMessage(tab.id, { type: 'vis-ping' });
-    if (pong?.ready && pong.version === '0.5.0') return tab;
+    if (pong?.ready && pong.version === '0.5.1') return tab;
   } catch {}
   throw new Error('Tab ChatGPT chưa sẵn sàng nhận lệnh. Hãy F5 tab ChatGPT rồi kết nối lại.');
 }
@@ -129,6 +134,13 @@ function reconcileWaitingResult() {
     const stored = await chrome.storage.local.get(['pairCode','activeJobId']);
     if (!stored.pairCode||stopDepth) return;
     try {
+      // Download the whole project only when the small stamp shows a job this browser may need to re-read.
+      const v = await studioVersion(stored.pairCode);
+      if (v) {
+        const mine = ownJob(v, stored.activeJobId), shared = v.activeJob && !v.activeJob.lane ? v.activeJob : null, waiting = job => job && ['sent', 'waiting', 'error'].includes(job.status);
+        const timedOut = !v.activeJob && v.lastJob?.status === 'error' && /quá thời gian|JSON không hợp lệ/i.test(String(v.lastError || ''));
+        if (!waiting(mine) && !waiting(shared) && !timedOut) { syncDiagnostic = ''; return; }
+      }
       const response = await fetch('https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api?path=' + encodeURIComponent('sessions/' + stored.pairCode), { signal: AbortSignal.timeout(10000) });
       const data = await response.json();
       if (!response.ok || data.error) return;
@@ -237,7 +249,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       try { await ensureChatReceiver(); chatReady = true; } catch (caught) { error = caught?.message || String(caught); }
       const pending = await chrome.storage.local.get(['pendingChatEvents','transcriptJobs']);
       const transcriptEvents = Object.values(pending.transcriptJobs || {}).filter(job => job.pairCode === stored.pairCode && job.result && !job.acknowledged && job.state !== 'stopped').map(job => job.result);
-      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic:deliveryDiagnostic || syncDiagnostic, version: '0.5.0', account: chatAccount, chatTabCount: (await chatTabs()).length, activeJobId: (await chrome.storage.local.get(['activeJobId'])).activeJobId || '', transcriptEvents, pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
+      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic:deliveryDiagnostic || syncDiagnostic, version: '0.5.1', account: chatAccount, chatTabCount: (await chatTabs()).length, activeJobId: (await chrome.storage.local.get(['activeJobId'])).activeJobId || '', transcriptEvents, pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
       return;
     }
     if (message?.type === 'vis-pair') {
@@ -248,7 +260,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (chosen) await chrome.storage.local.set({ chatTabId: chosen.id });
       await ensureChatReceiver();
       await chrome.storage.local.set({ pairCode, ...(message.studioOrigin ? { studioOrigin: String(message.studioOrigin) } : {}) });
-      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.5.0' });
+      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.5.1' });
       await broadcastToStudio({ type: 'vis-status-changed' });
       return;
     }
@@ -378,7 +390,7 @@ async function managerHeartbeat() {
   }
   const watch=(await chrome.storage.local.get(['chatWatch'])).chatWatch||null;
   const diagnostic={sync:String(syncDiagnostic||deliveryDiagnostic||'').slice(0,300),capture:lastCapture,watch:watch&&{jobId:watch.jobId,reloads:watch.reloads,lastReason:watch.lastReason||null,gaveUp:Boolean(watch.gaveUp),aliveAgo:Math.round((Date.now()-watch.aliveAt)/1000),busyAgo:Math.round((Date.now()-watch.busyAt)/1000)},pingOk:Boolean(reply),candidates:candidates.length};
-  const body={diagnostic,pairCode:st.pairCode,activeJobId:st.activeJobId||null,chatTabId:chosen?.id??null,conversationUrl:st.identityJobId===st.activeJobId?st.conversationUrl||null:null,lastHeartbeatAt:reply?.lastHeartbeatAt??null,version:'0.5.0',identityVersion:1};
+  const body={diagnostic,pairCode:st.pairCode,activeJobId:st.activeJobId||null,chatTabId:chosen?.id??null,conversationUrl:st.identityJobId===st.activeJobId?st.conversationUrl||null:null,lastHeartbeatAt:reply?.lastHeartbeatAt??null,version:'0.5.1',identityVersion:1};
   try { await fetch('http://127.0.0.1:8765/api/ext/heartbeat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(5000)}); } catch {}
 }
 chrome.tabs.onUpdated.addListener((tabId,change,tab)=>{ if(!change.url)return; void (async()=>{const st=await chrome.storage.local.get(['chatTabId','activeJobId','identityJobId']); if(tabId!==st.chatTabId||!st.activeJobId||st.activeJobId!==st.identityJobId)return; try {const u=new URL(change.url);if(u.origin==='https://chatgpt.com'&&/^\/c\/[^/]+$/.test(u.pathname))await chrome.storage.local.set({conversationUrl:u.origin+u.pathname});}catch{}})(); });
@@ -393,7 +405,7 @@ async function chatWatchdog(now=Date.now()) {
   if(!st.pairCode||!st.activeJobId||!st.chatTabId||stopDepth) return;
   let w=st.chatWatch&&st.chatWatch.jobId===st.activeJobId?st.chatWatch:{jobId:st.activeJobId,sentAt:now,aliveAt:now,busyAt:now,reloads:0,reloadedAt:0};
   let job;
-  try { const response=await fetch('https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api?path='+encodeURIComponent('sessions/'+st.pairCode),{signal:AbortSignal.timeout(10000)}); job=ownJob((await response.json()).session,st.activeJobId); } catch { return; }
+  try { const v=await studioVersion(st.pairCode); if(v) job=ownJob(v,st.activeJobId); else { const response=await fetch('https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api?path='+encodeURIComponent('sessions/'+st.pairCode),{signal:AbortSignal.timeout(10000)}); job=ownJob((await response.json()).session,st.activeJobId); } } catch { return; }
   if(!job||job.id!==st.activeJobId||!['queued','sending','sent','waiting'].includes(job.status)||cancelledJobs.has(job.id)) { await chrome.storage.local.remove('chatWatch'); return; }
   let pong=null;
   try { pong=await Promise.race([chrome.tabs.sendMessage(st.chatTabId,{type:'vis-ping'}),new Promise(resolve=>setTimeout(()=>resolve(null),3000))]); } catch {}
