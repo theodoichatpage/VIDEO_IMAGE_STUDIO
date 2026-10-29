@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_0433__) return;
-  window.__VIS_CHAT_BRIDGE_0433__ = true;
+  if (window.__VIS_CHAT_BRIDGE_0434__) return;
+  window.__VIS_CHAT_BRIDGE_0434__ = true;
   let currentJobId = '';
   let lastDomChange = Date.now();
   new MutationObserver(() => { lastDomChange = Date.now(); }).observe(document.documentElement, {subtree:true, childList:true, characterData:true});
@@ -75,7 +75,18 @@
     }
     if (expanded) await sleep(150);
   }
+  // ChatGPT sometimes shows "Which image/response do you like more?" with two results and blocks the
+  // composer until one is chosen. Choose the first option (consistent, no judgement), then read the result.
+  const PREFER_FIRST = /^(image 1 is better|response 1 is better|i prefer (image|response) 1|ảnh 1 tốt hơn|phản hồi 1 tốt hơn|câu trả lời 1 tốt hơn)$/i;
+  async function resolveComparison() {
+    const button = [...document.querySelectorAll('button, [role="button"]')].find(item => PREFER_FIRST.test((item.innerText || item.textContent || item.getAttribute('aria-label') || '').trim()));
+    if (!button) return false;
+    button.click();
+    await sleep(1500);
+    return true;
+  }
   async function imagePayload(context) {
+    await resolveComparison();
     await expandImagePrompts(context);
     const imageUrl = imageUrls(context).at(-1);
     if (!imageUrl) throw new Error('Chưa tìm thấy ảnh hoàn tất đúng lệnh của cảnh này. Mở đúng hội thoại và cuộn tới ảnh. [' + VISReplyReader.sources(document, context).reason + ']');
@@ -120,6 +131,7 @@
       if (cancelled || token !== generation) throw new Error('Đã dừng tác vụ tạo ảnh.');
       const busy = isGenerating() || creatingImage();
       if (busy) busyAt = Date.now();
+      if (!busy && await resolveComparison()) continue;
       if (imageUrls().length && !busy) return imagePayload(replyContext);
       if (!busy && nudges < MAX_NUDGES && Date.now() - lastSentAt >= NUDGE_AFTER_MS && Date.now() - busyAt >= NUDGE_AFTER_MS && !imageUrls().length) {
         nudges += 1;
@@ -175,6 +187,7 @@
           const next = assistantText(kind);
           if (next !== last) { last = next; changedAt = Date.now(); }
           if (next && next !== before) started = true;
+          if (await resolveComparison()) { changedAt = Date.now(); continue; }
           if (started && last && Date.now() - changedAt >= 3000) {
             const result = VISReplyReader.read(document, { ...replyContext, type: kind });
             if (result.text) return result.text;
@@ -337,11 +350,11 @@
         const url=/^\/c\/[^/]+$/.test(location.pathname)?location.origin+location.pathname:null;
         const turns=document.querySelectorAll('[data-message-author-role="user"]');
         const last=turns[turns.length-1];
-        const marker=st.activeJobId && last && (last.innerText||'').includes('[VIS_JOB_ID:'+st.activeJobId+']');
+        const marker=st.activeJobId && ((last && (last.innerText||'').includes('[VIS_JOB_ID:'+st.activeJobId+']')) || (document.querySelector('main')?.textContent||'').includes('[VIS_JOB_ID:'+st.activeJobId+']'));
         const imagePrompt=st.activeCommand?.type==='image_generation' && st.activeCommand?.id===st.activeJobId && typeof st.activeCommand.prompt==='string' && st.activeCommand.prompt.length>0 && last && (last.innerText||'').includes(st.activeCommand.prompt);
         const verified=currentJobId===st.activeJobId && !!currentJobId || Boolean((marker||imagePrompt) && st.identityJobId===st.activeJobId && st.conversationUrl===url);
-        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.4.33',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now()});
-      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.4.33',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
+        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.4.34',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now()});
+      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.4.34',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
       return true;
     }
     if (message?.type === 'vis-restore-draft') {

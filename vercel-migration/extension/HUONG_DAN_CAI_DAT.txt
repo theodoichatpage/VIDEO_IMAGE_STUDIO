@@ -1,6 +1,6 @@
-VIDEO IMAGE STUDIO — ChatGPT Bridge v0.4.33
+VIDEO IMAGE STUDIO — ChatGPT Bridge v0.4.34
 
-1. Tải ZIP 0.4.33 và giải nén. Tệp nằm trong một thư mục VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.33.
+1. Tải ZIP 0.4.34 và giải nén. Tệp nằm trong một thư mục VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.34.
 2. Nếu đã cài tiện ích: chép đè các tệp mới vào đúng thư mục tiện ích đang dùng, rồi mở chrome://extensions hoặc edge://extensions và bấm Tải lại trên thẻ VIDEO IMAGE STUDIO. Cách này giữ dữ liệu kết nối và kết quả đang chờ trong tiện ích.
 3. Nếu chưa cài: bật Chế độ nhà phát triển, bấm Tải tiện ích đã giải nén và chọn thư mục chứa manifest.json. Chỉ bật một bản tiện ích Studio.
 4. Tải lại cả tab web và tab ChatGPT. Trên web bấm Kết nối ChatGPT rồi kết nối lại.
@@ -35,3 +35,4 @@ Nếu ChatGPT đang bật chế độ Tạo ảnh trong ô nhập, tắt chế �
 18. Bản 0.4.31: không cần F5 tab ChatGPT bằng tay. Khi Studio đang chờ một tác vụ mà tab ChatGPT không phản hồi quá 60 giây (treo) hoặc im lặng quá 2 phút không trả kết quả, tiện ích tự tải lại đúng tab đó rồi đọc lại kết quả (tối đa 2 lần, cách nhau 2 phút). Nếu vẫn không có kết quả, tác vụ được báo lỗi rõ ràng để Studio/AI MANAGER chạy lại; không tải lại khi ChatGPT đang trả lời hoặc khi đã Dừng tất cả.
 19. Bản 0.4.32: nếu ChatGPT nhận lệnh tạo ảnh nhưng không bắt đầu tạo ảnh sau 45 giây, tiện ích tự gửi lời nhắc ngắn (gắn mã tác vụ) "Tạo ảnh theo đúng mô tả ở tin nhắn trên..." — tối đa 2 lần; ảnh tạo ra vẫn được nhận đúng cảnh.
 20. Bản 0.4.33: mỗi lệnh tạo ảnh có mã tác vụ [VIS_JOB_ID] ở đầu để nhận đúng ảnh kể cả khi ChatGPT thu gọn lệnh; tiện ích gửi lỗi đồng bộ gần nhất và trạng thái tự tải lại tab về AI MANAGER để chẩn đoán.
+21. Bản 0.4.34: khi ChatGPT hỏi "Which image/response do you like more?" (chọn 1/2) trong lúc chạy tác vụ, tiện ích tự chọn kết quả 1 rồi mới lấy ảnh/câu trả lời, không dừng quy trình. Sửa báo "heartbeat_stopped" sai với giao diện ChatGPT mới.

@@ -13,7 +13,7 @@ const reader={
 const c={VISReplyReader:reader,Date:{now:()=>now},Math,JSON,Error,
  document:{body:{}},replyContext:{id:'j'},cancelled:false,generation:1,
  MutationObserver:class{constructor(cb){observerCb=cb;}observe(){}disconnect(){}},
- isGenerating:()=>generating,stopButton:()=>null,emit:async p=>emitted.push(p),
+ isGenerating:()=>generating,resolveComparison:async()=>false,stopButton:()=>null,emit:async p=>emitted.push(p),
  assistantText:()=>{reads++;return generating?'partial':final;},
  sleep:async ms=>{now+=ms;for(let i=0;i<200&&generating;i++)observerCb();if(now>=20000)generating=false;}};
 vm.createContext(c);vm.runInContext('globalThis.wait=(async()=>{})();'+section.replace('async function waitForFinalAnswer','globalThis.waitForFinalAnswer=async function'),c);
