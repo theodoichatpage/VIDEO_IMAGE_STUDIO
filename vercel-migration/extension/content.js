@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_0423__) return;
-  window.__VIS_CHAT_BRIDGE_0423__ = true;
+  if (window.__VIS_CHAT_BRIDGE_0424__) return;
+  window.__VIS_CHAT_BRIDGE_0424__ = true;
   let currentJobId = '';
   let lastDomChange = Date.now();
   new MutationObserver(() => { lastDomChange = Date.now(); }).observe(document.documentElement, {subtree:true, childList:true, characterData:true});
@@ -13,7 +13,11 @@
 
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const composer = () => document.querySelector('#prompt-textarea') || document.querySelector('div[contenteditable="true"][data-virtualkeyboard="true"]') || document.querySelector('div[contenteditable="true"].ProseMirror');
-  const stopButton = () => document.querySelector('button[data-testid="stop-button"]') || [...document.querySelectorAll('button')].find(button => /^(stop generating|stop streaming|dừng tạo|dừng tạo câu trả lời)$/i.test((button.getAttribute('aria-label') || button.textContent || '').trim()));
+  // Current ChatGPT labels the composer's stop control just "Stop" without a test id.
+  const buttonLabel = button => (button.getAttribute('aria-label') || button.textContent || '').trim();
+  const stopButton = () => document.querySelector('button[data-testid="stop-button"]')
+    || [...(composer()?.closest('form')?.querySelectorAll('button') || [])].find(button => /^(stop|stop generating|stop streaming|stop answering|dừng|dừng tạo|dừng tạo câu trả lời|dừng trả lời)$/i.test(buttonLabel(button)))
+    || [...document.querySelectorAll('button')].find(button => /^(stop generating|stop streaming|stop answering|dừng tạo|dừng tạo câu trả lời|dừng trả lời)$/i.test(buttonLabel(button)));
   const isVisible = node => {
     if (!node) return false;
     const style = window.getComputedStyle(node);
@@ -140,7 +144,12 @@
             if (count > sentScenes) { await emit({ jobId: replyContext.id, state: 'progress', text: progress.text }); sentScenes = count; progressAt = Date.now(); }
           }
         }
-        if (started && last && !isGenerating() && Date.now() - changedAt >= 3000 && jsonFromPage(kind)) return jsonFromPage(kind);
+        if (started && last && !isGenerating() && Date.now() - changedAt >= 3000) {
+          const result = VISReplyReader.read(document, { ...replyContext, type: kind });
+          if (result.text) return result.text;
+          // ChatGPT finished and stayed idle, but the reply for THIS job is not valid JSON: fail clearly instead of hanging.
+          if (result.reason === 'invalid-json' && Date.now() - changedAt >= 45000) throw new Error('ChatGPT đã trả lời xong nhưng JSON không hợp lệ (' + result.detail + '). Kiểm tra hội thoại rồi bấm Đồng bộ kết quả ngay hoặc chạy lại phần này.');
+        }
         await sleep(500);
       }
       throw new Error('ChatGPT quá thời gian phản hồi.');
@@ -294,8 +303,8 @@
         const marker=st.activeJobId && last && (last.innerText||'').includes('[VIS_JOB_ID:'+st.activeJobId+']');
         const imagePrompt=st.activeCommand?.type==='image_generation' && st.activeCommand?.id===st.activeJobId && typeof st.activeCommand.prompt==='string' && st.activeCommand.prompt.length>0 && last && (last.innerText||'').includes(st.activeCommand.prompt);
         const verified=currentJobId===st.activeJobId && !!currentJobId || Boolean((marker||imagePrompt) && st.identityJobId===st.activeJobId && st.conversationUrl===url);
-        sendResponse({ready:Boolean(composer()),version:'0.4.23',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now()});
-      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.4.23',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
+        sendResponse({ready:Boolean(composer()),version:'0.4.24',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now()});
+      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.4.24',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
       return true;
     }
     if (message?.type === 'vis-restore-draft') {
@@ -332,7 +341,7 @@
         return true;
       }
       const result = VISReplyReader.readStreaming(document, { ...context, type: context.type || message.jobType || currentJobType });
-      if (!result.text) { sendResponse({ ok: false, error: (result.reason === 'latest-user-mismatch' ? 'Tab ChatGPT đang mở không có lệnh của phần cần đồng bộ. Hãy mở đúng hội thoại đã trả lời phần này.' : result.reason === 'invalid-json' ? 'Đã tìm thấy phản hồi đúng phần nhưng JSON chưa đầy đủ hoặc không hợp lệ.' : 'Chưa đọc được câu trả lời sau lệnh của phần này. Giữ tab ChatGPT mở ở cuối phản hồi rồi bấm Đồng bộ lại.' ) + ' [' + VISReplyReader.diagnose(document, context) + ']' }); return; }
+      if (!result.text) { sendResponse({ ok: false, error: (result.reason === 'latest-user-mismatch' ? 'Tab ChatGPT đang mở không có lệnh của phần cần đồng bộ. Hãy mở đúng hội thoại đã trả lời phần này.' : result.reason === 'invalid-json' ? (isGenerating() ? 'ChatGPT vẫn đang trả lời phần này; JSON chưa hoàn tất. Đợi ChatGPT xong rồi đồng bộ lại.' : 'Đã tìm thấy phản hồi đúng phần nhưng JSON không hợp lệ: ' + (result.detail || 'không tìm thấy JSON') + '.') : 'Chưa đọc được câu trả lời sau lệnh của phần này. Giữ tab ChatGPT mở ở cuối phản hồi rồi bấm Đồng bộ lại.' ) + ' [' + VISReplyReader.diagnose(document, context) + ']' }); return; }
       // Capturing a valid reply ends the matching waiter without stopping ChatGPT.
       // Recovery may use a new job ID for the exact same original prompt.
       const complete = result.complete && !isGenerating();

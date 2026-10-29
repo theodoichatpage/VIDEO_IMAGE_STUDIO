@@ -77,7 +77,44 @@
     const shown = user.match(/PHẦN:\s*(.+?)\s*NỘI DUNG:\s*(.+)$/);
     return Boolean(shown && shown[1] === match[1] && shown[2].startsWith(match[2].slice(0, 80)));
   }
+  // ChatGPT ships several DOM variants. Some have no role/turn attributes at all
+  // (MarkdownRoot + data-markdown-text-style="assistant-message"). Anchor on the
+  // exact prompt of THIS job, then take only answer nodes after it and before the
+  // next user prompt, so another job's reply can never be read.
+  const FOLLOWING = 4;
+  const ANSWER = '[data-markdown-text-style="assistant-message"], [data-message-author-role="assistant"], .markdown, [class*="ResponseRoot-"], pre';
+  const USERISH = '[data-message-author-role="user"], [data-turn="user"], [class*="UserBubble"], [data-testid="user-message"], .whitespace-pre-wrap';
+  const outsideComposer = node => !node.closest?.('form, [contenteditable="true"], #prompt-textarea');
+  function anchored(document, context = {}) {
+    if (!context.prompt && !context.id) return { sources: [], reason: 'no-user-anchor' };
+    const matching = [...document.querySelectorAll(USERISH)].filter(node => outsideComposer(node) && !node.closest?.(ANSWER) && matchesPrompt(normalize(text(node)), context));
+    // The exact job marker wins; prompt-text matching is only for a recovered job whose marker is gone.
+    const byId = context.id ? matching.filter(node => normalize(text(node)).includes('[VIS_JOB_ID:' + context.id + ']')) : [];
+    const prompts = byId.length ? byId : matching;
+    const anchor = prompts.filter(node => !prompts.some(other => other !== node && node.contains?.(other))).at(-1);
+    if (!anchor) return { sources: [], reason: 'latest-user-mismatch' };
+    const after = node => Boolean(anchor.compareDocumentPosition?.(node) & FOLLOWING) && !anchor.contains?.(node) && !node.contains?.(anchor);
+    const boundary = [...document.querySelectorAll(USERISH)].find(node => outsideComposer(node) && !node.closest?.(ANSWER) && after(node) && normalize(text(node)) && !anchor.parentElement?.contains?.(node));
+    // Without this job's own marker, only the latest prompt may be used (recovery), never an older turn.
+    if (!byId.length && boundary) return { sources: [], reason: 'latest-user-mismatch' };
+    const before = node => !boundary || Boolean(node.compareDocumentPosition?.(boundary) & FOLLOWING);
+    const nodes = [...document.querySelectorAll(ANSWER)].filter(node => outsideComposer(node) && after(node) && before(node));
+    if (!nodes.length) return { sources: [], reason: 'no-new-answer' };
+    const list = [];
+    for (const node of nodes) {
+      list.push(...[...(node.querySelectorAll?.('pre code, pre') || [])].map(item => item.textContent || text(item)), text(node), node.textContent || '');
+      const words = [...(node.querySelectorAll?.('[data-stream-word], [data-d-stream-word]') || [])].map(item => item.textContent || '');
+      if (words.length) list.push(words.join(''), words.join(' '));
+    }
+    return { node: nodes.at(-1), sources: [...new Set(list.filter(Boolean))], reason: 'matched', anchored: true };
+  }
   function sources(document, context = {}) {
+    const primary = roleSources(document, context);
+    if (primary.reason === 'matched' || context.type === 'image_generation') return primary;
+    const fallback = anchored(document, context);
+    return fallback.reason === 'matched' ? fallback : primary;
+  }
+  function roleSources(document, context = {}) {
     const messages = turns(document, context);
     const latestUser = messages.findLastIndex(turn => turn.role === 'user' && (context.type !== 'image_generation' || [normalize(turn.text), normalize(turn.node.textContent)].some(value => matchesPrompt(value, context))));
     if (context.type === 'image_generation' && latestUser < 0) return { sources: [], reason: 'latest-user-mismatch' };
@@ -100,6 +137,7 @@
     const node = imageTurn && !imageTurn.querySelector?.('[data-message-author-role="user"], [data-turn="user"]') ? imageTurn : answer.node;
     return { node, sources: [...new Set([...code, answer.text, answer.node.textContent || '', words].filter(Boolean))], reason: 'matched' };
   }
+  let lastProblem = '';
   function extract(source, kind) {
     const key = kind === 'transcript_mindmap' ? 'branches' : kind === 'script_structure' ? 'parts' : kind === 'part_analysis' ? 'scenes' : '';
     if (!key) return '';
@@ -122,7 +160,8 @@
         try {
           const parsed = JSON.parse(value.slice(start, end + 1));
           if (Array.isArray(parsed[key]) && parsed[key].length) return JSON.stringify(parsed);
-        } catch {}
+          lastProblem = 'JSON thiếu mảng "' + key + '" hoặc mảng rỗng';
+        } catch (error) { lastProblem = 'JSON lỗi: ' + String(error?.message || error).slice(0, 160); }
         break;
       }
     }
@@ -131,11 +170,15 @@
   function read(document, context) {
     const found = sources(document, context);
     if (context.type === 'transcript_rewrite' && found.sources.length) return {text: found.sources[0].trim(), reason:'matched'};
-    for (const source of found.sources) {
+    lastProblem = '';
+    const pools = [found];
+    if (!found.anchored && context.type !== 'image_generation') pools.push(anchored(document, context));
+    for (const pool of pools) for (const source of pool.sources || []) {
       const json = extract(source, context.type);
       if (json) return { text: json, reason: 'matched' };
     }
-    return { text: '', reason: found.reason === 'matched' ? 'invalid-json' : found.reason };
+    const matched = pools.some(pool => pool.reason === 'matched');
+    return { text: '', reason: matched ? 'invalid-json' : found.reason, detail: matched ? (lastProblem || 'không tìm thấy JSON') : '' };
   }
   function diagnose(document, context) {
     const messages = turns(document, context);
@@ -145,7 +188,9 @@
     const full = read(document, context);
     if (full.text) return { ...full, complete: true };
     if (context.type !== 'part_analysis') return { ...full, complete: false };
-    for (const source of sources(document, context).sources) {
+    const found = sources(document, context);
+    const pool = [...(found.sources || []), ...(found.anchored ? [] : anchored(document, context).sources || [])];
+    for (const source of pool) {
       const match = /"scenes"\s*:\s*\[/.exec(source);
       if (!match) continue;
       const scenes = [];
@@ -170,6 +215,6 @@
     }
     return { ...full, complete: false };
   }
-  globalThis.VISReplyReader = { turns, snapshot, sources, extract, read, readStreaming, diagnose };
+  globalThis.VISReplyReader = { turns, snapshot, sources, anchored, extract, read, readStreaming, diagnose };
 })();
 

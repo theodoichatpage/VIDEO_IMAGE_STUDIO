@@ -9,7 +9,7 @@ test('ZIP filename, enclosing folder, manifest and generated web release are con
  assert.equal(JSON.parse(files.get('VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v'+manifest.version+'/manifest.json')).version,release.version);
  assert.ok(fs.readFileSync(path.join(root,'src/extensionRelease.ts'),'utf8').includes(JSON.stringify(release.relative)));
  assert.deepEqual(packageExtension(root).bytes,release.bytes,'Archive is reproducible');
- const changed={...manifest,version:'0.4.24'};fs.writeFileSync(path.join(root,'extension/manifest.json'),JSON.stringify(changed));assert.throws(()=>packageExtension(root),/Runtime version mismatch/);
+ const changed={...manifest,version:manifest.version.replace(/\d+$/,n=>String(Number(n)+1))};fs.writeFileSync(path.join(root,'extension/manifest.json'),JSON.stringify(changed));assert.throws(()=>packageExtension(root),/Runtime version mismatch/);
  }finally{fs.rmSync(root,{recursive:true,force:true})}
 });
 test('web bridge reports installed 4.23 unchanged instead of claiming 4.22',async()=>{
