@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_0426__) return;
-  window.__VIS_CHAT_BRIDGE_0426__ = true;
+  if (window.__VIS_CHAT_BRIDGE_0427__) return;
+  window.__VIS_CHAT_BRIDGE_0427__ = true;
   let currentJobId = '';
   let lastDomChange = Date.now();
   new MutationObserver(() => { lastDomChange = Date.now(); }).observe(document.documentElement, {subtree:true, childList:true, characterData:true});
@@ -115,40 +115,46 @@
   }
 
   async function waitForFinalAnswer(before, kind, token) {
+    // Reading the reply scans the DOM and parses JSON; doing that on every streamed token froze the
+    // ChatGPT tab mid-answer. The observer only records when the page last changed; reading is
+    // throttled: progress every 4 s while ChatGPT writes, the final reply once it has been idle 3 s.
     let last = assistantText(kind);
     let started = Boolean(last && last !== before);
-    let changedAt = Date.now();
-    let sentScenes = 0, progressAt = 0;
-    const observer = new MutationObserver(() => {
-      const next = assistantText(kind);
-      if (next !== last) { last = next; changedAt = Date.now(); }
-      if (next && next !== before) started = true;
-    });
+    let changedAt = Date.now(), domChangedAt = Date.now();
+    let sentScenes = 0, progressAt = 0, checkedAt = 0;
+    const observer = new MutationObserver(() => { domChangedAt = Date.now(); });
     observer.observe(document.body, { subtree: true, childList: true, characterData: true });
     const deadline = Date.now() + 10 * 60 * 1000;
     try {
       while (Date.now() < deadline) {
         if (cancelled || token !== generation) throw new Error('Đã dừng tác vụ.');
-        const newTexts = VISReplyReader.sources(document, replyContext).sources;
-        if (kind !== 'image_generation' && newTexts.some(text => /creating image|đang tạo (hình )?ảnh/i.test(text))) {
-          stopButton()?.click();
-          throw new Error('ChatGPT đã chuyển sang tạo ảnh. Đã yêu cầu dừng; hãy tắt chế độ Tạo ảnh và phân tích lại phần này.');
-        }
-        const next = assistantText(kind);
-        if (next !== last) { last = next; changedAt = Date.now(); }
-        if (next && next !== before) started = true;
-        if (kind === 'part_analysis' && Date.now() - progressAt > 3000) {
-          const progress = VISReplyReader.readStreaming(document, { ...replyContext, type: kind });
-          if (progress.text) {
-            const count = JSON.parse(progress.text).scenes.length;
-            if (count > sentScenes) { await emit({ jobId: replyContext.id, state: 'progress', text: progress.text }); sentScenes = count; progressAt = Date.now(); }
+        const generating = isGenerating();
+        if (generating) { started = true; changedAt = Math.max(changedAt, domChangedAt); }
+        if (Date.now() - progressAt >= 4000) {
+          progressAt = Date.now();
+          if (kind !== 'image_generation' && VISReplyReader.sources(document, replyContext).sources.some(text => /creating image|đang tạo (hình )?ảnh/i.test(text))) {
+            stopButton()?.click();
+            throw new Error('ChatGPT đã chuyển sang tạo ảnh. Đã yêu cầu dừng; hãy tắt chế độ Tạo ảnh và phân tích lại phần này.');
+          }
+          if (kind === 'part_analysis') {
+            const progress = VISReplyReader.readStreaming(document, { ...replyContext, type: kind });
+            if (progress.text) {
+              const count = JSON.parse(progress.text).scenes.length;
+              if (count > sentScenes) { await emit({ jobId: replyContext.id, state: 'progress', text: progress.text }); sentScenes = count; }
+            }
           }
         }
-        if (started && last && !isGenerating() && Date.now() - changedAt >= 3000) {
-          const result = VISReplyReader.read(document, { ...replyContext, type: kind });
-          if (result.text) return result.text;
-          // ChatGPT finished and stayed idle, but the reply for THIS job is not valid JSON: fail clearly instead of hanging.
-          if (result.reason === 'invalid-json' && Date.now() - changedAt >= 45000) throw new Error('ChatGPT đã trả lời xong nhưng JSON không hợp lệ (' + result.detail + '). Kiểm tra hội thoại rồi bấm Đồng bộ kết quả ngay hoặc chạy lại phần này.');
+        if (!generating && Date.now() - domChangedAt >= 3000 && Date.now() - checkedAt >= 2000) {
+          checkedAt = Date.now();
+          const next = assistantText(kind);
+          if (next !== last) { last = next; changedAt = Date.now(); }
+          if (next && next !== before) started = true;
+          if (started && last && Date.now() - changedAt >= 3000) {
+            const result = VISReplyReader.read(document, { ...replyContext, type: kind });
+            if (result.text) return result.text;
+            // ChatGPT finished and stayed idle, but the reply for THIS job is not valid JSON: fail clearly instead of hanging.
+            if (result.reason === 'invalid-json' && Date.now() - changedAt >= 45000) throw new Error('ChatGPT đã trả lời xong nhưng JSON không hợp lệ (' + result.detail + '). Kiểm tra hội thoại rồi bấm Đồng bộ kết quả ngay hoặc chạy lại phần này.');
+          }
         }
         await sleep(500);
       }
@@ -307,8 +313,8 @@
         const marker=st.activeJobId && last && (last.innerText||'').includes('[VIS_JOB_ID:'+st.activeJobId+']');
         const imagePrompt=st.activeCommand?.type==='image_generation' && st.activeCommand?.id===st.activeJobId && typeof st.activeCommand.prompt==='string' && st.activeCommand.prompt.length>0 && last && (last.innerText||'').includes(st.activeCommand.prompt);
         const verified=currentJobId===st.activeJobId && !!currentJobId || Boolean((marker||imagePrompt) && st.identityJobId===st.activeJobId && st.conversationUrl===url);
-        sendResponse({ready:Boolean(composer()),version:'0.4.26',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now()});
-      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.4.26',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
+        sendResponse({ready:Boolean(composer()),version:'0.4.27',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now()});
+      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.4.27',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
       return true;
     }
     if (message?.type === 'vis-restore-draft') {

@@ -1,6 +1,6 @@
-VIDEO IMAGE STUDIO — ChatGPT Bridge v0.4.26
+VIDEO IMAGE STUDIO — ChatGPT Bridge v0.4.27
 
-1. Tải ZIP 0.4.26 và giải nén. Tệp nằm trong một thư mục VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.26.
+1. Tải ZIP 0.4.27 và giải nén. Tệp nằm trong một thư mục VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.27.
 2. Nếu đã cài tiện ích: chép đè các tệp mới vào đúng thư mục tiện ích đang dùng, rồi mở chrome://extensions hoặc edge://extensions và bấm Tải lại trên thẻ VIDEO IMAGE STUDIO. Cách này giữ dữ liệu kết nối và kết quả đang chờ trong tiện ích.
 3. Nếu chưa cài: bật Chế độ nhà phát triển, bấm Tải tiện ích đã giải nén và chọn thư mục chứa manifest.json. Chỉ bật một bản tiện ích Studio.
 4. Tải lại cả tab web và tab ChatGPT. Trên web bấm Kết nối ChatGPT rồi kết nối lại.
@@ -28,3 +28,4 @@ Nếu ChatGPT đang bật chế độ Tạo ảnh trong ô nhập, tắt chế �
 11. Bản 0.4.24: tự nhận kết quả phân tích/chia kịch bản/phân cảnh ngay trong hội thoại đang mở với giao diện ChatGPT mới (không cần đóng/mở lại tab); nhận diện nút "Stop" mới để biết ChatGPT còn đang trả lời và để Dừng tất cả hoạt động; JSON sai thật sau khi ChatGPT xong sẽ báo lỗi cụ thể thay vì chờ mãi. Sau khi cập nhật, F5 tab ChatGPT và tab Studio.
 12. Bản 0.4.25: nếu phân tích/phân cảnh bị báo "quá thời gian" (ví dụ tab ChatGPT bị treo) mà sau khi tải lại tab, câu trả lời đầy đủ vẫn nằm trong đúng hội thoại, tiện ích tự đọc lại và đồng bộ về Studio; không cần chạy lại phần đó.
 13. Bản 0.4.26: khi hội thoại ChatGPT đang dùng đã dài trên 60.000 ký tự (kịch bản + nhiều phần JSON), tiện ích tự mở hội thoại ChatGPT mới trước khi gửi lệnh chia kịch bản/phân cảnh tiếp theo để tránh tab bị treo. Hội thoại cũ được giữ nguyên; tạo ảnh không đổi hội thoại.
+14. Bản 0.4.27: sửa lỗi tab ChatGPT bị treo khi đang trả lời phân cảnh/chia kịch bản dài. Tiện ích không còn đọc toàn trang ở mỗi chữ ChatGPT viết; chỉ cập nhật tiến độ mỗi 4 giây và đọc kết quả khi ChatGPT đã dừng viết.

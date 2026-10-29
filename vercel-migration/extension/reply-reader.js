@@ -26,7 +26,8 @@
     const wordRoots = [...document.querySelectorAll('[class*="ResponseRoot-"]')].filter(wordResponse);
     const promptBlocks = wordRoots.length && context.prompt ? [...document.querySelectorAll('div, p')].filter(node => {
       if (wordResponse(node) || wordResponse(node.closest?.('[class*="ResponseRoot-"]')) || wordResponse(node.querySelector?.('[class*="ResponseRoot-"]'))) return false;
-      const value = normalize(text(node));
+      // textContent: no layout pass for every div on large pages (innerText here froze the tab).
+      const value = normalize(node.textContent || '');
       return value.includes('[VIS_JOB_ID:') || /PHẦN:.*NỘI DUNG:/.test(value) || matchesPrompt(value, context);
     }) : [];
     // Image-only ChatGPT turns may omit role/article/ResponseRoot attributes.
