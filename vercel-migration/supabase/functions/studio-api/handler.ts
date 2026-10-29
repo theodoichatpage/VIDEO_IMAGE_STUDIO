@@ -210,9 +210,12 @@ async function version(id: string): Promise<Version | null> {
   const layerAt = Number(layers?.[0]?.updated_at) || 0;
   let summary = rows[0].summary;
   if (!summary) {
-    // Record written before summaries existed: compute once from the full record (no write).
-    const session = await read(id); if (!session) return null;
-    summary = { ...((stamp({ ...session }) as Session & { summary: Version }).summary), full: true };
+    // Record written before summaries existed: add the summary once, so later checks stay small.
+    // Saved only if nobody wrote meanwhile (updatedAt unchanged); otherwise the next writer stamps it.
+    const raw = await database('studio_sessions?id=eq.' + encodeURIComponent(id) + '&select=record') as { record: Session }[];
+    const record = raw?.[0]?.record; if (!record) return null;
+    summary = (stamp(record) as Session & { summary: Version }).summary;
+    if (record.updatedAt) { try { await database('studio_sessions?id=eq.' + encodeURIComponent(id) + '&record->>updatedAt=eq.' + encodeURIComponent(String(record.updatedAt)), { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ record }) }); } catch { /* best effort */ } }
   }
   return { ...summary, updatedAt: Math.max(Number(summary.updatedAt) || 0, layerAt) };
 }

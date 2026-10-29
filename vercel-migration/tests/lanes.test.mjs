@@ -135,3 +135,13 @@ test('egress: polling reads a small stamp, replies drop heavy fields, idle next 
   assert.equal((await h.call('GET', `bridge/${id}/next`, undefined, 200, { worker: 'laneA01' })).command.id, second.command.id);
   assert.equal((await h.call('GET', `bridge/${id}/version`.replace('bridge', 'sessions'))).version.laneJobs[0].status, 'sending');
 });
+
+test('egress: an old record without a stamp gets one on the first check, later checks stay small', async () => {
+  const h = harness();
+  await h.call('POST', 'sessions', { id });
+  delete h.stored.summary; const before = h.stored.updatedAt;
+  h.fullReads = 0;
+  const v = await h.call('GET', `sessions/${id}/version`);
+  assert.equal(v.version.updatedAt, before); assert.ok(h.stored.summary, 'stamp saved'); assert.equal(h.stored.updatedAt, before, 'content and updatedAt unchanged');
+  h.fullReads = 0; await h.call('GET', `sessions/${id}/version`); assert.equal(h.fullReads, 0);
+});
