@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_0431__) return;
-  window.__VIS_CHAT_BRIDGE_0431__ = true;
+  if (window.__VIS_CHAT_BRIDGE_0432__) return;
+  window.__VIS_CHAT_BRIDGE_0432__ = true;
   let currentJobId = '';
   let lastDomChange = Date.now();
   new MutationObserver(() => { lastDomChange = Date.now(); }).observe(document.documentElement, {subtree:true, childList:true, characterData:true});
@@ -104,13 +104,31 @@
     }finally{downloads.delete(controller);}
   }
 
+  // Seen on the user's Plus account: ChatGPT accepted the long image prompt and then did nothing (no
+  // reply, no "Creating image") until the user typed "Tạo ảnh cho tôi". When ChatGPT stays idle without an
+  // image, send that short nudge ourselves, tagged with this job's marker so the image is still matched
+  // to this scene. At most two nudges; then the normal timeout reports the error.
+  const NUDGE_AFTER_MS = 45000, MAX_NUDGES = 2;
+  const nudgeText = id => '[VIS_JOB_ID:' + id + '] Tạo ảnh theo đúng mô tả ở tin nhắn trên ngay bây giờ bằng công cụ tạo ảnh. Chỉ trả về một ảnh, không giải thích.';
+  const creatingImage = () => /creating image|đang tạo (hình )?ảnh/i.test(document.querySelector('main')?.textContent?.slice(-4000) || '');
   async function waitForImage(_before, token) {
     const deadline = Date.now() + 10 * 60 * 1000;
+    let lastSentAt = Date.now(), nudges = 0, busyAt = Date.now();
     while (Date.now() < deadline) {
       if (cancelled || token !== generation) throw new Error('Đã dừng tác vụ tạo ảnh.');
       await expandImagePrompts(replyContext);
       if (cancelled || token !== generation) throw new Error('Đã dừng tác vụ tạo ảnh.');
-      if (imageUrls().length && !isGenerating()) return imagePayload(replyContext);
+      const busy = isGenerating() || creatingImage();
+      if (busy) busyAt = Date.now();
+      if (imageUrls().length && !busy) return imagePayload(replyContext);
+      if (!busy && nudges < MAX_NUDGES && Date.now() - lastSentAt >= NUDGE_AFTER_MS && Date.now() - busyAt >= NUDGE_AFTER_MS && !imageUrls().length) {
+        nudges += 1;
+        await fillComposer(nudgeText(replyContext.id));
+        if (cancelled || token !== generation) throw new Error('Đã dừng tác vụ tạo ảnh.');
+        await submit(token);
+        lastSentAt = Date.now(); busyAt = Date.now();
+        await emit({ jobId: replyContext.id, state: 'sent', nudge: nudges });
+      }
       await sleep(1500);
     }
     throw new Error('ChatGPT quá thời gian tạo ảnh hoặc không đọc được ảnh đúng cảnh.');
@@ -321,8 +339,8 @@
         const marker=st.activeJobId && last && (last.innerText||'').includes('[VIS_JOB_ID:'+st.activeJobId+']');
         const imagePrompt=st.activeCommand?.type==='image_generation' && st.activeCommand?.id===st.activeJobId && typeof st.activeCommand.prompt==='string' && st.activeCommand.prompt.length>0 && last && (last.innerText||'').includes(st.activeCommand.prompt);
         const verified=currentJobId===st.activeJobId && !!currentJobId || Boolean((marker||imagePrompt) && st.identityJobId===st.activeJobId && st.conversationUrl===url);
-        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.4.31',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now()});
-      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.4.31',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
+        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.4.32',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now()});
+      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.4.32',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
       return true;
     }
     if (message?.type === 'vis-restore-draft') {
