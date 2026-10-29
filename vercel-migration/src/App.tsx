@@ -4,6 +4,7 @@ import { resolveManagerLaunch } from './managerLaunch.mjs';
 import { Check, Clapperboard, Copy, Download, FileText, Folder, Image, Maximize2, Play, RotateCcw, Scissors, Settings, Square, Trash2, Video as VideoIcon } from 'lucide-react';
 import './index.css';
 import { EXTENSION_VERSION, EXTENSION_DOWNLOAD_URL } from './extensionRelease';
+import { loadTranscriptWorkspace, workspaceStorageKey } from './transcriptWorkspace';
 
 import type { ImageState, Scene, PartStatus, Part, Session, Job } from './types';
 
@@ -180,6 +181,9 @@ function App() {
   // Optional, read-only status signal to the local AI MANAGER.
   const [managerWatch, setManagerWatch] = useState(() => !managerLaunch.error && (Boolean(managerLaunch.runId) || localStorage.getItem('vis-manager-watch') === '1'));
   const managerTabId = useRef('tab_' + Math.random().toString(36).slice(2) + Date.now().toString(36));
+  // Latest content state for the Manager signal: counts only, never the script text itself.
+  const managerContent = useRef({ script, session });
+  managerContent.current = { script, session };
   useEffect(() => {
     if (!managerWatch) return;
     const url = 'http://127.0.0.1:8765/api/studio-presence';
@@ -197,9 +201,17 @@ function App() {
         const name = Array.isArray(metadata) ? metadata.find((p: {id?: string; name?: unknown}) => p.id === sessionId)?.name : null;
         if (typeof name === 'string' && name.trim()) projectName = name.trim().slice(0, 200);
       } catch { /* An unavailable name must not break presence. */ }
+      let projectState: Record<string, unknown> | undefined;
+      try {
+        const draft = managerContent.current.script.trim(), server = String(managerContent.current.session?.script || '').trim();
+        const own = localStorage.getItem(workspaceStorageKey(sessionId)) !== null;
+        const transcript = loadTranscriptWorkspace(own ? sessionId : 'default').transcript;
+        projectState = { scriptDraftChars: draft.length, serverScriptChars: server.length, scriptSync: !draft ? 'empty' : draft === server ? 'synced' : localStorage.getItem('vis-script-draft-owner') === sessionId ? 'pending' : 'unconfirmed',
+          transcript: { exists: Boolean(transcript?.text?.trim()), chars: transcript?.text?.length || 0, segments: transcript?.segments?.length || 0, videoId: transcript?.videoId || '', scope: own ? 'project' : 'shared' } };
+      } catch { /* Content state is optional for presence. */ }
       void fetch(url, {
         method: 'POST', headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ managerRunId: managerLaunch.runId, origin: location.origin, sessionId, activeProjectId: sessionId, studioInstance, tabId: managerTabId.current, chatReady: bridgeConnected, projectName, projects }),
+        body: JSON.stringify({ managerRunId: managerLaunch.runId, origin: location.origin, sessionId, activeProjectId: sessionId, studioInstance, tabId: managerTabId.current, chatReady: bridgeConnected, projectName, projects, projectState }),
       }).catch(() => {});
     };
     const close = () => {
@@ -228,6 +240,24 @@ function App() {
       window.removeEventListener('pageshow', resume);
     };
   }, [managerWatch, sessionId, bridgeConnected]);
+  // A Manager-launched tab saves the script typed in this project to the Studio server, so Manager
+  // reads the same script after REFRESH. Only before analysis, never over a running job or existing parts.
+  const managerScriptPending = !managerLaunch.error && managerLaunch.projectId === sessionId && Boolean(managerLaunch.runId) && serverReady && Boolean(session) && session?.id === sessionId
+    && Boolean(script.trim()) && script.trim() !== String(session?.script || '').trim() && !session?.activeJob && !session?.parts?.length;
+  const saveScriptForManager = async () => {
+    const clean = script.trim(); if (!clean || stopGate.current) return;
+    try {
+      const { data } = await api.post('/api/sessions/' + sessionId + '/script', { script: clean, expectedWorkEpoch: session?.workEpoch || 0 });
+      if (stopGate.current) return;
+      setSession(data.session as Session); localStorage.setItem('vis-script-draft-owner', sessionId);
+      setNotice('Đã lưu kịch bản lên Studio. AI MANAGER sẽ đọc lại và tiếp tục.');
+    } catch (caught) { setNotice('Chưa lưu được kịch bản: ' + (caught instanceof Error ? caught.message : 'lỗi máy chủ')); }
+  };
+  useEffect(() => {
+    if (!managerScriptPending || localStorage.getItem('vis-script-draft-owner') !== sessionId) return;
+    const timer = window.setTimeout(() => { void saveScriptForManager(); }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [managerScriptPending, script, session?.updatedAt]);
   useEffect(() => {
     if (!bridgeConnected || !session?.activeJob || !['queued', 'sending'].includes(session.activeJob.status)) return;
     let cancelled = false;
@@ -241,7 +271,7 @@ function App() {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [bridgeConnected, session?.activeJob?.id, session?.activeJob?.status, sessionId]);
 
-  const changeScript = (value: string) => { setScript(value); localStorage.setItem('vis-script-draft', value); };
+  const changeScript = (value: string) => { setScript(value); localStorage.setItem('vis-script-draft', value); localStorage.setItem('vis-script-draft-owner', sessionId); };
   const ensureSession = async () => {
     const { data: lookup } = await api.get('/api/sessions/' + sessionId);
     if (lookup.session) {
@@ -267,7 +297,7 @@ function App() {
       if(stopGate.current||generation!==workGeneration.current)return;
       const next = data.session as Session;
       setSession(next); setActivePartId('pending-0');
-      localStorage.removeItem('vis-script-draft');
+      localStorage.removeItem('vis-script-draft'); localStorage.removeItem('vis-script-draft-owner');
       setNotice('Đã gửi toàn bộ kịch bản sang ChatGPT để phân tích cấu trúc và quyết định số phần phù hợp.');
     } catch (caught) { setNotice(caught instanceof Error ? caught.message : 'Không thể bắt đầu phân tích.'); } finally { setBusy(false); }
   };
@@ -455,7 +485,7 @@ function App() {
     {showResultImport && <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Dán JSON kết quả"><section className="connection-dialog json-import-dialog"><button type="button" className="modal-close" disabled={importBusy} onClick={() => setShowResultImport(false)} aria-label="Đóng">×</button><h2>Dán JSON kết quả</h2><p className="modal-help">Sao chép toàn bộ câu trả lời JSON của ChatGPT và dán vào đây. Lưu thành công sẽ chuyển phần này sang Hoàn tất để tiếp tục phần kế tiếp.</p><label>Lưu vào phần<select value={importPartId} disabled={importBusy} onChange={event => selectImportPart(event.target.value)}>{session?.parts?.map(part => <option key={part.id} value={part.id} disabled={part.status === 'complete' && part.scenes.length > 0}>{part.title}{part.status === 'complete' ? ' — Đã có kết quả' : ''}</option>)}</select></label><div className="import-clipboard"><button type="button" className="outline" disabled={importBusy} onClick={pasteResult}>Dán từ clipboard</button><span>Hoặc nhấn Ctrl + V trong ô bên dưới</span></div><textarea aria-label="JSON kết quả phân cảnh" value={importText} disabled={importBusy} onChange={event => setImportText(event.target.value)} placeholder={'Dán toàn bộ JSON: {"scenes":[…]}'} spellCheck={false} />{importError && <p className="import-error" role="alert">{importError}</p>}<button type="button" className="analyze-all modal-copy" disabled={importBusy || !importPartId || !importText.trim()} onClick={saveImportedResult}>{importBusy ? 'Đang lưu kết quả…' : 'Lưu kết quả vào phần đã chọn'}</button></section></div>}
     {activeMenu === 0 ? <div className="workspace">
       <section className="left-column panel"><div className="panel-heading"><FileText /><div><h1>1. PHÂN TÍCH KỊCH BẢN</h1><p>ChatGPT đọc kịch bản, tự chia thành số phần phù hợp, rồi phân tích chi tiết từng phần thành phân cảnh.</p></div><button type="button" className="outline result-import-launch" disabled={!session?.parts?.length} onClick={openResultImport}>Dán JSON kết quả</button></div>
-        <section className="script-box"><h2><FileText size={20} /> Toàn bộ kịch bản</h2><div className="file-row"><FileText size={22} /><div><b>{script.trim() ? 'Kịch bản đang chỉnh sửa' : 'Chưa có kịch bản'}</b><small>{sceneEstimate ? sceneEstimate + ' cảnh nhận diện · ' : ''}{script.length.toLocaleString('vi-VN')} ký tự</small></div><span className="uploaded">● Sẵn sàng</span><button type="button" className="outline"><Folder size={17} /> Thay đổi</button></div><textarea className="screenplay" value={script} onChange={event => changeScript(event.target.value)} placeholder="Dán hoặc nhập toàn bộ kịch bản tại đây…" /><p className="script-meta">Số ký tự: {script.length.toLocaleString('vi-VN')} <b>|</b> <span>{session?.status === 'structure_processing' ? 'ChatGPT đang phân tích cấu trúc' : storedParts.length ? 'Đã chia ' + storedParts.length + ' phần' : 'Chưa phân tích'}</span></p><div className="analysis-controls"><button className="analyze-all split-button" type="button" onClick={() => void analyzeStructure()} disabled={busy || Boolean(session?.activeJob) || storedParts.length > 0} title={storedParts.length ? 'Đã phân tích. Nút được khóa để bảo vệ kết quả.' : 'Phân tích và chia kịch bản'}><Play size={18} fill="currentColor" /> {busy ? 'Đang khởi tạo…' : 'Phân tích & chia kịch bản'}</button><button className="danger split-button stop-analysis" type="button" onClick={stopWork} disabled={stopping}><Square size={16} /> Dừng phân tích</button><button className="outline split-button" type="button" onClick={captureResult} disabled={!session?.activeJob || session.activeJob.status !== 'waiting'}>Đồng bộ kết quả ngay{pendingSyncCount ? ' (' + pendingSyncCount + ')' : ''}</button></div></section>
+        <section className="script-box"><h2><FileText size={20} /> Toàn bộ kịch bản</h2><div className="file-row"><FileText size={22} /><div><b>{script.trim() ? 'Kịch bản đang chỉnh sửa' : 'Chưa có kịch bản'}</b><small>{sceneEstimate ? sceneEstimate + ' cảnh nhận diện · ' : ''}{script.length.toLocaleString('vi-VN')} ký tự</small></div><span className="uploaded">● Sẵn sàng</span><button type="button" className="outline"><Folder size={17} /> Thay đổi</button></div><textarea className="screenplay" value={script} onChange={event => changeScript(event.target.value)} placeholder="Dán hoặc nhập toàn bộ kịch bản tại đây…" />{managerScriptPending && localStorage.getItem('vis-script-draft-owner') !== sessionId && <button type="button" className="outline" onClick={() => void saveScriptForManager()}>Lưu kịch bản này cho AI MANAGER</button>}<p className="script-meta">Số ký tự: {script.length.toLocaleString('vi-VN')} <b>|</b> <span>{session?.status === 'structure_processing' ? 'ChatGPT đang phân tích cấu trúc' : storedParts.length ? 'Đã chia ' + storedParts.length + ' phần' : 'Chưa phân tích'}</span></p><div className="analysis-controls"><button className="analyze-all split-button" type="button" onClick={() => void analyzeStructure()} disabled={busy || Boolean(session?.activeJob) || storedParts.length > 0} title={storedParts.length ? 'Đã phân tích. Nút được khóa để bảo vệ kết quả.' : 'Phân tích và chia kịch bản'}><Play size={18} fill="currentColor" /> {busy ? 'Đang khởi tạo…' : 'Phân tích & chia kịch bản'}</button><button className="danger split-button stop-analysis" type="button" onClick={stopWork} disabled={stopping}><Square size={16} /> Dừng phân tích</button><button className="outline split-button" type="button" onClick={captureResult} disabled={!session?.activeJob || session.activeJob.status !== 'waiting'}>Đồng bộ kết quả ngay{pendingSyncCount ? ' (' + pendingSyncCount + ')' : ''}</button></div></section>
         {storedParts.length > 0 && <div className="restart-analysis"><span>Đã phân tích — nút bắt đầu được khóa để bảo vệ kết quả.</span><button type="button" className="outline" disabled={busy || Boolean(session?.activeJob)} onClick={() => { if (window.confirm('Phân tích lại toàn bộ sẽ thay thế các phần và kết quả phân cảnh hiện có. Một bản sao kết quả hiện tại sẽ được lưu trên máy chủ. Bạn có chắc chắn muốn bắt đầu lại?')) void analyzeStructure(true); }}>Phân tích lại toàn bộ…</button></div>}
         <section className="parts">
           <div className="section-toolbar parts-toolbar">
