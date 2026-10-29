@@ -113,3 +113,4 @@ nav { flex: 1; display: flex; gap: 8px; justify-content: center; }
 
 .preview-actions { flex-wrap: wrap; }
 .preview-actions > button, .preview-actions > a { flex: 1 1 110px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 34px; text-decoration: none; }
+.style-save { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; min-width: 0; } .style-save-status { font-size: 12px; line-height: 1.3; max-width: 260px; } .style-save-status.ok { color: #15803d; } .style-save-status.warn { color: #b45309; } .style-save-status.bad { color: #b91c1c; } .style-save-status.busy { color: #2563eb; } .link-button { background: none; border: 0; padding: 0 0 0 6px; color: #2563eb; text-decoration: underline; cursor: pointer; font-size: 12px; }
