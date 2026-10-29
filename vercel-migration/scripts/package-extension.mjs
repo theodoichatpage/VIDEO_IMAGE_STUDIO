@@ -7,7 +7,7 @@ export function crc32(bytes){let crc=0xffffffff;for(const byte of bytes){crc^=by
 export function packageExtension(root=process.cwd()){
  const dir=path.join(root,'extension'),manifest=JSON.parse(fs.readFileSync(path.join(dir,'manifest.json'),'utf8')),version=manifest.version;
  if(!/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(version))throw Error('Invalid extension version');
- for(const file of ['background.js','content.js','popup.js']){const source=fs.readFileSync(path.join(dir,file),'utf8');for(const match of source.matchAll(/\b0\.4\.\d+\b/g))if(match[0]!==version)throw Error('Runtime version mismatch in '+file+': '+match[0]+' != '+version);}
+ for(const file of ['background.js','content.js','popup.js']){const source=fs.readFileSync(path.join(dir,file),'utf8');for(const match of source.matchAll(/(?<![\d.])0\.\d+\.\d+\b/g))if(match[0]!==version)throw Error('Runtime version mismatch in '+file+': '+match[0]+' != '+version);}
  const name='VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v'+version;
  const locals=[],central=[];let offset=0;
  for(const file of extensionFiles){

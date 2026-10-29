@@ -4,8 +4,8 @@ type ApiResponse<T> = { data: T };
 const apiBase = 'https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api';
 
 async function request<T>(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<ApiResponse<T>> {
-  const route = url.replace(/^\/api\//, '');
-  const response = await fetch(apiBase + '?path=' + encodeURIComponent(route), {
+  const [route, query] = url.replace(/^\/api\//, '').split('?');
+  const response = await fetch(apiBase + '?path=' + encodeURIComponent(route) + (query ? '&' + query : ''), {
     method, signal,
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),

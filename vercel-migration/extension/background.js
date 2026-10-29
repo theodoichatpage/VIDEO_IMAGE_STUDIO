@@ -1,6 +1,10 @@
 const DEFAULT_STUDIO_MATCH = 'https://video-image-studio.vercel.app/*';
 const CHATGPT_PREFIX = 'https://chatgpt.com/';
 let deliveryDiagnostic = '';
+// Which ChatGPT account this browser uses (masked label + short hash), so AI MANAGER can tell lanes apart.
+let chatAccount = null;
+// The job this browser works on: the shared job, or this browser's own lane job when several tabs run in parallel.
+function ownJob(session, id) { return [session?.activeJob, ...(session?.laneJobs || [])].find(job => job && id && job.id === id) || null; }
 let stopGeneration=0,stopDepth=0;const cancelledJobs=new Set();const downloads=new Map();
 function checkStop(token,id){if(token!==stopGeneration||stopDepth||cancelledJobs.has(id))throw new Error('Tác vụ đã được Dừng. Chỉ bắt đầu lại khi bạn bấm lệnh mới.');}
 
@@ -20,7 +24,8 @@ async function ensureChatReceiver(preferredId) {
   let existing;
   try { existing = await chrome.tabs.sendMessage(tab.id, { type: 'vis-ping' }); } catch {}
   if (existing?.ready) {
-    if (existing.version !== '0.4.34') throw new Error('Tab ChatGPT còn cầu nối cũ v' + (existing.version || '?') + '. Hãy F5 tab ChatGPT để nạp Extension 0.4.34.');
+    if (existing.account) chatAccount = existing.account;
+    if (existing.version !== '0.5.0') throw new Error('Tab ChatGPT còn cầu nối cũ v' + (existing.version || '?') + '. Hãy F5 tab ChatGPT để nạp Extension 0.5.0.');
     return tab;
   }
   try {
@@ -30,7 +35,7 @@ async function ensureChatReceiver(preferredId) {
   }
   try {
     const pong = await chrome.tabs.sendMessage(tab.id, { type: 'vis-ping' });
-    if (pong?.ready && pong.version === '0.4.34') return tab;
+    if (pong?.ready && pong.version === '0.5.0') return tab;
   } catch {}
   throw new Error('Tab ChatGPT chưa sẵn sàng nhận lệnh. Hãy F5 tab ChatGPT rồi kết nối lại.');
 }
@@ -121,14 +126,15 @@ function reconcileWaitingResult() {
   reconciledAt = Date.now();
   reconciliation = (async () => {
     const token=stopGeneration;
-    const stored = await chrome.storage.local.get(['pairCode']);
+    const stored = await chrome.storage.local.get(['pairCode','activeJobId']);
     if (!stored.pairCode||stopDepth) return;
     try {
       const response = await fetch('https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api?path=' + encodeURIComponent('sessions/' + stored.pairCode), { signal: AbortSignal.timeout(10000) });
       const data = await response.json();
       if (!response.ok || data.error) return;
       const session = data.session || {};
-      let command = session.activeJob;
+      // Another browser's lane job is never read here.
+      let command = ownJob(session, stored.activeJobId) || (session.activeJob && !session.activeJob.lane ? session.activeJob : null);
       // A text job that only timed out (e.g. the ChatGPT tab froze) may still have its full reply in the
       // conversation: keep re-reading it. Studio accepts it only while it is still the latest job.
       if (!command && session.lastJob?.status === 'error' && ['part_analysis', 'script_structure'].includes(session.lastJob.type) && /quá thời gian|JSON không hợp lệ/i.test(String(session.lastError || ''))) command = session.lastJob;
@@ -231,7 +237,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       try { await ensureChatReceiver(); chatReady = true; } catch (caught) { error = caught?.message || String(caught); }
       const pending = await chrome.storage.local.get(['pendingChatEvents','transcriptJobs']);
       const transcriptEvents = Object.values(pending.transcriptJobs || {}).filter(job => job.pairCode === stored.pairCode && job.result && !job.acknowledged && job.state !== 'stopped').map(job => job.result);
-      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic:deliveryDiagnostic || syncDiagnostic, version: '0.4.34', transcriptEvents, pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
+      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic:deliveryDiagnostic || syncDiagnostic, version: '0.5.0', account: chatAccount, chatTabCount: (await chatTabs()).length, activeJobId: (await chrome.storage.local.get(['activeJobId'])).activeJobId || '', transcriptEvents, pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
       return;
     }
     if (message?.type === 'vis-pair') {
@@ -242,7 +248,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (chosen) await chrome.storage.local.set({ chatTabId: chosen.id });
       await ensureChatReceiver();
       await chrome.storage.local.set({ pairCode, ...(message.studioOrigin ? { studioOrigin: String(message.studioOrigin) } : {}) });
-      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.4.34' });
+      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.5.0' });
       await broadcastToStudio({ type: 'vis-status-changed' });
       return;
     }
@@ -372,7 +378,7 @@ async function managerHeartbeat() {
   }
   const watch=(await chrome.storage.local.get(['chatWatch'])).chatWatch||null;
   const diagnostic={sync:String(syncDiagnostic||deliveryDiagnostic||'').slice(0,300),capture:lastCapture,watch:watch&&{jobId:watch.jobId,reloads:watch.reloads,lastReason:watch.lastReason||null,gaveUp:Boolean(watch.gaveUp),aliveAgo:Math.round((Date.now()-watch.aliveAt)/1000),busyAgo:Math.round((Date.now()-watch.busyAt)/1000)},pingOk:Boolean(reply),candidates:candidates.length};
-  const body={diagnostic,pairCode:st.pairCode,activeJobId:st.activeJobId||null,chatTabId:chosen?.id??null,conversationUrl:st.identityJobId===st.activeJobId?st.conversationUrl||null:null,lastHeartbeatAt:reply?.lastHeartbeatAt??null,version:'0.4.34',identityVersion:1};
+  const body={diagnostic,pairCode:st.pairCode,activeJobId:st.activeJobId||null,chatTabId:chosen?.id??null,conversationUrl:st.identityJobId===st.activeJobId?st.conversationUrl||null:null,lastHeartbeatAt:reply?.lastHeartbeatAt??null,version:'0.5.0',identityVersion:1};
   try { await fetch('http://127.0.0.1:8765/api/ext/heartbeat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(5000)}); } catch {}
 }
 chrome.tabs.onUpdated.addListener((tabId,change,tab)=>{ if(!change.url)return; void (async()=>{const st=await chrome.storage.local.get(['chatTabId','activeJobId','identityJobId']); if(tabId!==st.chatTabId||!st.activeJobId||st.activeJobId!==st.identityJobId)return; try {const u=new URL(change.url);if(u.origin==='https://chatgpt.com'&&/^\/c\/[^/]+$/.test(u.pathname))await chrome.storage.local.set({conversationUrl:u.origin+u.pathname});}catch{}})(); });
@@ -387,7 +393,7 @@ async function chatWatchdog(now=Date.now()) {
   if(!st.pairCode||!st.activeJobId||!st.chatTabId||stopDepth) return;
   let w=st.chatWatch&&st.chatWatch.jobId===st.activeJobId?st.chatWatch:{jobId:st.activeJobId,sentAt:now,aliveAt:now,busyAt:now,reloads:0,reloadedAt:0};
   let job;
-  try { const response=await fetch('https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api?path='+encodeURIComponent('sessions/'+st.pairCode),{signal:AbortSignal.timeout(10000)}); job=(await response.json()).session?.activeJob; } catch { return; }
+  try { const response=await fetch('https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api?path='+encodeURIComponent('sessions/'+st.pairCode),{signal:AbortSignal.timeout(10000)}); job=ownJob((await response.json()).session,st.activeJobId); } catch { return; }
   if(!job||job.id!==st.activeJobId||!['queued','sending','sent','waiting'].includes(job.status)||cancelledJobs.has(job.id)) { await chrome.storage.local.remove('chatWatch'); return; }
   let pong=null;
   try { pong=await Promise.race([chrome.tabs.sendMessage(st.chatTabId,{type:'vis-ping'}),new Promise(resolve=>setTimeout(()=>resolve(null),3000))]); } catch {}

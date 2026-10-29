@@ -9,3 +9,7 @@ test('invalid nonce rejected',()=>{const s=store();assert.equal(resolveManagerLa
 
 test('Manager opens analysis instead of transcript',()=>{const s=store();resolveManagerLaunch(s,`?managerProject=${id}&managerRun=${run}`);assert.equal(s.getItem('vis-active-menu'),'1')});
 test('image workflow opens image tab',()=>{const s=store();resolveManagerLaunch(s,`?managerProject=${id}&managerRun=${run}&managerStage=images`);assert.equal(s.getItem('vis-active-menu'),'2')});
+
+test('Manager-created project is listed by name, never renaming an existing one',()=>{const s=store();const fresh='e'.repeat(32);const r=resolveManagerLaunch(s,`?managerProject=${fresh}&managerRun=${run}&managerName=${encodeURIComponent('Dự án mới')}&managerLane=1`);assert.equal(r.projectId,fresh);assert.equal(r.lane,true);const meta=JSON.parse(s.getItem('vis-project-meta'));assert.equal(meta[0].name,'Dự án mới');assert.equal(meta.length,2);
+ resolveManagerLaunch(s,`?managerProject=${id}&managerRun=${run}&managerName=Other`);assert.equal(JSON.parse(s.getItem('vis-project-meta')).find(p=>p.id===id).name,'Project A')});
+test('transcript stage opens the transcript tab',()=>{const s=store();resolveManagerLaunch(s,`?managerProject=${id}&managerRun=${run}&managerStage=transcript`);assert.equal(s.getItem('vis-active-menu'),'0')});

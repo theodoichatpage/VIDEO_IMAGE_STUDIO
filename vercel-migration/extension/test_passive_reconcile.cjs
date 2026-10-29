@@ -7,7 +7,7 @@ assert.match(content,/message\.passive && \(isGenerating\(\) \|\| \(currentJobId
 let now=1793260000000,captures=[],broadcast=[],reply={ok:false,busy:true};
 const job={id:'job1',type:'part_analysis',status:'waiting',prompt:'p'};
 const c={Date:{now:()=>now},Promise,Error,String,AbortSignal:{timeout:()=>undefined},encodeURIComponent,
- stopGeneration:0,stopDepth:0,checkStop(){},
+ stopGeneration:0,stopDepth:0,checkStop(){},ownJob:(s,id)=>[s?.activeJob,...(s?.laneJobs||[])].find(j=>j&&id&&j.id===id)||null,
  chrome:{storage:{local:{get:async()=>({pairCode:'pair',chatTabId:1}),set:async()=>{}}},tabs:{sendMessage:async(_id,msg)=>{captures.push(msg);return reply;}}},
  chatTabs:async()=>[{id:1}],ensureChatReceiver:async id=>({id}),
  fetch:async()=>({ok:true,json:async()=>({session:{activeJob:job}})}),

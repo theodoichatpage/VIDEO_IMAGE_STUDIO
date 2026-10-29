@@ -332,7 +332,21 @@
     }
   }
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  // Masked account label + short hash (never the full e-mail) so AI MANAGER can see which Plus account each tab uses.
+let accountInfo=null,accountAt=0;
+async function chatAccountInfo(){
+  if(Date.now()-accountAt<600000)return accountInfo;
+  accountAt=Date.now();
+  try{
+    const data=await (await fetch('/api/auth/session',{credentials:'include'})).json();
+    const email=String(data?.user?.email||'').trim().toLowerCase();
+    const plan=String(data?.account?.planType||data?.account?.plan_type||data?.accountPlan||'').slice(0,40);
+    const key=email?Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(email)))).slice(0,6).map(b=>b.toString(16).padStart(2,'0')).join(''):'';
+    accountInfo={key,plan,label:email?email.replace(/^(.)[^@]*?(.)?@/,(m,a,b)=>a+'***'+(b||'')+'@'):''};
+  }catch{}
+  return accountInfo;
+}
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === 'MGR_FP') {
       const messages = document.querySelectorAll('[data-message-author-role="assistant"]');
       const last = messages[messages.length - 1];
@@ -345,6 +359,7 @@
     }
     if (message?.type === 'vis-ping') {
       (async()=>{
+        const account=await chatAccountInfo();
         const st=await chrome.storage.local.get(['pairCode','activeJobId','activeCommand','conversationUrl','identityJobId']);
         let tabId=null;try {tabId=(await chrome.runtime.sendMessage({type:'vis-tab-id'}))?.chatTabId ?? null;}catch{}
         const url=/^\/c\/[^/]+$/.test(location.pathname)?location.origin+location.pathname:null;
@@ -353,8 +368,8 @@
         const marker=st.activeJobId && ((last && (last.innerText||'').includes('[VIS_JOB_ID:'+st.activeJobId+']')) || (document.querySelector('main')?.textContent||'').includes('[VIS_JOB_ID:'+st.activeJobId+']'));
         const imagePrompt=st.activeCommand?.type==='image_generation' && st.activeCommand?.id===st.activeJobId && typeof st.activeCommand.prompt==='string' && st.activeCommand.prompt.length>0 && last && (last.innerText||'').includes(st.activeCommand.prompt);
         const verified=currentJobId===st.activeJobId && !!currentJobId || Boolean((marker||imagePrompt) && st.identityJobId===st.activeJobId && st.conversationUrl===url);
-        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.4.34',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now()});
-      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.4.34',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
+        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.5.0',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now(),account});
+      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.5.0',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
       return true;
     }
     if (message?.type === 'vis-restore-draft') {

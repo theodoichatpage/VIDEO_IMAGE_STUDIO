@@ -4,7 +4,7 @@ const src=fs.readFileSync(__dirname+'/background.js','utf8');
 const section=src.slice(src.indexOf('const WATCH_HUNG_MS'),src.indexOf("chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name==='manager-heartbeat')"));
 function harness(){
  const store={pairCode:'pair',activeJobId:'job1',chatTabId:5};const h={store,reloads:0,events:[],pong:{ready:true,generating:false},job:{id:'job1',status:'waiting'}};
- const c={stopDepth:0,cancelledJobs:new Set(),reconciledAt:123,encodeURIComponent,AbortSignal:{timeout:()=>undefined},Promise,setTimeout,
+ const c={ownJob:(s,id)=>[s?.activeJob,...(s?.laneJobs||[])].find(j=>j&&id&&j.id===id)||null,stopDepth:0,cancelledJobs:new Set(),reconciledAt:123,encodeURIComponent,AbortSignal:{timeout:()=>undefined},Promise,setTimeout,
   chrome:{storage:{local:{get:async()=>({...store}),set:async o=>Object.assign(store,o),remove:async k=>{delete store[k];}}},
    tabs:{sendMessage:async()=>h.pong,reload:async()=>{h.reloads++;}}},
   fetch:async()=>({json:async()=>({session:{activeJob:h.job}})}),

@@ -6,6 +6,7 @@ import { assembleRewrittenScript, loadTranscriptWorkspace, saveTranscriptWorkspa
 import { fetchTranscript } from './transcriptProvider';
 import { buildRewritePrompt } from './transcriptAi';
 import { statusLabel } from './rewriteQueue';
+import { readManagerTranscript, readManagerTranscriptState, writeManagerTranscriptState, type ManagerTranscript, type ManagerTranscriptState } from './managerTranscript';
 
 type Props={onUseTranscript:(text:string,title?:string)=>void;projectId?:string};
 const time=(seconds:number)=>{const s=Math.max(0,Math.floor(seconds));const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),x=s%60;return h?`${h}:${String(m).padStart(2,'0')}:${String(x).padStart(2,'0')}`:`${m}:${String(x).padStart(2,'0')}`};
@@ -92,7 +93,7 @@ export default function TranscriptTab({onUseTranscript,projectId='default'}:Prop
  };
 
  const patch=(p:Partial<TranscriptWorkspaceState>)=>setWs(s=>({...s,...p}));
- const load=async()=>{if(!ws.url.trim())return;const generation=stopGeneration.current;setBusy(true);setError('');try{const transcript=await fetchTranscript({url:ws.url.trim(),language:ws.language});if(generation!==stopGeneration.current)return;patch({transcript,branches:[],sections:[],selectedBranchId:''});}catch(e){if(generation===stopGeneration.current)setError(e instanceof Error?e.message:'Không lấy được transcript.')}finally{if(generation===stopGeneration.current)setBusy(false)}};
+ const load=async(override?:{url:string;language?:string})=>{const url=(override?.url||ws.url).trim(),language=override?.language||ws.language;if(!url)return false;const generation=stopGeneration.current;setBusy(true);setError('');try{const transcript=await fetchTranscript({url,language});if(generation!==stopGeneration.current)return false;patch({url,language,transcript,branches:[],sections:[],selectedBranchId:''});return true;}catch(e){if(generation===stopGeneration.current)setError(e instanceof Error?e.message:'Không lấy được transcript.');return e instanceof Error?e.message:'Không lấy được transcript.'}finally{if(generation===stopGeneration.current)setBusy(false)}};
  const createParts=()=>{if(!ws.transcript||pending.current)return;if(ws.sections.length&&!window.confirm('Chia lại sẽ thay thế danh sách phần và nội dung đã viết lại. Bạn có chắc muốn tiếp tục?'))return;sendChat(buildPartitionPrompt(ws.transcript.text,ws.language),'mindmap')};
  const rewrite=(section:ScriptSection)=>{if(pending.current)return;setWs(s=>({...s,sections:s.sections.map(x=>x.id===section.id?{...x,status:'processing'}:x)}));const idx=ws.sections.findIndex(x=>x.id===section.id);const context=[ws.sections[idx-1]?.summary,ws.sections[idx+1]?.summary].filter(Boolean).join(' | ');sendChat(buildRewritePrompt(section,ws.stylePrompt,context),'rewrite',section.id)};
  const stop=()=>{setBatch(false);const wasPending=!!pending.current;clearPending();setWs(s=>({...s,sections:s.sections.map(x=>x.status==='processing'||x.status==='waiting'?{...x,status:'stopped'}:x)}));if(wasPending)window.postMessage({source:'vis-web',type:'studio-stop'},'*')};
@@ -115,6 +116,32 @@ export default function TranscriptTab({onUseTranscript,projectId='default'}:Prop
    setBatch(false);clearPending();setWs(s=>({...s,branches,sections:sectionsFromBranches(branches),selectedBranchId:branches[0]?.id||''}));setError('');setShowJson(false);setJsonText('');setJsonError('');
   }catch(err){setJsonError(err instanceof Error?err.message:'JSON chưa hợp lệ. Nội dung hiện tại vẫn được giữ nguyên.')}
  };
+
+ // AI MANAGER pipeline: Get transcript -> split -> rewrite in the saved style -> hand the script to analysis.
+ // Runs only for a command addressed to the open project; each step reuses the buttons above.
+ const [mgr,setMgr]=useState<ManagerTranscript|null>(null);
+ useEffect(()=>{
+  const check=()=>{const cmd=readManagerTranscript();if(!cmd||cmd.sessionId!==localStorage.getItem('vis-session'))return;const st=readManagerTranscriptState();if(st?.id===cmd.id&&['done','error'].includes(st.stage))return;setMgr(current=>current?.id===cmd.id?current:cmd)};
+  check();const t=window.setInterval(check,2000);return()=>window.clearInterval(t);
+ },[]);
+ useEffect(()=>{
+  if(!mgr||busy||aiBusy||pending.current)return;
+  const st=readManagerTranscriptState();const state=st?.id===mgr.id?st:{id:mgr.id,stage:'start',attempts:0};
+  if(['done','error'].includes(state.stage))return;
+  const save=(next:Partial<ManagerTranscriptState>)=>writeManagerTranscriptState({...state,...next,id:mgr.id,at:Date.now()});
+  const fail=(message:string)=>{save({stage:'error',error:message});setMgr(null)};
+  const attempt=(stage:string)=>{const n=state.stage===stage?(state.attempts||0)+1:1;if(n>3){fail(error||'Không hoàn tất bước '+stage+' sau 3 lần thử.');return false}save({stage,attempts:n,error:''});return true};
+  if(!ws.transcript||ws.url.trim()!==mgr.url){if(!attempt('fetch'))return;void load({url:mgr.url,language:mgr.language});return}
+  if(!mgr.rewrite){save({stage:'done',done:1,total:1});setMgr(null);void onUseTranscript(ws.transcript.text,ws.transcript.title);return}
+  if(mgr.style&&ws.stylePrompt!==mgr.style){patch({stylePrompt:mgr.style});return}
+  if(!ws.stylePrompt.trim()){fail('Chưa có prompt phong cách viết lại. Nhập trong AI MANAGER hoặc tab Get Transcript.');return}
+  if(!ws.sections.length){if(!attempt('partition'))return;sendChat(buildPartitionPrompt(ws.transcript.text,ws.language),'mindmap');return}
+  const done=ws.sections.filter(x=>x.status==='done').length;
+  if(done<ws.sections.length){if(batchRunning){if(state.stage!=='rewrite'||state.done!==done)save({stage:'rewrite',done,total:ws.sections.length,attempts:state.stage==='rewrite'?state.attempts:0});return}
+   const failed=ws.sections.filter(x=>x.status==='error'||x.status==='stopped').length;if(failed&&!attempt('rewrite'))return;save({stage:'rewrite',done,total:ws.sections.length});setBatch(true);return}
+  const text=assembleRewrittenScript(ws.sections);if(!text.trim()){fail('Kịch bản viết lại trống.');return}
+  save({stage:'done',done,total:ws.sections.length});setMgr(null);void onUseTranscript(text,ws.transcript.title);
+ },[mgr,busy,aiBusy,batchRunning,ws.transcript,ws.url,ws.sections,ws.stylePrompt,error]);
  const selectedPart=ws.sections.find(x=>x.branchId===ws.selectedBranchId)||ws.sections[0];
  const chars=ws.transcript?.text.length||0;
  return <section className="transcript-page workspace">

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { resolveManagerLaunch } from './managerLaunch.mjs';
+import { acceptManagerTranscript, readManagerTranscriptState } from './managerTranscript';
 import { Check, Clapperboard, Copy, Download, FileText, Folder, Image, Maximize2, Play, RotateCcw, Scissors, Settings, Square, Trash2, Video as VideoIcon } from 'lucide-react';
 import './index.css';
 import { EXTENSION_VERSION, EXTENSION_DOWNLOAD_URL } from './extensionRelease';
@@ -49,6 +50,9 @@ function App() {
   const [importError, setImportError] = useState('');
   const [importBusy, setImportBusy] = useState(false);
   const [extensionPairCode, setExtensionPairCode] = useState('');
+  // This browser profile's ChatGPT lane. AI MANAGER can give each lane its own job to run tabs in parallel.
+  const [laneId] = useState(() => { let value = localStorage.getItem('vis-lane-id') || ''; if (!/^[A-Za-z0-9_-]{6,64}$/.test(value)) { value = 'lane_' + crypto.randomUUID().replaceAll('-', '').slice(0, 16); localStorage.setItem('vis-lane-id', value); } return value; });
+  const [extensionFacts, setExtensionFacts] = useState<{ account?: { key?: string; plan?: string; label?: string } | null; activeJobId?: string; chatTabs?: number }>({});
   const [extensionVersion, setExtensionVersion] = useState('');
   const [chatReady, setChatReady] = useState(false);
   const [bridgeMessage, setBridgeMessage] = useState('');
@@ -134,6 +138,7 @@ function App() {
       if (event.data.type === 'studio-status') {
         setExtensionPairCode(event.data.pairCode || '');
         setExtensionVersion(event.data.version || '');
+        setExtensionFacts({ account: event.data.account || null, activeJobId: String(event.data.activeJobId || ''), chatTabs: Number(event.data.chatTabCount || 0) });
         setChatReady(Boolean(event.data.chatReady));
         setBridgeMessage(event.data.message || '');
         setSyncDiagnostic(event.data.syncDiagnostic || '');
@@ -176,11 +181,21 @@ function App() {
     return () => { window.removeEventListener('message', receive); window.clearInterval(timer); };
   }, [sessionId]);
 
-  const bridgeConnected = extensionPairCode === sessionId && ['0.4.10', '0.4.11', '0.4.12', '0.4.13', '0.4.14', '0.4.15', '0.4.16', '0.4.17', '0.4.18', '0.4.19', '0.4.20', '0.4.21', '0.4.22', '0.4.23', '0.4.24', '0.4.25', '0.4.26', '0.4.27', '0.4.28', '0.4.29', '0.4.30', '0.4.31', '0.4.32', '0.4.33', EXTENSION_VERSION].includes(extensionVersion) && chatReady;
+  const bridgeConnected = extensionPairCode === sessionId && ['0.4.10', '0.4.11', '0.4.12', '0.4.13', '0.4.14', '0.4.15', '0.4.16', '0.4.17', '0.4.18', '0.4.19', '0.4.20', '0.4.21', '0.4.22', '0.4.23', '0.4.24', '0.4.25', '0.4.26', '0.4.27', '0.4.28', '0.4.29', '0.4.30', '0.4.31', '0.4.32', '0.4.33', '0.4.34', EXTENSION_VERSION].includes(extensionVersion) && chatReady;
 
   // Optional, read-only status signal to the local AI MANAGER.
   const [managerWatch, setManagerWatch] = useState(() => !managerLaunch.error && (Boolean(managerLaunch.runId) || localStorage.getItem('vis-manager-watch') === '1'));
   const managerTabId = useRef('tab_' + Math.random().toString(36).slice(2) + Date.now().toString(36));
+  // Two Studio tabs in one browser share one extension: only one of them hands jobs to ChatGPT.
+  const laneDispatcher = useRef(false);
+  const holdsDispatch = () => {
+    try {
+      const lock = JSON.parse(localStorage.getItem('vis-lane-dispatcher') || 'null');
+      if (lock && lock.tab !== managerTabId.current && Date.now() - lock.at < 6000) { laneDispatcher.current = false; return false; }
+      localStorage.setItem('vis-lane-dispatcher', JSON.stringify({ tab: managerTabId.current, at: Date.now() }));
+    } catch { /* Storage unavailable: behave like before. */ }
+    laneDispatcher.current = true; return true;
+  };
   // Latest content state for the Manager signal: counts only, never the script text itself.
   const managerContent = useRef({ script, session });
   managerContent.current = { script, session };
@@ -207,11 +222,16 @@ function App() {
         const own = localStorage.getItem(workspaceStorageKey(sessionId)) !== null;
         const transcript = loadTranscriptWorkspace(own ? sessionId : 'default').transcript;
         projectState = { scriptDraftChars: draft.length, serverScriptChars: server.length, scriptSync: !draft ? 'empty' : draft === server ? 'synced' : localStorage.getItem('vis-script-draft-owner') === sessionId ? 'pending' : 'unconfirmed',
-          transcript: { exists: Boolean(transcript?.text?.trim()), chars: transcript?.text?.length || 0, segments: transcript?.segments?.length || 0, videoId: transcript?.videoId || '', scope: own ? 'project' : 'shared' } };
+          transcript: { exists: Boolean(transcript?.text?.trim()), chars: transcript?.text?.length || 0, segments: transcript?.segments?.length || 0, videoId: transcript?.videoId || '', scope: own ? 'project' : 'shared' },
+          pipeline: readManagerTranscriptState() };
       } catch { /* Content state is optional for presence. */ }
       void fetch(url, {
         method: 'POST', headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ managerRunId: managerLaunch.runId, origin: location.origin, sessionId, activeProjectId: sessionId, studioInstance, tabId: managerTabId.current, chatReady: bridgeConnected, projectName, projects, projectState }),
+        body: JSON.stringify({ managerRunId: managerLaunch.runId, origin: location.origin, sessionId, activeProjectId: sessionId, studioInstance, tabId: managerTabId.current, chatReady: bridgeConnected, projectName, projects, projectState,
+          worker: { laneId, lane: Boolean(managerLaunch.lane), extensionVersion, account: extensionFacts.account || null, extensionJob: extensionFacts.activeJobId || '', chatTabs: extensionFacts.chatTabs || 0, dispatcher: laneDispatcher.current } }),
+      }).then(response => response.json()).then(reply => {
+        // AI MANAGER may ask this project's tab to get the transcript and rewrite it (Get Transcript tab).
+        if (reply?.command && acceptManagerTranscript(reply.command, sessionId)) setActiveMenu(0);
       }).catch(() => {});
     };
     const close = () => {
@@ -239,7 +259,7 @@ function App() {
       window.removeEventListener('pagehide', close);
       window.removeEventListener('pageshow', resume);
     };
-  }, [managerWatch, sessionId, bridgeConnected]);
+  }, [managerWatch, sessionId, bridgeConnected, extensionFacts, extensionVersion]);
   // A Manager-launched tab saves the script typed in this project to the Studio server, so Manager
   // reads the same script after REFRESH. Only before analysis, never over a running job or existing parts.
   const managerScriptPending = !managerLaunch.error && managerLaunch.projectId === sessionId && Boolean(managerLaunch.runId) && serverReady && Boolean(session) && session?.id === sessionId
@@ -258,18 +278,28 @@ function App() {
     const timer = window.setTimeout(() => { void saveScriptForManager(); }, 1500);
     return () => window.clearTimeout(timer);
   }, [managerScriptPending, script, session?.updatedAt]);
+  const pendingShared = Boolean(session?.activeJob && ['queued', 'sending'].includes(session.activeJob.status) && (!session.activeJob.lane || session.activeJob.lane === laneId));
+  const myLaneJob = session?.laneJobs?.find(job => job.lane === laneId && ['queued', 'sending'].includes(job.status));
+  // A second ChatGPT browser opened by AI MANAGER for this project connects its extension by itself.
+  const autoBound = useRef(false);
   useEffect(() => {
-    if (!bridgeConnected || !session?.activeJob || !['queued', 'sending'].includes(session.activeJob.status)) return;
+    if (!managerLaunch.lane || autoBound.current || !extensionVersion || extensionPairCode === sessionId || extensionFacts.activeJobId) return;
+    autoBound.current = true;
+    window.postMessage({ source: 'vis-web', type: 'studio-bind-current-chat', pairCode: sessionId }, '*');
+    setNotice('AI MANAGER: đang kết nối ChatGPT của trình duyệt này với dự án.');
+  }, [extensionVersion, extensionPairCode, extensionFacts.activeJobId, sessionId]);
+  useEffect(() => {
+    if (!bridgeConnected || !(pendingShared || myLaneJob)) return;
     let cancelled = false;
     const generation=workGeneration.current;
-    const dispatch = () => {if(stopGate.current)return;void api.get('/api/bridge/' + sessionId + '/next').then(({ data }) => {
+    const dispatch = () => {if(stopGate.current||!holdsDispatch())return;void api.get('/api/bridge/' + sessionId + '/next?worker=' + laneId).then(({ data }) => {
       if(generation!==workGeneration.current||stopGate.current)return;
       if (!cancelled && data.discarded) { setSession(data.session as Session); setNotice('Đã chặn lệnh tồn đọng từ luồng cũ. Phần đang xử lý đã trở về Sẵn sàng; hãy bấm Phân tích phân cảnh lại.'); return; } if (!cancelled && data.command) window.postMessage({ source: 'vis-web', type: 'studio-send', pairCode: sessionId, command: data.command }, '*');
     }).catch(() => { if (!cancelled&&!stopGate.current) setNotice('Không thể lấy lệnh để gửi cho tiện ích.'); });};
     dispatch();
     const timer = window.setInterval(dispatch, 2000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [bridgeConnected, session?.activeJob?.id, session?.activeJob?.status, sessionId]);
+  }, [bridgeConnected, session?.activeJob?.id, session?.activeJob?.status, myLaneJob?.id, myLaneJob?.status, sessionId]);
 
   const changeScript = (value: string) => { setScript(value); localStorage.setItem('vis-script-draft', value); localStorage.setItem('vis-script-draft-owner', sessionId); };
   const ensureSession = async () => {

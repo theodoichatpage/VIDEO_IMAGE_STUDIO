@@ -3,8 +3,12 @@ type ResponseLike = { setHeader(name: string, value: string): void; status(code:
 
 type Scene = { title: string; backdrop: string; content: string; character: string; emotion: string; shot: string; image: string; prompt: string; imageStatus?: string; imageResults?: { url: string; prompt: string; createdAt: number; storagePath?: string; expiresAt?: number; jobId?: string }[]; imagePrompt?: string; imageError?: string };
 type Part = { id: string; title: string; range: string; content: string; status: string; scenes: Scene[]; analysisText: string; receivedAt?: number };
-type Job = { id: string; type: 'script_structure' | 'part_analysis' | 'image_generation'; status: string; prompt: string; partId?: string; sceneKey?: string; protocol: 2 | 3; expiresAt?: number };
-type Session = { id: string; script: string; status: string; activeJob: Job | null; lastJob?: Job; parts: Part[]; imageJobs: Job[]; imageCaptures?: Job[]; workEpoch?: number; updatedAt: number; bridgeLastSeen?: number; finishedJobIds?: string[]; lastError?: string; analysisQueue?: string[]; batchAnalysis?: boolean; stylePrompt?: string; separations?: Record<string, unknown>[]; analysisBackup?: { script: string; parts: Part[]; savedAt: number } };
+type Job = { id: string; type: 'script_structure' | 'part_analysis' | 'image_generation'; status: string; prompt: string; partId?: string; sceneKey?: string; protocol: 2 | 3; expiresAt?: number; lane?: string };
+type LaneResult = { jobId: string; type: string; status: string; partId?: string; sceneKey?: string; error?: string; at: number };
+// laneJobs: one job per ChatGPT tab ("lane") so AI MANAGER can run several tabs/browsers in parallel.
+type Session = { id: string; script: string; status: string; activeJob: Job | null; lastJob?: Job; parts: Part[]; imageJobs: Job[]; imageCaptures?: Job[]; laneJobs?: Job[]; laneLast?: Record<string, LaneResult>; workEpoch?: number; updatedAt: number; bridgeLastSeen?: number; finishedJobIds?: string[]; lastError?: string; analysisQueue?: string[]; batchAnalysis?: boolean; stylePrompt?: string; separations?: Record<string, unknown>[]; analysisBackup?: { script: string; parts: Part[]; savedAt: number } };
+type Change = { fail?: [string, number]; skip?: boolean; [key: string]: unknown };
+const laneOk = (value: string) => /^[A-Za-z0-9_-]{6,64}$/.test(value);
 
 const idOk = (value: string) => /^[A-Za-z0-9-]{16,64}$/.test(value);
 const newId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -78,7 +82,106 @@ async function read(id: string): Promise<Session | null> {
   const savedLayers = await database('studio_separations?session_id=eq.' + encodeURIComponent(id) + '&select=entry,updated_at&order=updated_at.asc') as { entry?: Record<string, unknown>; updated_at?: number }[];
   const separations = (savedLayers || []).flatMap(item => item.entry ? [item.entry] : []);
   const updatedAt = Math.max(value.updatedAt || 0, ...(savedLayers || []).map(item => Number(item.updated_at) || 0));
-  return { ...value, updatedAt, separations, parts, imageJobs: value.imageJobs || [], finishedJobIds: value.finishedJobIds || [] };
+  return { ...value, updatedAt, separations, parts, imageJobs: value.imageJobs || [], laneJobs: value.laneJobs || [], finishedJobIds: value.finishedJobIds || [] };
+}
+// Read-modify-write on the freshest record, committed only if nobody else wrote meanwhile (parallel lanes).
+async function mutate(id: string, change: (fresh: Session) => Change | void): Promise<Change & { session?: Session | null }> {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const rows = await database('studio_sessions?id=eq.' + encodeURIComponent(id) + '&select=record') as { record: Session }[];
+    const fresh = rows?.[0]?.record; if (!fresh) return { fail: ['Không tìm thấy dự án.', 404] };
+    fresh.laneJobs = fresh.laneJobs || []; fresh.imageJobs = fresh.imageJobs || []; fresh.parts = fresh.parts || [];
+    const result = change(fresh) || {};
+    if (result.fail) return result;
+    if (result.skip) return { ...result, session: await read(id) };
+    const previous = fresh.updatedAt; fresh.updatedAt = Math.max(Date.now(), previous + 1);
+    const saved = await database('studio_sessions?id=eq.' + encodeURIComponent(id) + '&record->>updatedAt=eq.' + encodeURIComponent(String(previous)), { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ record: fresh }) }) as unknown[];
+    if (saved?.length) return { ...result, session: await read(id) };
+  }
+  return { fail: ['Dự án đang được cập nhật liên tục. Thử lại sau vài giây.', 409] };
+}
+function finishLane(session: Session, job: Job, status: string, error = '') {
+  session.laneJobs = (session.laneJobs || []).filter(item => item.id !== job.id);
+  session.finishedJobIds = [...(session.finishedJobIds || []), job.id].slice(-200);
+  session.laneLast = { ...(session.laneLast || {}), [String(job.lane)]: { jobId: job.id, type: job.type, status, partId: job.partId, sceneKey: job.sceneKey, error: error.slice(0, 1000), at: Date.now() } };
+}
+async function laneEvent(session: Session, hit: Job, body: Record<string, unknown>) {
+  const state = String(body.state || ''); const text = String(body.text || '').trim();
+  let image: Awaited<ReturnType<typeof saveImage>> | undefined;
+  if (state === 'completed' && hit.type === 'image_generation') image = await saveImage(session, hit, body.imageDataUrl);
+  let scenes: Scene[] | undefined, analysisText = '', parseError = '';
+  if (hit.type === 'part_analysis' && (state === 'completed' || state === 'progress')) {
+    try {
+      const parsed = jsonReply(text); const raw = parsed.scenes;
+      if (!Array.isArray(raw) || !raw.length || raw.length > 30 || raw.some(scene => !scene || !String((scene as Record<string, unknown>).prompt || '').trim())) throw new Error('Cần JSON scenes có từ 1 đến 30 cảnh và prompt riêng cho mỗi cảnh.');
+      scenes = normalizeScenes(raw); analysisText = JSON.stringify(parsed);
+    } catch (caught) { parseError = caught instanceof Error ? caught.message : 'Không đọc được JSON phân cảnh.'; if (state === 'progress') return { fail: ['Dữ liệu cảnh đang đồng bộ chưa hợp lệ.', 422] as [string, number] }; }
+  }
+  return mutate(session.id, fresh => {
+    const job = fresh.laneJobs!.find(item => item.id === hit.id);
+    if (!job) return { skip: true, acknowledged: true, ignored: true };
+    const part = job.partId ? fresh.parts.find(item => item.id === job.partId) : undefined;
+    const scene = job.sceneKey ? findScene(fresh, job.sceneKey).scene : undefined;
+    if (state === 'sent') { job.status = 'waiting'; if (scene) scene.imageStatus = 'generating'; return {}; }
+    if (state === 'progress') {
+      if (job.type !== 'part_analysis' || !part || !scenes || scenes.length <= part.scenes.length) return { skip: true, acknowledged: true, ignored: true };
+      part.scenes = scenes; part.status = 'processing'; part.receivedAt = Date.now(); job.status = 'waiting'; return {};
+    }
+    if (state === 'completed' && job.type === 'part_analysis') {
+      if (!part) { finishLane(fresh, job, 'error', 'Không tìm thấy phần kịch bản.'); return {}; }
+      if (!scenes) { if (part.status !== 'complete') part.status = 'error'; finishLane(fresh, job, 'error', parseError); return {}; }
+      part.scenes = scenes; part.analysisText = analysisText; part.status = 'complete'; finishLane(fresh, job, 'completed'); return {};
+    }
+    if (state === 'completed' && job.type === 'image_generation') {
+      if (scene && image) { scene.imageResults = [image]; scene.imageStatus = 'complete'; scene.imageError = ''; }
+      finishLane(fresh, job, 'completed'); return {};
+    }
+    if (state === 'error') {
+      const message = text || (job.type === 'image_generation' ? 'ChatGPT không tạo được ảnh.' : 'ChatGPT không thể hoàn tất tác vụ.');
+      if (part && job.type === 'part_analysis' && part.status !== 'complete') part.status = 'error';
+      if (scene && job.type === 'image_generation') { scene.imageStatus = 'error'; scene.imageError = message; }
+      finishLane(fresh, job, 'error', message); return {};
+    }
+    return { skip: true, acknowledged: true, ignored: true };
+  });
+}
+function laneCommand(fresh: Session, lane: string, path: string[], body: Record<string, unknown>): Change {
+  if (typeof body.expectedWorkEpoch === 'number' && body.expectedWorkEpoch !== (fresh.workEpoch || 0)) return { fail: ['Yêu cầu cũ đã bị Dừng.', 409] };
+  const laneJobs = fresh.laneJobs!;
+  if (path[4] === 'release') {
+    // Manager takes a job back from a lane that died; late replies for it are ignored.
+    const job = laneJobs.find(item => item.lane === lane && item.id === String(body.jobId || ''));
+    if (!job) return { skip: true, released: false };
+    const part = job.partId ? fresh.parts.find(item => item.id === job.partId) : undefined;
+    if (part && job.type === 'part_analysis' && part.status !== 'complete') part.status = 'stopped';
+    const scene = job.sceneKey ? findScene(fresh, job.sceneKey).scene : undefined;
+    if (scene && job.type === 'image_generation' && scene.imageStatus !== 'complete') scene.imageStatus = 'stopped';
+    finishLane(fresh, job, 'released', String(body.reason || 'Manager chuyển việc sang tab khác.'));
+    return { released: true };
+  }
+  const busy = laneJobs.find(item => item.lane === lane);
+  if (fresh.activeJob?.lane === lane && !['completed', 'error', 'stopped'].includes(fresh.activeJob.status)) return { fail: ['Tab ChatGPT này đang làm tác vụ khác.', 409] };
+  if (path[4] === 'parts' && path[5] && path.length === 6) {
+    const part = fresh.parts.find(item => item.id === path[5]); if (!part) return { fail: ['Không tìm thấy phần kịch bản.', 404] };
+    if (busy) return busy.partId === part.id && busy.type === 'part_analysis' ? { skip: true, command: busy } : { fail: ['Tab ChatGPT này đang bận.', 409] };
+    if (part.status === 'complete' && part.scenes.length) return { fail: ['Phần này đã có kết quả.', 409] };
+    if (laneJobs.some(item => item.partId === part.id && item.type === 'part_analysis') || (fresh.activeJob?.type === 'part_analysis' && fresh.activeJob.partId === part.id)) return { fail: ['Phần này đang được tab khác phân cảnh.', 409] };
+    part.status = 'processing'; part.scenes = []; part.analysisText = ''; delete part.receivedAt;
+    const command: Job = { id: newId(), type: 'part_analysis', status: 'queued', prompt: partPrompt(part), partId: part.id, protocol: 2, lane };
+    laneJobs.push(command); fresh.lastError = ''; return { command };
+  }
+  if (path[4] === 'images' && path.length === 5) {
+    const key = String(body.sceneKey || ''); const style = String(body.stylePrompt || fresh.stylePrompt || '').trim();
+    const target = findScene(fresh, key); if (!target.scene?.prompt) return { fail: ['Cảnh này chưa có prompt ảnh.', 422] };
+    if (!style) return { fail: ['Cần prompt phong cách chung.', 422] };
+    if (busy) return busy.sceneKey === key && busy.type === 'image_generation' ? { skip: true, command: busy } : { fail: ['Tab ChatGPT này đang bận.', 409] };
+    if (target.scene.imageStatus === 'complete' && target.scene.imageResults?.length && body.force !== true) return { fail: ['Cảnh này đã có ảnh.', 409] };
+    if (laneJobs.some(item => item.sceneKey === key) || fresh.activeJob?.sceneKey === key || fresh.imageJobs.some(item => item.sceneKey === key && ['queued', 'sending', 'sent', 'waiting'].includes(item.status))) return { fail: ['Cảnh này đang được tạo ảnh ở tab khác.', 409] };
+    const prompt = imagePrompt(style, target.scene, String(body.ratio || '16:9'));
+    target.scene.imageStatus = 'queued'; target.scene.imagePrompt = prompt; target.scene.imageError = ''; fresh.stylePrompt = style;
+    const command: Job = { id: newId(), type: 'image_generation', status: 'queued', prompt, partId: target.part?.id, sceneKey: key, protocol: 3, lane };
+    laneJobs.push(command); return { command };
+  }
+  return { fail: ['Không tìm thấy API.', 404] };
 }
 async function write(session: Session) {
   session.updatedAt=Date.now();session.workEpoch=session.workEpoch||0;
@@ -228,6 +331,12 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         return send(res, 200, { session: await read(session.id) });
       }
       if(req.method==='POST'&&path[2]!=='stop'&&typeof body.expectedWorkEpoch==='number'&&body.expectedWorkEpoch!==(session.workEpoch||0))return fail(res,'Yêu cầu cũ đã bị Dừng.',409);
+      if (path[2] === 'lanes' && path[3] && req.method === 'POST') {
+        if (!laneOk(path[3])) return fail(res, 'Mã tab ChatGPT không hợp lệ.');
+        const out = await mutate(session.id, fresh => laneCommand(fresh, path[3], path, body));
+        if (out.fail) return fail(res, out.fail[0], out.fail[1]);
+        const { fail: _f, skip: _s, ...rest } = out; return send(res, 200, rest);
+      }
       if (path[2] === 'analysis' && req.method === 'POST') {
         if (session.activeJob && !['completed','error','stopped'].includes(session.activeJob.status)) return fail(res, 'Một tác vụ đang chờ ChatGPT.', 409);
         const script = String(body.script || '').trim(); if (!script) return fail(res, 'Kịch bản không được để trống.');
@@ -362,7 +471,8 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         for(let attempt=0;attempt<5;attempt++){
           const rows=await database('studio_sessions?id=eq.'+encodeURIComponent(session.id)+'&select=record') as {record:Session}[];
           const fresh=rows?.[0]?.record;if(!fresh)return fail(res,'Không tìm thấy dự án.',404);
-          const cancelled=[fresh.activeJob,...(fresh.imageJobs||[]),...(fresh.imageCaptures||[]),fresh.lastJob?.status==='error'?fresh.lastJob:null].filter(Boolean) as Job[];
+          const cancelled=[fresh.activeJob,...(fresh.imageJobs||[]),...(fresh.imageCaptures||[]),...(fresh.laneJobs||[]),fresh.lastJob?.status==='error'?fresh.lastJob:null].filter(Boolean) as Job[];
+          fresh.laneJobs=[];
           fresh.finishedJobIds=[...new Set([...(fresh.finishedJobIds||[]),...cancelled.map(job=>job.id)])].slice(-200);
           if(fresh.activeJob)fresh.lastJob={...fresh.activeJob,status:'stopped'};else if(fresh.lastJob?.status==='error')fresh.lastJob={...fresh.lastJob,status:'stopped'};
           fresh.activeJob=null;fresh.imageJobs=[];fresh.imageCaptures=[];pauseAnalysis(fresh);
@@ -379,7 +489,25 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
     if (path[0] === 'bridge' && path[1]) {
       const session = await read(path[1]); if (!session) return fail(res, 'Mã ghép không đúng.', 404);
       if (path[2] === 'ping' && req.method === 'POST') { session.bridgeLastSeen = Date.now(); await database('rpc/studio_touch_session', { method: 'POST', body: JSON.stringify({ session_id: session.id, seen_at: session.bridgeLastSeen }) }); return send(res, 200, { session: await read(session.id) }); }
-      if (path[2] === 'next' && req.method === 'GET') { const job = session.activeJob; if (!job || !['queued','sending'].includes(job.status)) return send(res, 200, { command: null }); if (!current(job)) { session.activeJob = null; session.status = 'parts_ready'; await write(session); return send(res, 200, { command: null, discarded: true }); } if (job.status === 'queued') { job.status = 'sending'; await write(session); } return send(res, 200, { command: job }); }
+      if (path[2] === 'next' && req.method === 'GET') {
+        // A Studio tab names its browser's ChatGPT lane; it only receives that lane's jobs.
+        const worker = String((req.query as Record<string, unknown>).worker || '');
+        const lane = laneOk(worker) ? worker : '';
+        if (lane) {
+          const mine = (session.laneJobs || []).find(item => item.lane === lane && ['queued', 'sending'].includes(item.status));
+          if (mine) {
+            if (mine.status === 'sending') return send(res, 200, { command: mine });
+            const out = await mutate(session.id, fresh => { const job = fresh.laneJobs!.find(item => item.id === mine.id); if (!job || !['queued', 'sending'].includes(job.status)) return { skip: true, command: null }; job.status = 'sending'; return { command: job }; });
+            return send(res, 200, { command: out.command || null });
+          }
+        }
+        const job = session.activeJob; if (!job || !['queued','sending'].includes(job.status)) return send(res, 200, { command: null });
+        // The shared job belongs to the first lane that took it; other browsers must not send it again.
+        if (lane && job.lane && job.lane !== lane) return send(res, 200, { command: null });
+        if (!current(job)) { session.activeJob = null; session.status = 'parts_ready'; await write(session); return send(res, 200, { command: null, discarded: true }); }
+        if (job.status === 'queued' || (lane && !job.lane)) { job.status = 'sending'; if (lane) job.lane = lane; await write(session); }
+        return send(res, 200, { command: job });
+      }
       if (path[2] === 'event' && req.method === 'POST') {
         const eventJobId = String(body.jobId || '');
         const capture=session.imageCaptures?.find(item=>item.id===eventJobId);
@@ -388,6 +516,14 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
           if((capture.expiresAt||0)<Date.now())return send(res,200,{session,acknowledged:true,ignored:true});
           try{return send(res,200,await commitImageCapture(session.id,capture,await saveImage(session,capture,body.imageDataUrl)));}
           catch(error){return fail(res,error instanceof Error?error.message:'Không lưu được ảnh đúng cảnh.',422);}
+        }
+        const laneHit = (session.laneJobs || []).find(item => item.id === eventJobId);
+        if (laneHit) {
+          let out;
+          try { out = await laneEvent(session, laneHit, body); }
+          catch (error) { return fail(res, error instanceof Error ? error.message : 'Không lưu được kết quả.', 422); }
+          if (out.fail) return fail(res, out.fail[0], out.fail[1]);
+          const { fail: _f, skip: _s, ...rest } = out; return send(res, 200, rest);
         }
         let job = session.activeJob;
         if (!job && body.state === 'completed' && session.lastJob?.id === eventJobId && session.lastJob.status === 'error' && session.lastJob.type !== 'image_generation') {
