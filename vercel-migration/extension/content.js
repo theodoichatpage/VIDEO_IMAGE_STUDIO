@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_0425__) return;
-  window.__VIS_CHAT_BRIDGE_0425__ = true;
+  if (window.__VIS_CHAT_BRIDGE_0426__) return;
+  window.__VIS_CHAT_BRIDGE_0426__ = true;
   let currentJobId = '';
   let lastDomChange = Date.now();
   new MutationObserver(() => { lastDomChange = Date.now(); }).observe(document.documentElement, {subtree:true, childList:true, characterData:true});
@@ -293,6 +293,10 @@
       const body = (document.body?.innerText || '').slice(0, 5000);
       sendResponse({generating:isGenerating(),msgCount:messages.length,lastLen:(last?.innerText || '').length,captcha:/captcha|verify you are human/i.test(body),rateLimit:/too many requests|rate limit|try again later/i.test(body),login:!composer(),lastDomChange,jobId:currentJobId}); return;
     }
+    if (message?.type === 'vis-conversation-size') {
+      sendResponse({ chars: VISReplyReader.conversationChars(document), path: location.pathname, generating: isGenerating() || Boolean(currentJobId) });
+      return;
+    }
     if (message?.type === 'vis-ping') {
       (async()=>{
         const st=await chrome.storage.local.get(['pairCode','activeJobId','activeCommand','conversationUrl','identityJobId']);
@@ -303,8 +307,8 @@
         const marker=st.activeJobId && last && (last.innerText||'').includes('[VIS_JOB_ID:'+st.activeJobId+']');
         const imagePrompt=st.activeCommand?.type==='image_generation' && st.activeCommand?.id===st.activeJobId && typeof st.activeCommand.prompt==='string' && st.activeCommand.prompt.length>0 && last && (last.innerText||'').includes(st.activeCommand.prompt);
         const verified=currentJobId===st.activeJobId && !!currentJobId || Boolean((marker||imagePrompt) && st.identityJobId===st.activeJobId && st.conversationUrl===url);
-        sendResponse({ready:Boolean(composer()),version:'0.4.25',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now()});
-      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.4.25',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
+        sendResponse({ready:Boolean(composer()),version:'0.4.26',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now()});
+      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.4.26',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
       return true;
     }
     if (message?.type === 'vis-restore-draft') {

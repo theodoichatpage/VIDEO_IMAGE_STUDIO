@@ -108,6 +108,11 @@
     }
     return { node: nodes.at(-1), sources: [...new Set(list.filter(Boolean))], reason: 'matched', anchored: true };
   }
+  // Characters in message bubbles only (prompts + answers); page scripts and UI chrome are not counted.
+  function conversationChars(document) {
+    const selector = ANSWER + ', ' + USERISH;
+    return [...document.querySelectorAll(selector)].filter(node => outsideComposer(node) && !node.parentElement?.closest?.(selector)).reduce((total, node) => total + (node.textContent || '').length, 0);
+  }
   function sources(document, context = {}) {
     const primary = roleSources(document, context);
     if (primary.reason === 'matched' || context.type === 'image_generation') return primary;
@@ -215,6 +220,6 @@
     }
     return { ...full, complete: false };
   }
-  globalThis.VISReplyReader = { turns, snapshot, sources, anchored, extract, read, readStreaming, diagnose };
+  globalThis.VISReplyReader = { turns, snapshot, sources, anchored, extract, read, readStreaming, diagnose, conversationChars };
 })();
 

@@ -108,3 +108,8 @@ test('progress reading returns complete scenes only, from the anchored reply', (
   const r = reader.readStreaming(doc, ctx('j1'));
   assert.equal(r.complete, false); assert.ok(JSON.parse(r.text).scenes.length >= 2);
 });
+
+test('conversation size counts message bubbles only, not page chrome', () => {
+  const doc = page(h('div', { class: 'whitespace-pre-wrap' }, 'x'.repeat(1000)), h('div', { 'data-markdown-text-style': 'assistant-message' }, h('p', {}, 'y'.repeat(500))), h('div', { class: 'sidebar' }, 'z'.repeat(99999)));
+  assert.equal(reader.conversationChars(doc), 1500);
+});
