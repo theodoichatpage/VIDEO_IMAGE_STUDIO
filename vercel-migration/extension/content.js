@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_0428__) return;
-  window.__VIS_CHAT_BRIDGE_0428__ = true;
+  if (window.__VIS_CHAT_BRIDGE_0429__) return;
+  window.__VIS_CHAT_BRIDGE_0429__ = true;
   let currentJobId = '';
   let lastDomChange = Date.now();
   new MutationObserver(() => { lastDomChange = Date.now(); }).observe(document.documentElement, {subtree:true, childList:true, characterData:true});
@@ -313,8 +313,8 @@
         const marker=st.activeJobId && last && (last.innerText||'').includes('[VIS_JOB_ID:'+st.activeJobId+']');
         const imagePrompt=st.activeCommand?.type==='image_generation' && st.activeCommand?.id===st.activeJobId && typeof st.activeCommand.prompt==='string' && st.activeCommand.prompt.length>0 && last && (last.innerText||'').includes(st.activeCommand.prompt);
         const verified=currentJobId===st.activeJobId && !!currentJobId || Boolean((marker||imagePrompt) && st.identityJobId===st.activeJobId && st.conversationUrl===url);
-        sendResponse({ready:Boolean(composer()),version:'0.4.28',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now()});
-      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.4.28',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
+        sendResponse({ready:Boolean(composer()),version:'0.4.29',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now()});
+      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.4.29',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
       return true;
     }
     if (message?.type === 'vis-restore-draft') {
@@ -350,6 +350,9 @@
         }).catch(error => sendResponse({ ok: false, error: error.message }));
         return true;
       }
+      // Periodic (passive) checks must not read the page while ChatGPT is writing or while this tab's own
+      // waiter runs the job: repeated full reads during streaming froze ChatGPT ("page isn't responding").
+      if (message.passive && (isGenerating() || (currentJobId && currentJobId === context.id))) { sendResponse({ ok: false, busy: true }); return; }
       const result = VISReplyReader.readStreaming(document, { ...context, type: context.type || message.jobType || currentJobType });
       if (!result.text) { sendResponse({ ok: false, error: (result.reason === 'latest-user-mismatch' ? 'Tab ChatGPT đang mở không có lệnh của phần cần đồng bộ. Hãy mở đúng hội thoại đã trả lời phần này.' : result.reason === 'invalid-json' ? (isGenerating() ? 'ChatGPT vẫn đang trả lời phần này; JSON chưa hoàn tất. Đợi ChatGPT xong rồi đồng bộ lại.' : 'Đã tìm thấy phản hồi đúng phần nhưng JSON không hợp lệ: ' + (result.detail || 'không tìm thấy JSON') + '.') : 'Chưa đọc được câu trả lời sau lệnh của phần này. Giữ tab ChatGPT mở ở cuối phản hồi rồi bấm Đồng bộ lại.' ) + ' [' + VISReplyReader.diagnose(document, context) + ']' }); return; }
       // Capturing a valid reply ends the matching waiter without stopping ChatGPT.
