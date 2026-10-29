@@ -1,6 +1,10 @@
 (() => {
   const normalize = text => String(text || '').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
-  const text = node => node?.innerText || node?.textContent || '';
+  // innerText forces style/layout for every word span while ChatGPT animates a streaming answer;
+  // reads during streaming use textContent only (lightMode), the final read may use innerText.
+  let lightMode = false;
+  const text = node => lightMode ? (node?.textContent || '') : (node?.innerText || node?.textContent || '');
+  const light = fn => { const previous = lightMode; lightMode = true; try { return fn(); } finally { lightMode = previous; } };
   const wordResponse = node => String(node?.getAttribute?.('class') || '').includes('ResponseRoot-');
   const roleOf = node => {
     const direct = node.getAttribute?.('data-message-author-role') || node.getAttribute?.('data-turn');
@@ -221,6 +225,6 @@
     }
     return { ...full, complete: false };
   }
-  globalThis.VISReplyReader = { turns, snapshot, sources, anchored, extract, read, readStreaming, diagnose, conversationChars };
+  globalThis.VISReplyReader = { turns, snapshot, sources, anchored, extract, read, readStreaming, diagnose, conversationChars, light };
 })();
 

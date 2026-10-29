@@ -1,6 +1,6 @@
-VIDEO IMAGE STUDIO — ChatGPT Bridge v0.4.29
+VIDEO IMAGE STUDIO — ChatGPT Bridge v0.4.30
 
-1. Tải ZIP 0.4.29 và giải nén. Tệp nằm trong một thư mục VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.29.
+1. Tải ZIP 0.4.30 và giải nén. Tệp nằm trong một thư mục VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v0.4.30.
 2. Nếu đã cài tiện ích: chép đè các tệp mới vào đúng thư mục tiện ích đang dùng, rồi mở chrome://extensions hoặc edge://extensions và bấm Tải lại trên thẻ VIDEO IMAGE STUDIO. Cách này giữ dữ liệu kết nối và kết quả đang chờ trong tiện ích.
 3. Nếu chưa cài: bật Chế độ nhà phát triển, bấm Tải tiện ích đã giải nén và chọn thư mục chứa manifest.json. Chỉ bật một bản tiện ích Studio.
 4. Tải lại cả tab web và tab ChatGPT. Trên web bấm Kết nối ChatGPT rồi kết nối lại.
@@ -31,3 +31,4 @@ Nếu ChatGPT đang bật chế độ Tạo ảnh trong ô nhập, tắt chế �
 14. Bản 0.4.27: sửa lỗi tab ChatGPT bị treo khi đang trả lời phân cảnh/chia kịch bản dài. Tiện ích không còn đọc toàn trang ở mỗi chữ ChatGPT viết; chỉ cập nhật tiến độ mỗi 4 giây và đọc kết quả khi ChatGPT đã dừng viết.
 15. Bản 0.4.28: phần bị báo "JSON không hợp lệ" trong lúc tab ChatGPT bị đứng cũng được tự đọc lại sau khi tải lại tab; chỉ nhận khi JSON đầy đủ và hợp lệ.
 16. Bản 0.4.29: sửa lỗi gốc làm tab ChatGPT "không phản hồi" khi đang viết phân cảnh. Các tab Studio hỏi trạng thái mỗi 5 giây khiến tiện ích đọc lại toàn trang ChatGPT liên tục trong lúc ChatGPT đang viết; nay việc kiểm tra định kỳ không đọc trang khi ChatGPT đang trả lời và chỉ chạy tối đa mỗi 20 giây.
+17. Bản 0.4.30: trong lúc ChatGPT đang viết, tiện ích chỉ đọc nhẹ (không tính bố cục) và tự giãn nhịp đọc theo độ nặng của trang (tối đa khoảng 10% thời gian của trang) để ChatGPT không bị "không phản hồi".

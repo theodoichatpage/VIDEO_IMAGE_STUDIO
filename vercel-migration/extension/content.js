@@ -1,6 +1,6 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_0429__) return;
-  window.__VIS_CHAT_BRIDGE_0429__ = true;
+  if (window.__VIS_CHAT_BRIDGE_0430__) return;
+  window.__VIS_CHAT_BRIDGE_0430__ = true;
   let currentJobId = '';
   let lastDomChange = Date.now();
   new MutationObserver(() => { lastDomChange = Date.now(); }).observe(document.documentElement, {subtree:true, childList:true, characterData:true});
@@ -38,9 +38,11 @@
   };
   const emit = payload => chrome.runtime.sendMessage({ type: 'vis-chat-event', payload }).catch(() => null);
 
+  // Checked every 500 ms while ChatGPT streams: no getComputedStyle/layout here (that alone is costly on
+  // a long animated answer). The stop control only exists while ChatGPT is answering.
   const isGenerating = () => {
     const button = stopButton();
-    return Boolean(button && !button.disabled && isVisible(button));
+    return Boolean(button && !button.disabled && !button.closest('[hidden], [aria-hidden="true"]'));
   };
 
   const activeImageMode = () => {
@@ -121,7 +123,7 @@
     let last = assistantText(kind);
     let started = Boolean(last && last !== before);
     let changedAt = Date.now(), domChangedAt = Date.now();
-    let sentScenes = 0, progressAt = 0, checkedAt = 0;
+    let sentScenes = 0, progressAt = 0, checkedAt = 0, progressGap = 5000;
     const observer = new MutationObserver(() => { domChangedAt = Date.now(); });
     observer.observe(document.body, { subtree: true, childList: true, characterData: true });
     const deadline = Date.now() + 10 * 60 * 1000;
@@ -130,14 +132,20 @@
         if (cancelled || token !== generation) throw new Error('Đã dừng tác vụ.');
         const generating = isGenerating();
         if (generating) { started = true; changedAt = Math.max(changedAt, domChangedAt); }
-        if (Date.now() - progressAt >= 4000) {
-          progressAt = Date.now();
-          if (kind !== 'image_generation' && VISReplyReader.sources(document, replyContext).sources.some(text => /creating image|đang tạo (hình )?ảnh/i.test(text))) {
+        if (Date.now() - progressAt >= progressGap) {
+          // Self-pacing: the next progress read waits at least 10x the time this one took, so the
+          // extension never occupies more than ~10% of the page's main thread while ChatGPT writes.
+          const readStart = Date.now();
+          const imageMode = kind !== 'image_generation' && VISReplyReader.light(() => VISReplyReader.sources(document, replyContext).sources.some(text => /creating image|đang tạo (hình )?ảnh/i.test(text)));
+          if (imageMode) {
             stopButton()?.click();
             throw new Error('ChatGPT đã chuyển sang tạo ảnh. Đã yêu cầu dừng; hãy tắt chế độ Tạo ảnh và phân tích lại phần này.');
           }
-          if (kind === 'part_analysis') {
-            const progress = VISReplyReader.readStreaming(document, { ...replyContext, type: kind });
+          let progress = null;
+          if (kind === 'part_analysis') progress = VISReplyReader.light(() => VISReplyReader.readStreaming(document, { ...replyContext, type: kind }));
+          const cost = Date.now() - readStart;
+          progressAt = Date.now(); progressGap = Math.max(5000, cost * 10);
+          if (progress) {
             if (progress.text) {
               const count = JSON.parse(progress.text).scenes.length;
               if (count > sentScenes) { await emit({ jobId: replyContext.id, state: 'progress', text: progress.text }); sentScenes = count; }
@@ -313,8 +321,8 @@
         const marker=st.activeJobId && last && (last.innerText||'').includes('[VIS_JOB_ID:'+st.activeJobId+']');
         const imagePrompt=st.activeCommand?.type==='image_generation' && st.activeCommand?.id===st.activeJobId && typeof st.activeCommand.prompt==='string' && st.activeCommand.prompt.length>0 && last && (last.innerText||'').includes(st.activeCommand.prompt);
         const verified=currentJobId===st.activeJobId && !!currentJobId || Boolean((marker||imagePrompt) && st.identityJobId===st.activeJobId && st.conversationUrl===url);
-        sendResponse({ready:Boolean(composer()),version:'0.4.29',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now()});
-      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.4.29',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
+        sendResponse({ready:Boolean(composer()),version:'0.4.30',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now()});
+      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.4.30',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
       return true;
     }
     if (message?.type === 'vis-restore-draft') {
