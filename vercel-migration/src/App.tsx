@@ -303,10 +303,11 @@ function App() {
   }, [managerScriptPending, script, session?.updatedAt]);
   const pendingShared = Boolean(session?.activeJob && ['queued', 'sending'].includes(session.activeJob.status) && (!session.activeJob.lane || session.activeJob.lane === laneId));
   const myLaneJob = session?.laneJobs?.find(job => job.lane === laneId && ['queued', 'sending'].includes(job.status));
-  // A second ChatGPT browser opened by AI MANAGER for this project connects its extension by itself.
+  // A Studio tab AI MANAGER opened to run this project (main or extra ChatGPT browser) connects the
+  // extension to the project by itself, unless the extension is busy with another job.
   const autoBound = useRef(false);
   useEffect(() => {
-    if (!managerLaunch.lane || autoBound.current || !extensionVersion || extensionPairCode === sessionId || extensionFacts.activeJobId) return;
+    if (!(managerLaunch.lane || (managerLaunch.runId && managerLaunch.projectId === sessionId)) || autoBound.current || !extensionVersion || extensionPairCode === sessionId || extensionFacts.activeJobId) return;
     autoBound.current = true;
     window.postMessage({ source: 'vis-web', type: 'studio-bind-current-chat', pairCode: sessionId }, '*');
     setNotice('AI MANAGER: đang kết nối ChatGPT của trình duyệt này với dự án.');
