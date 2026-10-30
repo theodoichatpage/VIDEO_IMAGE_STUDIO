@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parallax 2.5D</title>
+<style>
+  :root { --bg:#14161b; --panel:#1d2027; --line:#2c313b; --text:#e6e8ec; --muted:#9097a3; --accent:#4f8cff; --danger:#e5534b; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui, "Segoe UI", sans-serif; }
+  header { padding:12px 18px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; }
+  header h1 { font-size:16px; margin:0; }
+  header span { color:var(--muted); font-size:13px; }
+  main { display:grid; grid-template-columns: 420px 1fr; gap:0; height:calc(100vh - 49px); }
+  .left { border-right:1px solid var(--line); overflow:auto; padding:14px; }
+  .right { padding:14px; display:flex; flex-direction:column; gap:10px; overflow:auto; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:6px 0 10px; }
+  .settings { display:grid; grid-template-columns: 1fr 1fr; gap:8px 12px; background:var(--panel); padding:12px; border-radius:8px; margin-bottom:16px; }
+  .settings label { display:flex; flex-direction:column; gap:3px; font-size:12px; color:var(--muted); }
+  .settings .full { grid-column: 1 / -1; }
+  input, select, button { font:inherit; color:var(--text); }
+  select, input[type=number] { background:#111318; border:1px solid var(--line); border-radius:5px; padding:5px 6px; }
+  input[type=range] { width:100%; accent-color:var(--accent); }
+  .val { color:var(--text); float:right; }
+  button { background:#2a2f39; border:1px solid var(--line); border-radius:6px; padding:7px 12px; cursor:pointer; }
+  button:hover { border-color:#47505f; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .scene { background:var(--panel); border:2px solid transparent; border-radius:8px; padding:10px; margin-bottom:10px; cursor:pointer; }
+  .scene.active { border-color:var(--accent); }
+  .scene-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+  .scene-head input { background:transparent; border:none; color:var(--text); font-weight:600; width:60%; }
+  .scene-head button { padding:2px 8px; font-size:12px; }
+  .slots { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+  .slot { position:relative; aspect-ratio:16/10; border:1px dashed #3a404c; border-radius:6px; display:flex; align-items:center; justify-content:center; text-align:center; font-size:11px; color:var(--muted); overflow:hidden;
+          background: repeating-conic-gradient(#20232a 0 25%, #191b21 0 50%) 0 0/14px 14px; }
+  .slot img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
+  .slot .tag { position:absolute; left:3px; bottom:3px; background:rgba(0,0,0,.7); color:#fff; padding:1px 5px; border-radius:3px; font-size:10px; z-index:2; }
+  .slot .x { position:absolute; right:3px; top:3px; z-index:2; padding:0 6px; font-size:11px; background:rgba(0,0,0,.7); border:none; }
+  .slot.drag { border-color:var(--accent); }
+  .stage { flex:1; min-height:240px; display:flex; align-items:center; justify-content:center; background:#0c0d10; border-radius:8px; overflow:hidden; }
+  canvas { max-width:100%; max-height:100%; background:#000; }
+  .progress { height:6px; background:#0c0d10; border-radius:3px; overflow:hidden; }
+  .progress > div { height:100%; width:0; background:var(--accent); transition:width .1s; }
+  #status { color:var(--muted); font-size:13px; min-height:20px; }
+  .hint { color:var(--muted); font-size:12px; margin:6px 0 12px; }
+  .drop-all { border:1px dashed #3a404c; border-radius:8px; padding:14px; text-align:center; color:var(--muted); margin-bottom:12px; cursor:pointer; }
+  .drop-all.drag { border-color:var(--accent); color:var(--text); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Parallax 2.5D</h1>
+  <span>Nhập 3 lớp ảnh → xuất video chuyển động giả 3D, hàng loạt</span>
+</header>
+<main>
+  <section class="left">
+    <h2>Cài đặt chung</h2>
+    <div class="settings">
+      <label>Khung hình
+        <select id="res">
+          <option value="1920x1080">1920×1080 (ngang)</option>
+          <option value="1080x1920">1080×1920 (dọc)</option>
+          <option value="1080x1080">1080×1080 (vuông)</option>
+          <option value="1280x720">1280×720</option>
+          <option value="3840x2160">3840×2160 (4K)</option>
+        </select>
+      </label>
+      <label>Kiểu chuyển động
+        <select id="motion">
+          <option value="right">Lia sang phải</option>
+          <option value="left">Lia sang trái</option>
+          <option value="up">Lia lên</option>
+          <option value="down">Lia xuống</option>
+          <option value="zoomin">Đẩy vào (zoom in)</option>
+          <option value="zoomout">Kéo ra (zoom out)</option>
+          <option value="dolly">Đẩy vào + lia phải</option>
+        </select>
+      </label>
+      <label>Thời lượng (giây)
+        <input type="number" id="duration" min="1" max="60" step="0.5" value="5">
+      </label>
+      <label>FPS
+        <select id="fps"><option>24</option><option selected>30</option><option>60</option></select>
+      </label>
+      <label class="full">Biên độ chuyển động <span class="val" id="strengthV"></span>
+        <input type="range" id="strength" min="2" max="30" value="10">
+      </label>
+      <label>Tốc độ hậu cảnh <span class="val" id="sBgV"></span>
+        <input type="range" id="sBg" min="0" max="200" value="20">
+      </label>
+      <label>Tốc độ trung cảnh <span class="val" id="sMidV"></span>
+        <input type="range" id="sMid" min="0" max="200" value="55">
+      </label>
+      <label>Tốc độ tiền cảnh <span class="val" id="sFgV"></span>
+        <input type="range" id="sFg" min="0" max="200" value="110">
+      </label>
+      <label>Làm mờ tiền cảnh <span class="val" id="blurV"></span>
+        <input type="range" id="blur" min="0" max="20" value="0">
+      </label>
+      <label class="full" style="flex-direction:row;align-items:center;gap:6px;color:var(--text)">
+        <input type="checkbox" id="ease" checked> Chuyển động mượt (chậm đầu – chậm cuối)
+      </label>
+    </div>
+
+    <h2>Các cảnh</h2>
+    <div class="drop-all" id="dropAll">
+      Kéo thả nhiều ảnh vào đây (hoặc bấm để chọn).<br>
+      Mỗi 3 ảnh = 1 cảnh. Tên file có <b>bg / mid / fg</b> (hoặc <b>hau / trung / tien</b>) sẽ tự xếp đúng lớp,
+      nếu không thì xếp theo thứ tự tên: hậu → trung → tiền.
+    </div>
+    <input type="file" id="bulkInput" accept="image/*" multiple hidden>
+    <div id="scenes"></div>
+    <button id="addScene">+ Thêm cảnh trống</button>
+  </section>
+
+  <section class="right">
+    <div class="row">
+      <button id="playBtn" class="primary">⏸ Dừng xem</button>
+      <button id="exportOne">Xuất cảnh đang chọn</button>
+      <button id="exportAll" class="primary">Xuất tất cả cảnh</button>
+      <button id="cancelBtn" disabled>Huỷ</button>
+    </div>
+    <div class="progress"><div id="bar"></div></div>
+    <div id="status">Chưa có cảnh nào. Thêm ảnh ở cột bên trái.</div>
+    <div class="stage"><canvas id="cv"></canvas></div>
+    <div class="hint">Lưu ý: video được ghi theo thời gian thực, nên hãy giữ tab này mở và hiển thị trong lúc xuất.
+      Ảnh trung cảnh và tiền cảnh nên là PNG nền trong suốt, cùng kích thước với ảnh hậu cảnh.</div>
+  </section>
+</main>
+
+<script>
+const LAYERS = [
+  { key:'bg',  label:'Hậu cảnh' },
+  { key:'mid', label:'Trung cảnh' },
+  { key:'fg',  label:'Tiền cảnh' },
+];
+const $ = id => document.getElementById(id);
+const cv = $('cv'), ctx = cv.getContext('2d');
+
+let scenes = [];
+let selected = null;
+let playing = true;
+let exporting = false;
+let cancelFlag = false;
+let sceneCounter = 0;
+
+// ---------- settings ----------
+function settings() {
+  const [W, H] = $('res').value.split('x').map(Number);
+  return {
+    W, H,
+    motion: $('motion').value,
+    duration: Math.max(1, +$('duration').value || 5),
+    fps: +$('fps').value,
+    strength: +$('strength').value / 100,
+    speeds: { bg: +$('sBg').value / 100, mid: +$('sMid').value / 100, fg: +$('sFg').value / 100 },
+    blur: +$('blur').value,
+    ease: $('ease').checked,
+  };
+}
+function refreshLabels() {
+  $('strengthV').textContent = $('strength').value + '%';
+  $('sBgV').textContent = ($('sBg').value / 100).toFixed(2) + '×';
+  $('sMidV').textContent = ($('sMid').value / 100).toFixed(2) + '×';
+  $('sFgV').textContent = ($('sFg').value / 100).toFixed(2) + '×';
+  $('blurV').textContent = $('blur').value + 'px';
+}
+document.querySelectorAll('.settings input, .settings select').forEach(el => el.addEventListener('input', () => {
+  refreshLabels(); resizeCanvas();
+}));
+refreshLabels();
+
+function resizeCanvas() {
+  const s = settings();
+  if (cv.width !== s.W || cv.height !== s.H) { cv.width = s.W; cv.height = s.H; }
+}
+resizeCanvas();
+
+// ---------- drawing ----------
+function drawFrame(scene, t, s) {
+  const { W, H } = s;
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.filter = 'none';
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+  if (!scene) return;
+  const p = s.ease ? (1 - Math.cos(Math.PI * t)) / 2 : t;
+  const A = s.strength;
+
+  for (const { key } of LAYERS) {
+    const layer = scene.layers[key];
+    if (!layer) continue;
+    const img = layer.bmp;
+    const iw = img.width, ih = img.height;
+    const k = s.speeds[key];
+    const cover = Math.max(W / iw, H / ih);
+    let scale = cover, dx = 0, dy = 0;
+    const m = s.motion;
+
+    if (m === 'left' || m === 'right' || m === 'up' || m === 'down') {
+      scale = cover * (1 + A * k);           // phóng to vừa đủ để không lộ mép
+      const horiz = (m === 'left' || m === 'right');
+      const travel = A * k * (horiz ? W : H);
+      const dir = (m === 'right' || m === 'down') ? -1 : 1; // camera đi phải → cảnh trôi trái
+      if (horiz) dx = dir * (p - 0.5) * travel; else dy = dir * (p - 0.5) * travel;
+    } else if (m === 'zoomin') {
+      scale = cover * (1 + A * k * p);
+    } else if (m === 'zoomout') {
+      scale = cover * (1 + A * k * (1 - p));
+    } else if (m === 'dolly') {
+      scale = cover * (1 + A * k * (0.5 + p));
+      dx = -(p - 0.5) * A * k * W * 0.5;
+    }
+
+    const dw = iw * scale, dh = ih * scale;
+    ctx.filter = (key === 'fg' && s.blur > 0) ? `blur(${s.blur * W / 1920}px)` : 'none';
+    ctx.drawImage(img, (W - dw) / 2 + dx, (H - dh) / 2 + dy, dw, dh);
+  }
+  ctx.filter = 'none';
+}
+
+// ---------- preview loop ----------
+let t0 = performance.now();
+function loop(now) {
+  if (!exporting) {
+    const s = settings();
+    resizeCanvas();
+    if (playing) {
+      const cycle = ((now - t0) / 1000) / s.duration;
+      const ph = cycle % 2;
+      const t = ph < 1 ? ph : 2 - ph; // xem trước kiểu đi – về
+      drawFrame(selected, t, s);
+    }
+  }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+$('playBtn').onclick = () => {
+  playing = !playing;
+  $('playBtn').textContent = playing ? '⏸ Dừng xem' : '▶ Xem trước';
+  if (playing) t0 = performance.now();
+};
+
+// ---------- scenes UI ----------
+async function loadLayer(file) {
+  const bmp = await createImageBitmap(file);
+  return { bmp, url: URL.createObjectURL(file), name: file.name };
+}
+
+function newScene(name) {
+  const sc = { id: ++sceneCounter, name: name || ('canh_' + String(sceneCounter).padStart(2, '0')), layers: { bg:null, mid:null, fg:null } };
+  scenes.push(sc);
+  if (!selected) selected = sc;
+  return sc;
+}
+
+function renderScenes() {
+  const wrap = $('scenes');
+  wrap.innerHTML = '';
+  for (const sc of scenes) {
+    const el = document.createElement('div');
+    el.className = 'scene' + (sc === selected ? ' active' : '');
+    el.onclick = () => { selected = sc; t0 = performance.now(); renderScenes(); };
+
+    const head = document.createElement('div');
+    head.className = 'scene-head';
+    const nameIn = document.createElement('input');
+    nameIn.value = sc.name;
+    nameIn.onclick = e => e.stopPropagation();
+    nameIn.oninput = () => sc.name = nameIn.value.trim() || ('canh_' + sc.id);
+    const del = document.createElement('button');
+    del.textContent = 'Xoá';
+    del.onclick = e => {
+      e.stopPropagation();
+      scenes = scenes.filter(x => x !== sc);
+      if (selected === sc) selected = scenes[0] || null;
+      renderScenes();
+    };
+    head.append(nameIn, del);
+
+    const slots = document.createElement('div');
+    slots.className = 'slots';
+    for (const { key, label } of LAYERS) {
+      const slot = document.createElement('div');
+      slot.className = 'slot';
+      const layer = sc.layers[key];
+      if (layer) {
+        const img = document.createElement('img'); img.src = layer.url; slot.append(img);
+        const x = document.createElement('button'); x.className = 'x'; x.textContent = '✕';
+        x.onclick = e => { e.stopPropagation(); sc.layers[key] = null; renderScenes(); };
+        slot.append(x);
+      } else {
+        slot.append(document.createTextNode('Bấm / thả ảnh'));
+      }
+      const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = label; slot.append(tag);
+
+      const pick = async file => {
+        if (!file || !file.type.startsWith('image/')) return;
+        sc.layers[key] = await loadLayer(file);
+        selected = sc; renderScenes(); updateStatus();
+      };
+      slot.onclick = e => {
+        e.stopPropagation();
+        const inp = document.createElement('input');
+        inp.type = 'file'; inp.accept = 'image/*';
+        inp.onchange = () => pick(inp.files[0]);
+        inp.click();
+      };
+      slot.ondragover = e => { e.preventDefault(); e.stopPropagation(); slot.classList.add('drag'); };
+      slot.ondragleave = () => slot.classList.remove('drag');
+      slot.ondrop = e => { e.preventDefault(); e.stopPropagation(); slot.classList.remove('drag'); pick(e.dataTransfer.files[0]); };
+      slots.append(slot);
+    }
+    el.append(head, slots);
+    wrap.append(el);
+  }
+  updateStatus();
+}
+
+function updateStatus() {
+  if (exporting) return;
+  const ready = scenes.filter(s => s.layers.bg || s.layers.mid || s.layers.fg).length;
+  $('status').textContent = scenes.length
+    ? `${scenes.length} cảnh (${ready} cảnh có ảnh). Định dạng xuất: ${pickMime().ext.toUpperCase()}`
+    : 'Chưa có cảnh nào. Thêm ảnh ở cột bên trái.';
+}
+
+$('addScene').onclick = () => { newScene(); renderScenes(); };
+
+// ---------- bulk import ----------
+function layerKeyFromName(name) {
+  const n = name.toLowerCase();
+  if (/(^|[^a-z])(bg|back|background|hau|hậu|sau|sky)([^a-z]|$)/.test(n) || n.includes('background') || n.includes('hau_canh') || n.includes('hậu')) return 'bg';
+  if (/(^|[^a-z])(fg|front|foreground|tien|tiền|truoc)([^a-z]|$)/.test(n) || n.includes('foreground') || n.includes('tien_canh') || n.includes('tiền')) return 'fg';
+  if (/(^|[^a-z])(mid|middle|midground|trung|nhanvat|char)([^a-z]|$)/.test(n) || n.includes('midground') || n.includes('trung')) return 'mid';
+  return null;
+}
+function baseName(name) {
+  return name.replace(/\.[^.]+$/, '')
+    .replace(/[_\-\s.]*(bg|background|back|mid|middle|midground|fg|foreground|front|hau[_\s-]?canh|trung[_\s-]?canh|tien[_\s-]?canh|hau|trung|tien|layer[_\s-]?\d|[123])$/i, '')
+    .trim();
+}
+async function bulkImport(fileList) {
+  const files = [...fileList].filter(f => f.type.startsWith('image/'))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  if (!files.length) return;
+  const allTagged = files.every(f => layerKeyFromName(f.name));
+  const groups = [];
+  if (allTagged) {
+    const map = new Map();
+    for (const f of files) {
+      const b = baseName(f.name) || 'canh';
+      if (!map.has(b)) map.set(b, {});
+      map.get(b)[layerKeyFromName(f.name)] = f;
+    }
+    for (const [name, g] of map) groups.push({ name, g });
+  } else {
+    for (let i = 0; i < files.length; i += 3) {
+      const chunk = files.slice(i, i + 3);
+      groups.push({ name: baseName(chunk[0].name) || null, g: { bg: chunk[0], mid: chunk[1], fg: chunk[2] } });
+    }
+  }
+  $('status').textContent = 'Đang nạp ảnh…';
+  for (const { name, g } of groups) {
+    const sc = newScene(name);
+    for (const k of ['bg', 'mid', 'fg']) if (g[k]) sc.layers[k] = await loadLayer(g[k]);
+  }
+  renderScenes();
+}
+const dropAll = $('dropAll');
+dropAll.onclick = () => $('bulkInput').click();
+$('bulkInput').onchange = e => { bulkImport(e.target.files); e.target.value = ''; };
+dropAll.ondragover = e => { e.preventDefault(); dropAll.classList.add('drag'); };
+dropAll.ondragleave = () => dropAll.classList.remove('drag');
+dropAll.ondrop = e => { e.preventDefault(); dropAll.classList.remove('drag'); bulkImport(e.dataTransfer.files); };
+// thả ảnh vào chỗ khác trong trang cũng không mở file
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => e.preventDefault());
+
+// ---------- export ----------
+function pickMime() {
+  const opts = [
+    { type: 'video/mp4;codecs=avc1.640028', ext: 'mp4' },
+    { type: 'video/mp4;codecs=avc1', ext: 'mp4' },
+    { type: 'video/mp4', ext: 'mp4' },
+    { type: 'video/webm;codecs=vp9', ext: 'webm' },
+    { type: 'video/webm', ext: 'webm' },
+  ];
+  if (typeof MediaRecorder === 'undefined') return { type: '', ext: 'webm' };
+  return opts.find(o => MediaRecorder.isTypeSupported(o.type)) || { type: '', ext: 'webm' };
+}
+
+function download(blob, filename) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+
+function recordScene(scene, s, onProgress) {
+  return new Promise((resolve, reject) => {
+    const mime = pickMime();
+    const stream = cv.captureStream(s.fps);
+    const bitrate = Math.round(s.W * s.H * s.fps * 0.15);
+    const rec = new MediaRecorder(stream, { mimeType: mime.type || undefined, videoBitsPerSecond: bitrate });
+    const chunks = [];
+    rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    rec.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      if (cancelFlag) return resolve(null);
+      resolve({ blob: new Blob(chunks, { type: mime.type || 'video/webm' }), ext: mime.ext });
+    };
+    rec.onerror = e => reject(e.error || e);
+
+    drawFrame(scene, 0, s);
+    rec.start(250);
+    const start = performance.now();
+    const step = now => {
+      const t = Math.min(1, (now - start) / 1000 / s.duration);
+      drawFrame(scene, t, s);
+      onProgress(t);
+      if (cancelFlag || t >= 1) {
+        // giữ khung cuối thêm 1 nhịp để không bị hụt
+        setTimeout(() => rec.stop(), 1000 / s.fps * 2);
+        return;
+      }
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+function safeName(n) { return (n || 'canh').replace(/[\\/:*?"<>|]+/g, '_'); }
+
+async function exportList(list) {
+  list = list.filter(sc => sc && (sc.layers.bg || sc.layers.mid || sc.layers.fg));
+  if (!list.length) { $('status').textContent = 'Không có cảnh nào có ảnh để xuất.'; return; }
+  if (typeof MediaRecorder === 'undefined') { $('status').textContent = 'Trình duyệt không hỗ trợ ghi video. Hãy dùng Chrome hoặc Edge.'; return; }
+  const s = settings();
+  resizeCanvas();
+  exporting = true; cancelFlag = false;
+  ['exportOne', 'exportAll', 'playBtn', 'addScene'].forEach(id => $(id).disabled = true);
+  $('cancelBtn').disabled = false;
+  try {
+    for (let i = 0; i < list.length; i++) {
+      const sc = list[i];
+      selected = sc; renderScenes();
+      $('status').textContent = `Đang xuất ${i + 1}/${list.length}: ${sc.name}…`;
+      const res = await recordScene(sc, s, t => {
+        $('bar').style.width = (((i + t) / list.length) * 100).toFixed(1) + '%';
+      });
+      if (!res) break;
+      download(res.blob, `${safeName(sc.name)}.${res.ext}`);
+    }
+    $('status').textContent = cancelFlag ? 'Đã huỷ.' : `Xong! Đã xuất ${list.length} video vào thư mục Tải xuống.`;
+  } catch (err) {
+    $('status').textContent = 'Lỗi khi xuất: ' + (err.message || err);
+  } finally {
+    exporting = false;
+    ['exportOne', 'exportAll', 'playBtn', 'addScene'].forEach(id => $(id).disabled = false);
+    $('cancelBtn').disabled = true;
+    $('bar').style.width = cancelFlag ? '0' : '100%';
+    t0 = performance.now();
+  }
+}
+
+$('exportOne').onclick = () => exportList([selected]);
+$('exportAll').onclick = () => exportList(scenes);
+$('cancelBtn').onclick = () => { cancelFlag = true; };
+
+renderScenes();
+</script>
+</body>
+</html>

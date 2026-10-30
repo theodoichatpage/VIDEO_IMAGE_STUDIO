@@ -1,18 +1,21 @@
-import threading,time,uuid
+import os,re,sys,subprocess,threading,time,uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from flask import Flask,jsonify,request,send_file
 import numpy as np
 from PIL import Image,ImageOps
 from sam2_adapter import Sam2Adapter
+from parallax import default_output_root,safe_segment
 ROOT=Path(__file__).resolve().parent; OUTPUT_ROOT=ROOT/'outputs'; MAX_PIXELS=16_000_000
 ALLOWED_ORIGINS={'https://video-image-studio.vercel.app','http://localhost:5173','http://127.0.0.1:5173'}
+# Bản preview của chính dự án trên Vercel (đuôi -image-studio1.vercel.app chỉ team này tạo được)
+PREVIEW_ORIGIN=re.compile(r'^https://video-image-studio-git-[a-z0-9-]+-image-studio1\.vercel\.app$')
 app=Flask(__name__);app.config['MAX_CONTENT_LENGTH']=30*1024*1024
 jobs={};lock=threading.Lock();pool=ThreadPoolExecutor(max_workers=1);adapter=Sam2Adapter(ROOT)
 @app.after_request
 def cors(response):
     origin=request.headers.get('Origin')
-    if origin in ALLOWED_ORIGINS:
+    if origin in ALLOWED_ORIGINS or (origin and PREVIEW_ORIGIN.match(origin)):
         response.headers['Access-Control-Allow-Origin']=origin;response.headers['Vary']='Origin';response.headers['Access-Control-Allow-Methods']='GET,POST,OPTIONS';response.headers['Access-Control-Allow-Headers']='Content-Type'
     return response
 @app.route('/v1/<path:_path>',methods=['OPTIONS'])
@@ -27,16 +30,20 @@ def classify(layer):
 def update(jid,**changes):
     with lock:
         if jid in jobs:jobs[jid].update(changes)
-def run_job(jid,rgb,fill):
+def run_job(jid,rgb,fill,parallax=None):
     def report(percent,message,*_):update(jid,status='processing',progress=max(0,min(100,int(percent))),message=message,updatedAt=time.time())
     try:
-        report(2,'Đang chuẩn bị SAM 2.1.');result=adapter.separate(rgb,OUTPUT_ROOT/jid,fill=fill,report=report)
-        result['layers']=[dict(layer,type=classify(layer),fileId=layer['file']) for layer in result['layers']]
+        if parallax:
+            result=adapter.separate_parallax(rgb,OUTPUT_ROOT/jid,parallax['save_dir'],layers=parallax['layers'],report=report)
+            result['layers']=[dict(layer,fileId=layer['file']) for layer in result['layers']]
+        else:
+            report(2,'Đang chuẩn bị SAM 2.1.');result=adapter.separate(rgb,OUTPUT_ROOT/jid,fill=fill,report=report)
+            result['layers']=[dict(layer,type=classify(layer),fileId=layer['file']) for layer in result['layers']]
         update(jid,status='complete',progress=100,message='Hoàn tất',result=result,updatedAt=time.time())
     except Exception as exc:update(jid,status='error',message=str(exc),error=str(exc),updatedAt=time.time())
 @app.get('/v1/health')
 def health():
-    caps=adapter.capabilities();return jsonify(ok=True,version='1.1.0',sam2=caps['sam2'],device=caps['device'],ffmpeg=False)
+    caps=adapter.capabilities();return jsonify(ok=True,version='1.2.0',sam2=caps['sam2'],device=caps['device'],ffmpeg=False,parallax=True,lama=caps['lama'],parallaxDir=str(default_output_root()))
 @app.post('/v1/separate')
 def separate():
     if any(j['status'] in ('queued','processing') for j in jobs.values()):return jsonify(error='Đang xử lý một ảnh. Vui lòng đợi.'),409
@@ -50,7 +57,13 @@ def separate():
             bg=Image.new('RGB',image.size,'white');bg.paste(image,mask=image.getchannel('A'));image=bg
         rgb=np.asarray(image.convert('RGB'))
     except Exception:return jsonify(error='Không đọc được ảnh.'),400
-    jid=uuid.uuid4().hex;jobs[jid]={'jobId':jid,'status':'queued','progress':0,'message':'Đang chờ xử lý','createdAt':time.time(),'updatedAt':time.time()};pool.submit(run_job,jid,rgb,request.form.get('fill')=='1');return jsonify(jobId=jid),202
+    parallax=None
+    if request.form.get('mode')=='parallax':
+        stem=os.path.splitext(os.path.basename(upload.filename or 'anh'))[0]
+        project=request.form.get('project') or 'chung'
+        parallax={'layers':4 if request.form.get('layers')=='4' else 3,
+                  'save_dir':default_output_root()/safe_segment(project,'chung')/safe_segment(stem,'anh')}
+    jid=uuid.uuid4().hex;jobs[jid]={'jobId':jid,'status':'queued','progress':0,'message':'Đang chờ xử lý','createdAt':time.time(),'updatedAt':time.time()};pool.submit(run_job,jid,rgb,request.form.get('fill')=='1',parallax);return jsonify(jobId=jid),202
 @app.get('/v1/jobs/<jid>')
 def job(jid):
     item=jobs.get(jid)
@@ -65,7 +78,7 @@ def result(jid):
 def safe_file(jid,file_id):
     item=jobs.get(jid)
     if not item or item.get('status')!='complete':return None
-    allowed={'cac_lop.zip','ghep_lai.png','anh_goc.png','vi_tri.json','background_da_lap.png'}|{layer['file'] for layer in item['result']['layers']}
+    allowed={'cac_lop.zip','ghep_lai.png','anh_goc.png','vi_tri.json','background_da_lap.png','do_sau.png'}|{layer['file'] for layer in item['result']['layers']}
     if file_id not in allowed:return None
     path=(OUTPUT_ROOT/jid/file_id).resolve();return path if path.is_relative_to((OUTPUT_ROOT/jid).resolve()) and path.is_file() else None
 @app.get('/v1/jobs/<jid>/files/<path:file_id>')
@@ -78,4 +91,12 @@ def zip_file(jid):
     path=safe_file(jid,'cac_lop.zip')
     if not path:return jsonify(error='ZIP không còn trên máy.'),404
     return send_file(path,as_attachment=True,download_name='cac_lop.zip')
+@app.post('/v1/jobs/<jid>/open-folder')
+def open_folder(jid):
+    item=jobs.get(jid)
+    folder=(item or {}).get('result',{}).get('saved_dir') if item and item.get('status')=='complete' else None
+    if not folder or not os.path.isdir(folder):return jsonify(error='Thư mục không còn trên máy.'),404
+    if sys.platform=='win32':os.startfile(folder)
+    else:subprocess.Popen(['open' if sys.platform=='darwin' else 'xdg-open',folder])
+    return jsonify(ok=True,folder=folder)
 if __name__=='__main__':OUTPUT_ROOT.mkdir(parents=True,exist_ok=True);app.run(host='127.0.0.1',port=17841,debug=False,threaded=True)
