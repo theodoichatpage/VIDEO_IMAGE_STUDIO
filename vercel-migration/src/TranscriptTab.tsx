@@ -179,7 +179,7 @@ export default function TranscriptTab({onUseTranscript,projectId=localStorage.ge
  useEffect(()=>{
   const onStatus=(e:MessageEvent)=>{
    if(e.source!==window||e.data?.source!=='vis-extension'||e.data.type!=='studio-status')return;
-   const job=pending.current;if(!job?.started){lostChecks.current=0;return}
+   if(typeof e.data.activeJobId!=='string'||!e.data.chatReady)return;const job=pending.current;if(!job?.started){lostChecks.current=0;return}
    const known=String(e.data.activeJobId||'')===job.id||(e.data.transcriptEvents||[]).some((x:{jobId?:string})=>x?.jobId===job.id);
    lostChecks.current=known?0:lostChecks.current+1;
    if(lostChecks.current>=3){lostChecks.current=0;failPending('Tác vụ dở bị mất khi trình duyệt khởi động lại; sẽ làm lại phần này.')}

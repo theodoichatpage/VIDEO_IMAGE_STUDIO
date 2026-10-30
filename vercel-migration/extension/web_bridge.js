@@ -20,6 +20,10 @@
         version: response?.version || '',
         pendingCount: Array.isArray(response?.pendingEvents) ? response.pendingEvents.length : 0,
         syncDiagnostic: response?.syncDiagnostic || '',
+        // Which job this browser's extension runs, its ChatGPT account and tab count (Studio + AI MANAGER use them).
+        activeJobId: typeof response?.activeJobId === 'string' ? response.activeJobId : '',
+        account: response?.account || null,
+        chatTabCount: Number(response?.chatTabCount || 0),
         message: response?.error || ''
       }, '*');
     } catch (error) {
