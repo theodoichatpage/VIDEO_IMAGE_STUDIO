@@ -92,7 +92,7 @@ export default function TranscriptTab({onUseTranscript,projectId=localStorage.ge
   if(pending.current)return;
   const job:PendingAi={id:'transcript-'+crypto.randomUUID(),kind,sectionId,expires:Date.now()+10*60*1000};
   pending.current=job;localStorage.setItem(pendingKey,JSON.stringify(job));setError('');setAiBusy(kind==='mindmap'?'mindmap':sectionId||'rewrite');setAiStatus('Đang chuyển lệnh sang Extension…');
-  armTimeout(5000,'Extension chưa nhận lệnh. Hãy cài Extension v0.4.17, tải lại web và tab ChatGPT, rồi Kết nối ChatGPT.');
+  armTimeout(45000,'Extension chưa nhận lệnh sau 45 giây. Kiểm tra: chỉ bật một bản Extension (bản trong thư mục AI_MANAGER), ChatGPT đã đăng nhập, và Studio đã Kết nối ChatGPT.');
   window.postMessage({source:'vis-web',type:'studio-transcript-ai',pairCode,command:{id:job.id,type:kind==='mindmap'?'transcript_mindmap':'transcript_rewrite',kind,sectionId,prompt}},'*');
  };
 
