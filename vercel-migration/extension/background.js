@@ -46,7 +46,7 @@ async function ensureChatReceiver(preferredId) {
   try { await chrome.tabs.update(tab.id, { autoDiscardable: false }); } catch {}
   if (existing?.ready) {
     if (existing.account) chatAccount = existing.account;
-    if (existing.version !== '0.5.2') throw new Error('Tab ChatGPT còn cầu nối cũ v' + (existing.version || '?') + '. Hãy F5 tab ChatGPT để nạp Extension 0.5.2.');
+    if (existing.version !== '0.5.3') throw new Error('Tab ChatGPT còn cầu nối cũ v' + (existing.version || '?') + '. Hãy F5 tab ChatGPT để nạp Extension 0.5.3.');
     return tab;
   }
   try {
@@ -56,7 +56,7 @@ async function ensureChatReceiver(preferredId) {
   }
   try {
     const pong = await chrome.tabs.sendMessage(tab.id, { type: 'vis-ping' });
-    if (pong?.ready && pong.version === '0.5.2') return tab;
+    if (pong?.ready && pong.version === '0.5.3') return tab;
   } catch {}
   throw new Error('Tab ChatGPT chưa sẵn sàng: có thể ChatGPT chưa đăng nhập. Mở tab chatgpt.com, đăng nhập rồi thử lại.');
 }
@@ -265,7 +265,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       try { await ensureChatReceiver(); chatReady = true; } catch (caught) { error = caught?.message || String(caught); }
       const pending = await chrome.storage.local.get(['pendingChatEvents','transcriptJobs']);
       const transcriptEvents = Object.values(pending.transcriptJobs || {}).filter(job => job.pairCode === stored.pairCode && job.result && !job.acknowledged && job.state !== 'stopped').map(job => job.result);
-      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic:deliveryDiagnostic || syncDiagnostic, version: '0.5.2', account: chatAccount, chatTabCount: (await chatTabs()).length, activeJobId: (await chrome.storage.local.get(['activeJobId'])).activeJobId || '', transcriptEvents, pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
+      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic:deliveryDiagnostic || syncDiagnostic, version: '0.5.3', account: chatAccount, chatTabCount: (await chatTabs()).length, activeJobId: (await chrome.storage.local.get(['activeJobId'])).activeJobId || '', transcriptEvents, pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
       return;
     }
     if (message?.type === 'vis-pair') {
@@ -276,7 +276,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (chosen) await chrome.storage.local.set({ chatTabId: chosen.id });
       await ensureChatReceiver();
       await chrome.storage.local.set({ pairCode, ...(message.studioOrigin ? { studioOrigin: String(message.studioOrigin) } : {}) });
-      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.5.2' });
+      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.5.3' });
       await broadcastToStudio({ type: 'vis-status-changed' });
       return;
     }
@@ -406,7 +406,7 @@ async function managerHeartbeat() {
   }
   const watch=(await chrome.storage.local.get(['chatWatch'])).chatWatch||null;
   const diagnostic={sync:String(syncDiagnostic||deliveryDiagnostic||'').slice(0,300),capture:lastCapture,watch:watch&&{jobId:watch.jobId,reloads:watch.reloads,lastReason:watch.lastReason||null,gaveUp:Boolean(watch.gaveUp),aliveAgo:Math.round((Date.now()-watch.aliveAt)/1000),busyAgo:Math.round((Date.now()-watch.busyAt)/1000)},pingOk:Boolean(reply),candidates:candidates.length};
-  const body={diagnostic,pairCode:st.pairCode,activeJobId:st.activeJobId||null,chatTabId:chosen?.id??null,conversationUrl:st.identityJobId===st.activeJobId?st.conversationUrl||null:null,lastHeartbeatAt:reply?.lastHeartbeatAt??null,version:'0.5.2',identityVersion:1};
+  const body={diagnostic,pairCode:st.pairCode,activeJobId:st.activeJobId||null,chatTabId:chosen?.id??null,conversationUrl:st.identityJobId===st.activeJobId?st.conversationUrl||null:null,lastHeartbeatAt:reply?.lastHeartbeatAt??null,version:'0.5.3',identityVersion:1};
   try { await fetch('http://127.0.0.1:8765/api/ext/heartbeat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(5000)}); } catch {}
 }
 chrome.tabs.onUpdated.addListener((tabId,change,tab)=>{ if(!change.url)return; void (async()=>{const st=await chrome.storage.local.get(['chatTabId','activeJobId','identityJobId']); if(tabId!==st.chatTabId||!st.activeJobId||st.activeJobId!==st.identityJobId)return; try {const u=new URL(change.url);if(u.origin==='https://chatgpt.com'&&/^\/c\/[^/]+$/.test(u.pathname))await chrome.storage.local.set({conversationUrl:u.origin+u.pathname});}catch{}})(); });
@@ -442,5 +442,25 @@ async function chatWatchdog(now=Date.now()) {
   }
   await chrome.storage.local.set({chatWatch:w});
 }
-chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name==='manager-heartbeat'){void managerHeartbeat();void chatWatchdog().catch(()=>null);}});
+// After a self-update, put the new bridges into tabs that are already open (no F5 needed).
+chrome.runtime?.onInstalled?.addListener(details=>{ if(details.reason!=='update')return; void (async()=>{
+  for(const tab of await chrome.tabs.query({})){
+    const url=tab.url||'';
+    try{
+      if(url.startsWith(CHATGPT_PREFIX))await chrome.scripting.executeScript({target:{tabId:tab.id},files:['reply-reader.js','content.js']});
+      else if(/^https:\/\/([a-z0-9-]+\.)*vercel\.app\//.test(url)||url.startsWith('https://video-image-studio-web-ma9gms.v2.appdeploy.ai/'))await chrome.scripting.executeScript({target:{tabId:tab.id},files:['web_bridge.js']});
+    }catch{}
+  }
+})(); });
+// Self-update: AI MANAGER writes new versions into this extension's folder. When the folder holds a
+// different version and no job is running, reload so the new code takes over without the user.
+async function reloadIfUpdated(){
+  try{
+    const onDisk=(await (await fetch(chrome.runtime.getURL('manifest.json'),{cache:'no-store'})).json()).version;
+    if(!onDisk||onDisk===chrome.runtime.getManifest().version)return false;
+    const st=await chrome.storage.local.get(['activeJobId']);if(st.activeJobId||stopDepth)return false;
+    chrome.runtime.reload();return true;
+  }catch{return false;}
+}
+chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name==='manager-heartbeat'){void managerHeartbeat();void chatWatchdog().catch(()=>null);void reloadIfUpdated();}});
 

@@ -1,6 +1,7 @@
 (() => {
-  if (window.__VIS_WEB_BRIDGE_0434__) return;
-  window.__VIS_WEB_BRIDGE_0434__ = true;
+  const bridgeKey = '__VIS_WEB_BRIDGE_' + (chrome.runtime.getManifest?.()?.version||'dev').replace(/\W/g, '_');
+  if (window[bridgeKey]) return;
+  window[bridgeKey] = true;
 
   const postStatus = async () => {
     try {
@@ -28,6 +29,8 @@
 
   window.addEventListener('message', async event => {
     if (event.source !== window || event.data?.source !== 'vis-web') return;
+    // An older copy left behind by a self-update stays silent; the new copy answers.
+    if (chrome.runtime?.getManifest && !chrome.runtime.id) return;
     if (event.data.type === 'studio-status') { await postStatus(); return; }
     if (event.data.type === 'studio-bind-current-chat') {
       try {

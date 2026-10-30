@@ -1,6 +1,8 @@
 (() => {
-  if (window.__VIS_CHAT_BRIDGE_0434__) return;
-  window.__VIS_CHAT_BRIDGE_0434__ = true;
+  // One bridge per extension version: after a self-update the new version injects itself again.
+  const bridgeKey = '__VIS_CHAT_BRIDGE_' + (chrome.runtime.getManifest?.()?.version||'dev').replace(/\W/g, '_');
+  if (window[bridgeKey]) return;
+  window[bridgeKey] = true;
   let currentJobId = '';
   let lastDomChange = Date.now();
   new MutationObserver(() => { lastDomChange = Date.now(); }).observe(document.documentElement, {subtree:true, childList:true, characterData:true});
@@ -368,8 +370,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const marker=st.activeJobId && ((last && (last.innerText||'').includes('[VIS_JOB_ID:'+st.activeJobId+']')) || (document.querySelector('main')?.textContent||'').includes('[VIS_JOB_ID:'+st.activeJobId+']'));
         const imagePrompt=st.activeCommand?.type==='image_generation' && st.activeCommand?.id===st.activeJobId && typeof st.activeCommand.prompt==='string' && st.activeCommand.prompt.length>0 && last && (last.innerText||'').includes(st.activeCommand.prompt);
         const verified=currentJobId===st.activeJobId && !!currentJobId || Boolean((marker||imagePrompt) && st.identityJobId===st.activeJobId && st.conversationUrl===url);
-        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.5.2',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now(),account});
-      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.5.2',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
+        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.5.3',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now(),account});
+      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.5.3',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
       return true;
     }
     if (message?.type === 'vis-restore-draft') {
