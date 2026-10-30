@@ -130,6 +130,19 @@ function App() {
     } catch (caught) { setNotice('Máy chủ: ' + (caught instanceof Error ? caught.message : 'Không thể kết nối.')); }
     finally { loadInFlight.current = false; }
   };
+  // The extension was updated and this tab lost its bridge (no status for 150 s - background tabs are slowed to 1/min - although an extension was
+  // here before): reload once when nothing runs, at most every 5 minutes, so it picks up the new bridge.
+  const bridgeSeenAt = useRef(Date.now()), bridgeKnown = useRef(false);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (!bridgeKnown.current || Date.now() - bridgeSeenAt.current < 150000 || busy || stopGate.current) return;
+      const transcriptBusy = Object.keys(localStorage).some(key => key.startsWith('vis-transcript-pending-') && (localStorage.getItem(key) || 'null') !== 'null');
+      if (transcriptBusy) return;
+      try { const last = Number(sessionStorage.getItem('vis-bridge-reload-at') || 0); if (Date.now() - last < 300000) return; sessionStorage.setItem('vis-bridge-reload-at', String(Date.now())); } catch { return; }
+      location.reload();
+    }, 10000);
+    return () => window.clearInterval(timer);
+  }, [busy]);
   // A new Studio build was published: reload by itself once nothing is running here (no F5 needed).
   useEffect(() => {
     if (BUILD_ID === 'dev') return;
@@ -179,6 +192,7 @@ function App() {
       if (event.data.type === 'studio-status') {
         setExtensionPairCode(event.data.pairCode || '');
         setExtensionVersion(event.data.version || '');
+        if (event.data.version) { bridgeSeenAt.current = Date.now(); bridgeKnown.current = true; }
         setExtensionFacts({ account: event.data.account || null, activeJobId: String(event.data.activeJobId || ''), chatTabs: Number(event.data.chatTabCount || 0) });
         setChatReady(Boolean(event.data.chatReady));
         setBridgeMessage(event.data.message || '');
