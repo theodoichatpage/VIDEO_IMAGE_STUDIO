@@ -21,16 +21,32 @@ async function chatTabs() {
   return (await chrome.tabs.query({})).filter(tab => tab.url?.startsWith(CHATGPT_PREFIX));
 }
 
+// No ChatGPT tab yet: open one in the background instead of asking the user to.
+let chatTabOpenedAt = 0;
+async function openChatTab() {
+  // At most one new tab per 2 minutes (a login redirect must not open tab after tab).
+  if (Date.now() - chatTabOpenedAt < 120000) return [];
+  chatTabOpenedAt = Date.now();
+  const created = await chrome.tabs.create({ url: CHATGPT_PREFIX, active: false });
+  for (let waited = 0; waited < 30000; waited += 500) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    try { const tab = await chrome.tabs.get(created.id); if (tab.status === 'complete' && tab.url?.startsWith(CHATGPT_PREFIX)) return [tab]; } catch { break; }
+  }
+  return chatTabs();
+}
 async function ensureChatReceiver(preferredId) {
-  const tabs = await chatTabs();
-  if (!tabs.length) throw new Error('Chưa có tab ChatGPT. Hãy mở chatgpt.com và đăng nhập.');
+  let tabs = await chatTabs();
+  if (!tabs.length) tabs = await openChatTab();
+  if (!tabs.length) throw new Error('Không mở được tab ChatGPT. Hãy mở chatgpt.com và đăng nhập.');
   const stored = await chrome.storage.local.get(['chatTabId']);
   const tab = tabs.find(item => item.id === preferredId) || tabs.find(item => item.id === stored.chatTabId) || tabs.find(item => item.active) || tabs[0];
   let existing;
   try { existing = await chrome.tabs.sendMessage(tab.id, { type: 'vis-ping' }); } catch {}
+  // Edge "sleeping tabs" must never unload the tab that works for Studio.
+  try { await chrome.tabs.update(tab.id, { autoDiscardable: false }); } catch {}
   if (existing?.ready) {
     if (existing.account) chatAccount = existing.account;
-    if (existing.version !== '0.5.1') throw new Error('Tab ChatGPT còn cầu nối cũ v' + (existing.version || '?') + '. Hãy F5 tab ChatGPT để nạp Extension 0.5.1.');
+    if (existing.version !== '0.5.2') throw new Error('Tab ChatGPT còn cầu nối cũ v' + (existing.version || '?') + '. Hãy F5 tab ChatGPT để nạp Extension 0.5.2.');
     return tab;
   }
   try {
@@ -40,9 +56,9 @@ async function ensureChatReceiver(preferredId) {
   }
   try {
     const pong = await chrome.tabs.sendMessage(tab.id, { type: 'vis-ping' });
-    if (pong?.ready && pong.version === '0.5.1') return tab;
+    if (pong?.ready && pong.version === '0.5.2') return tab;
   } catch {}
-  throw new Error('Tab ChatGPT chưa sẵn sàng nhận lệnh. Hãy F5 tab ChatGPT rồi kết nối lại.');
+  throw new Error('Tab ChatGPT chưa sẵn sàng: có thể ChatGPT chưa đăng nhập. Mở tab chatgpt.com, đăng nhập rồi thử lại.');
 }
 
 // Very long conversations (full script + several parts of JSON) freeze the ChatGPT tab mid-answer.
@@ -249,7 +265,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       try { await ensureChatReceiver(); chatReady = true; } catch (caught) { error = caught?.message || String(caught); }
       const pending = await chrome.storage.local.get(['pendingChatEvents','transcriptJobs']);
       const transcriptEvents = Object.values(pending.transcriptJobs || {}).filter(job => job.pairCode === stored.pairCode && job.result && !job.acknowledged && job.state !== 'stopped').map(job => job.result);
-      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic:deliveryDiagnostic || syncDiagnostic, version: '0.5.1', account: chatAccount, chatTabCount: (await chatTabs()).length, activeJobId: (await chrome.storage.local.get(['activeJobId'])).activeJobId || '', transcriptEvents, pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
+      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic:deliveryDiagnostic || syncDiagnostic, version: '0.5.2', account: chatAccount, chatTabCount: (await chatTabs()).length, activeJobId: (await chrome.storage.local.get(['activeJobId'])).activeJobId || '', transcriptEvents, pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
       return;
     }
     if (message?.type === 'vis-pair') {
@@ -260,7 +276,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (chosen) await chrome.storage.local.set({ chatTabId: chosen.id });
       await ensureChatReceiver();
       await chrome.storage.local.set({ pairCode, ...(message.studioOrigin ? { studioOrigin: String(message.studioOrigin) } : {}) });
-      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.5.1' });
+      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.5.2' });
       await broadcastToStudio({ type: 'vis-status-changed' });
       return;
     }
@@ -390,7 +406,7 @@ async function managerHeartbeat() {
   }
   const watch=(await chrome.storage.local.get(['chatWatch'])).chatWatch||null;
   const diagnostic={sync:String(syncDiagnostic||deliveryDiagnostic||'').slice(0,300),capture:lastCapture,watch:watch&&{jobId:watch.jobId,reloads:watch.reloads,lastReason:watch.lastReason||null,gaveUp:Boolean(watch.gaveUp),aliveAgo:Math.round((Date.now()-watch.aliveAt)/1000),busyAgo:Math.round((Date.now()-watch.busyAt)/1000)},pingOk:Boolean(reply),candidates:candidates.length};
-  const body={diagnostic,pairCode:st.pairCode,activeJobId:st.activeJobId||null,chatTabId:chosen?.id??null,conversationUrl:st.identityJobId===st.activeJobId?st.conversationUrl||null:null,lastHeartbeatAt:reply?.lastHeartbeatAt??null,version:'0.5.1',identityVersion:1};
+  const body={diagnostic,pairCode:st.pairCode,activeJobId:st.activeJobId||null,chatTabId:chosen?.id??null,conversationUrl:st.identityJobId===st.activeJobId?st.conversationUrl||null:null,lastHeartbeatAt:reply?.lastHeartbeatAt??null,version:'0.5.2',identityVersion:1};
   try { await fetch('http://127.0.0.1:8765/api/ext/heartbeat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(5000)}); } catch {}
 }
 chrome.tabs.onUpdated.addListener((tabId,change,tab)=>{ if(!change.url)return; void (async()=>{const st=await chrome.storage.local.get(['chatTabId','activeJobId','identityJobId']); if(tabId!==st.chatTabId||!st.activeJobId||st.activeJobId!==st.identityJobId)return; try {const u=new URL(change.url);if(u.origin==='https://chatgpt.com'&&/^\/c\/[^/]+$/.test(u.pathname))await chrome.storage.local.set({conversationUrl:u.origin+u.pathname});}catch{}})(); });
