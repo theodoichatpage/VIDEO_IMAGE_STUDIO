@@ -8,5 +8,7 @@ export function resolveManagerLaunch(storage,search){
   // listed by name here; its data stays on the server. Existing projects are never renamed or reset.
   const name=String(q.get('managerName')||'').trim().slice(0,200);
   if(!metadata.some(p=>p&&p.id===id)){if(!name)return {...none,error:'Không tìm thấy dự án được AI Manager yêu cầu trong profile này. Không tạo dự án mới.'};const time=Date.now();storage.setItem('vis-project-meta',JSON.stringify([{id,name,createdAt:time,updatedAt:time},...metadata]))}
+  // AI MANAGER names this browser profile's ChatGPT lane, so cloned profiles never share one.
+  const laneId=q.get('managerLaneId')||'';if(/^[A-Za-z0-9_-]{6,64}$/.test(laneId))storage.setItem('vis-lane-id',laneId);
   const stage=q.get('managerStage');storage.setItem('vis-session',id);storage.setItem('vis-active-menu',stage==='images'?'2':stage==='transcript'?'0':'1');return {projectId:id,runId:run,error:'',lane:q.get('managerLane')==='1'}}catch{return {...none,error:'Không đọc được danh sách dự án trong profile. Không đổi dự án.'}}
 }
