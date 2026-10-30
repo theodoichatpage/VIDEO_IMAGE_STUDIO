@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { resolveManagerLaunch } from './managerLaunch.mjs';
 import { acceptManagerTranscript, readManagerTranscriptState } from './managerTranscript';
+import { BUILD_ID } from './buildId';
 import { Check, Clapperboard, Copy, Download, FileText, Folder, Image, Maximize2, Play, RotateCcw, Scissors, Settings, Square, Trash2, Video as VideoIcon } from 'lucide-react';
 import './index.css';
 import { EXTENSION_VERSION, EXTENSION_DOWNLOAD_URL } from './extensionRelease';
@@ -129,6 +130,23 @@ function App() {
     } catch (caught) { setNotice('Máy chủ: ' + (caught instanceof Error ? caught.message : 'Không thể kết nối.')); }
     finally { loadInFlight.current = false; }
   };
+  // A new Studio build was published: reload by itself once nothing is running here (no F5 needed).
+  useEffect(() => {
+    if (BUILD_ID === 'dev') return;
+    const check = async () => {
+      try {
+        const latest = (await (await fetch('/build-id.json', { cache: 'no-store' })).json())?.id;
+        if (!latest || latest === BUILD_ID) return;
+        const s = sessionRef.current as (Session & { imageJobs?: { status: string }[] }) | null;
+        const mine = s?.laneJobs?.some(job => job.lane === laneId) || (s?.activeJob && (!s.activeJob.lane || s.activeJob.lane === laneId));
+        const transcriptBusy = Object.keys(localStorage).some(key => key.startsWith('vis-transcript-pending-') && (localStorage.getItem(key) || 'null') !== 'null');
+        if (mine || transcriptBusy || busy || stopGate.current) return;
+        location.reload();
+      } catch { /* offline: try later */ }
+    };
+    const timer = window.setInterval(() => void check(), 120000);
+    return () => window.clearInterval(timer);
+  }, [busy]);
   // Polling costs Supabase egress. Ask for the small version stamp and download the project only when it
   // changed; poll fast only while work runs, slowly when idle, very slowly when the tab is hidden.
   const sessionRef = useRef(session); sessionRef.current = session;
