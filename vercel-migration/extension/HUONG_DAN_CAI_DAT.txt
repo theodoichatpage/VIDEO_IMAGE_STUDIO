@@ -44,3 +44,4 @@ Nếu ChatGPT đang bật chế độ Tạo ảnh trong ô nhập, tắt chế �
 27. Bản 0.5.5: tab Studio nào cũng tự kết nối tiện ích với dự án đang mở; tác vụ cũ đã chết không còn giữ tiện ích ở trạng thái bận. Viết lại transcript có thể chia cho nhiều tab ChatGPT (AI MANAGER điều phối).
 28. Bản 0.5.6: tác vụ của dự án khác hoặc đã quá 15 phút không còn chặn lệnh mới ("ChatGPT đang xử lý tác vụ khác").
 29. Bản 0.5.7: cầu nối gửi đủ trạng thái (tác vụ đang chạy, tài khoản, số tab ChatGPT) cho Studio và AI MANAGER; sửa lỗi Studio tự huỷ lệnh chia phần sau 15 giây. Tác vụ kẹt quá 20 phút không còn chặn tự cập nhật.
+30. Bản 0.5.8: khi Studio bỏ một lệnh Transcript (lỗi hoặc quá thời gian), tiện ích đánh dấu lệnh đó đã dừng ngay, lệnh sau không còn bị báo "đang xử lý tác vụ khác".

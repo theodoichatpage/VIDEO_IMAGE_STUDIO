@@ -47,7 +47,7 @@ export default function TranscriptTab({onUseTranscript,projectId=localStorage.ge
   window.postMessage({source:'vis-web',type:'studio-capture-result',jobId:job.id},'*');
  };
  const clearPending=()=>{finishRecovery();clearTimeout(timer.current);pending.current=null;localStorage.removeItem(pendingKey);setAiBusy('');setAiStatus('')};
- const failPending=(message:string)=>{setBatch(false);const sectionId=pending.current?.sectionId;if(sectionId)setWs(s=>({...s,sections:s.sections.map(x=>x.id===sectionId?{...x,status:'error',error:message}:x)}));clearPending();setError(message)};
+ const failPending=(message:string)=>{setBatch(false);if(pending.current)window.postMessage({source:'vis-web',type:'studio-transcript-ack',jobId:pending.current.id},'*');const sectionId=pending.current?.sectionId;if(sectionId)setWs(s=>({...s,sections:s.sections.map(x=>x.id===sectionId?{...x,status:'error',error:message}:x)}));clearPending();setError(message)};
  const armTimeout=(ms:number,message:string)=>{clearTimeout(timer.current);timer.current=setTimeout(()=>{if(pending.current)failPending(message)},ms)};
  useEffect(()=>{
   const receive=(e:MessageEvent)=>{
