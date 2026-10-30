@@ -13,7 +13,7 @@ async function refresh() {
   const connected = Boolean(result?.chatReady && result?.pairCode);
   show(
     connected
-      ? 'Đã kết nối ChatGPT · v0.5.3'
+      ? 'Đã kết nối ChatGPT · v0.5.4'
       : (result?.error || 'Chưa kết nối ChatGPT'),
     connected,
   );
@@ -26,7 +26,7 @@ document.querySelector('#connect').onclick = async () => {
   }).catch(error => ({ error: error.message }));
   show(
     result?.ok
-      ? 'Đã kết nối ChatGPT · v0.5.3'
+      ? 'Đã kết nối ChatGPT · v0.5.4'
       : (result?.error || 'Kết nối thất bại'),
     Boolean(result?.ok),
   );

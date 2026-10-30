@@ -370,8 +370,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const marker=st.activeJobId && ((last && (last.innerText||'').includes('[VIS_JOB_ID:'+st.activeJobId+']')) || (document.querySelector('main')?.textContent||'').includes('[VIS_JOB_ID:'+st.activeJobId+']'));
         const imagePrompt=st.activeCommand?.type==='image_generation' && st.activeCommand?.id===st.activeJobId && typeof st.activeCommand.prompt==='string' && st.activeCommand.prompt.length>0 && last && (last.innerText||'').includes(st.activeCommand.prompt);
         const verified=currentJobId===st.activeJobId && !!currentJobId || Boolean((marker||imagePrompt) && st.identityJobId===st.activeJobId && st.conversationUrl===url);
-        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.5.3',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now(),account});
-      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.5.3',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
+        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.5.4',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now(),account});
+      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.5.4',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
       return true;
     }
     if (message?.type === 'vis-restore-draft') {
@@ -391,7 +391,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
     if (message?.type === 'vis-command') {
       if (currentJobId === message.command?.id || finished.has(message.command?.id)) { sendResponse({ ok: true, duplicate: true }); return; }
-      if (currentJobId) { sendResponse({ ok: false, error: 'ChatGPT đang xử lý phần khác. Hãy bấm Dừng trước.' }); return; }
+      if (currentJobId) {
+        // The background no longer tracks the old job (finished, failed or abandoned before a reload) and
+        // ChatGPT is idle: drop it instead of blocking every new command. A job ChatGPT still writes stays busy.
+        if (!message.replaceStale || isGenerating()) { sendResponse({ ok: false, error: 'ChatGPT đang xử lý phần khác. Hãy bấm Dừng trước.' }); return; }
+        finished.add(currentJobId); generation += 1; cancelled = false; currentJobId = ''; currentJobType = '';
+      }
       run(message.command).catch(() => null);
       sendResponse({ ok: true });
       return;
