@@ -126,7 +126,8 @@ export default function TranscriptTab({onUseTranscript,projectId=localStorage.ge
  // Runs only for a command addressed to the open project; each step reuses the buttons above.
  const [mgr,setMgr]=useState<ManagerTranscript|null>(null);
  useEffect(()=>{
-  const check=()=>{const cmd=readManagerTranscript();if(!cmd||cmd.sessionId!==localStorage.getItem('vis-session'))return;const st=readManagerTranscriptState();if(st?.id===cmd.id&&['done','error'].includes(st.stage))return;setMgr(current=>current?.id===cmd.id?current:cmd)};
+  // Extra ChatGPT lanes only take rewrite jobs; the transcript pipeline runs in the main tab only.
+  const check=()=>{if(new URLSearchParams(location.search).get('managerLane')==='1')return;const cmd=readManagerTranscript();if(!cmd||cmd.sessionId!==localStorage.getItem('vis-session'))return;const st=readManagerTranscriptState();if(st?.id===cmd.id&&['done','error'].includes(st.stage))return;setMgr(current=>current?.id===cmd.id?current:cmd)};
   check();const t=window.setInterval(check,2000);return()=>window.clearInterval(t);
  },[]);
  useEffect(()=>{

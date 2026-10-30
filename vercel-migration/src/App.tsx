@@ -286,7 +286,7 @@ function App() {
           worker: { laneId, lane: Boolean(managerLaunch.lane), extensionVersion, account: extensionFacts.account || null, extensionJob: extensionFacts.activeJobId || '', chatTabs: extensionFacts.chatTabs || 0, dispatcher: laneDispatcher.current } }),
       }).then(response => response.json()).then(reply => {
         // AI MANAGER may ask this project's tab to get the transcript and rewrite it (Get Transcript tab).
-        if (reply?.command && acceptManagerTranscript(reply.command, sessionId)) setActiveMenu(0);
+        if (reply?.command && !managerLaunch.lane && acceptManagerTranscript(reply.command, sessionId)) setActiveMenu(0);
       }).catch(() => {});
     };
     const close = () => {
