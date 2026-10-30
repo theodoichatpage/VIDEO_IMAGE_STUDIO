@@ -18,5 +18,11 @@ def main():
         archive.unlink()
     os.environ['SAM2_BUILD_CUDA']='0';cmd('install','-e',str(repo));model=ROOT/'models/sam2.1_hiera_tiny.pt';model.parent.mkdir(exist_ok=True)
     if not model.exists():download('https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_tiny.pt',model)
+    # Tách lớp chiều sâu cho Parallax: mô hình đo chiều sâu + LaMa bù lấp nền
+    from parallax import DEPTH_REPO,LAMA_FILE,LAMA_URL
+    lama=ROOT/'models'/LAMA_FILE
+    if not lama.exists():download(LAMA_URL,lama)
+    print('Đang tải mô hình chiều sâu:',DEPTH_REPO,flush=True)
+    subprocess.run([sys.executable,'-c',f"from huggingface_hub import snapshot_download;snapshot_download({DEPTH_REPO!r},cache_dir={str(ROOT/'models'/'huggingface')!r})"],check=True)
     print('Cài đặt hoàn tất. Chạy start_engine.bat',flush=True)
 if __name__=='__main__':main()
