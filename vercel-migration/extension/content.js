@@ -61,6 +61,23 @@
     if (activeImageMode()) throw new Error('ChatGPT đang bật chế độ Tạo ảnh. Hãy tắt Tạo ảnh cạnh ô nhập rồi phân tích lại phần này. Lệnh phân tích chưa được gửi.');
   }
 
+  // A text job must never produce a picture. ChatGPT sometimes picks its image tool anyway (scene prompts talk
+  // about images), so a picture after this job's prompt means it drew instead.
+  const IMAGE_TOOL_TEXT = /creating image|generating image|đang tạo (hình )?ảnh/i;
+  // Pictures after the newest prompt carrying this job's marker (older pictures in the chat never count).
+  const picturesAfterPrompt = () => {
+    const marker = '[VIS_JOB_ID:' + (replyContext?.id || '') + ']';
+    const prompt = [...document.querySelectorAll('[data-message-author-role="user"], [data-turn="user"]')].filter(node => (node.textContent || '').includes(marker)).at(-1);
+    if (!prompt) return 0;
+    return [...document.querySelectorAll('main img')].filter(image => !image.closest('form') && (prompt.compareDocumentPosition(image) & 4) && !prompt.contains(image) && (/generated image|hình ảnh đã tạo|ảnh đã tạo/i.test(image.alt || '') || image.naturalWidth >= 256 || Number(image.getAttribute('width')) >= 256)).length;
+  };
+  const IMAGE_INSTEAD = 'VIS_IMAGE_INSTEAD';
+  const drewImage = () => picturesAfterPrompt() > 0 || VISReplyReader.light(() => VISReplyReader.sources(document, replyContext).sources.some(text => IMAGE_TOOL_TEXT.test(text)));
+  async function stopAndSettle() {
+    stopButton()?.click();
+    for (let i = 0; i < 40 && isGenerating(); i += 1) await sleep(500);
+    await sleep(1500);
+  }
   const imageUrls = (context = replyContext) => [...(VISReplyReader.sources(document, context).node?.querySelectorAll('img') || [])].filter(image => image.complete && image.naturalWidth >= 256 && image.naturalHeight >= 256).map(image => image.currentSrc || image.src || '').filter(url => /^(https?:|blob:)/.test(url));
   const expandedImagePrompts = new WeakSet();
   async function expandImagePrompts(context) {
@@ -168,11 +185,7 @@
           // Self-pacing: the next progress read waits at least 10x the time this one took, so the
           // extension never occupies more than ~10% of the page's main thread while ChatGPT writes.
           const readStart = Date.now();
-          const imageMode = kind !== 'image_generation' && VISReplyReader.light(() => VISReplyReader.sources(document, replyContext).sources.some(text => /creating image|đang tạo (hình )?ảnh/i.test(text)));
-          if (imageMode) {
-            stopButton()?.click();
-            throw new Error('ChatGPT đã chuyển sang tạo ảnh. Đã yêu cầu dừng; hãy tắt chế độ Tạo ảnh và phân tích lại phần này.');
-          }
+          if (kind !== 'image_generation' && drewImage()) throw new Error(IMAGE_INSTEAD);
           let progress = null;
           if (kind === 'part_analysis') progress = VISReplyReader.light(() => VISReplyReader.readStreaming(document, { ...replyContext, type: kind }));
           const cost = Date.now() - readStart;
@@ -191,6 +204,7 @@
           if (next && next !== before) started = true;
           if (await resolveComparison()) { changedAt = Date.now(); continue; }
           if (started && last && Date.now() - changedAt >= 3000) {
+            if (kind !== 'image_generation' && drewImage()) throw new Error(IMAGE_INSTEAD);
             const result = VISReplyReader.read(document, { ...replyContext, type: kind });
             if (result.text) return result.text;
             // ChatGPT finished and stayed idle, but the reply for THIS job is not valid JSON: fail clearly instead of hanging.
@@ -312,13 +326,27 @@
         finished.add(command.id);
         return;
       }
-      const before = assistantText(currentJobType);
-      await fillComposer('[VIS_JOB_ID:' + command.id + ']\nTEXT ANALYSIS ONLY. DO NOT GENERATE IMAGES OR USE IMAGE TOOLS. ' + (command.type === 'transcript_rewrite' ? 'Return only the rewritten script, without JSON or markdown.\n' : 'Return only the requested JSON.\n') + command.prompt);
-      if (token !== generation || cancelled) return;
-      if (activeImageMode()) throw new Error('Chế độ Tạo ảnh vẫn bật. Chưa gửi lệnh phân tích.');
-      await submit(token);
-      await emit({ jobId: command.id, state: 'sent' });
-      const text = await waitForFinalAnswer(before, currentJobType, token);
+      const answerOnly = command.type === 'transcript_rewrite' ? 'Return only the rewritten script, without JSON or markdown.' : 'Return only the requested JSON.';
+      let text = '';
+      // If ChatGPT draws a picture instead of answering, stop it and ask once more, more firmly, in the same chat
+      // (the reader always takes the newest prompt carrying this job's marker).
+      for (let attempt = 1; ; attempt += 1) {
+        const warning = attempt === 1 ? '' : 'YOUR PREVIOUS ANSWER WRONGLY CREATED AN IMAGE. LẦN TRƯỚC BẠN ĐÃ TẠO ẢNH - SAI. Answer again with plain text only. ';
+        const before = assistantText(currentJobType);
+        await fillComposer('[VIS_JOB_ID:' + command.id + ']\nTEXT ANALYSIS ONLY. ' + warning + 'DO NOT GENERATE IMAGES, DO NOT CALL ANY IMAGE OR DRAWING TOOL; every "prompt" below is text to write, not a picture to make. KHÔNG TẠO ẢNH. ' + answerOnly + '\n' + command.prompt);
+        if (token !== generation || cancelled) return;
+        if (activeImageMode()) throw new Error('Chế độ Tạo ảnh vẫn bật. Chưa gửi lệnh phân tích.');
+        await submit(token);
+        if (attempt === 1) await emit({ jobId: command.id, state: 'sent' });
+        try { text = await waitForFinalAnswer(before, currentJobType, token); break; }
+        catch (error) {
+          if (error?.message !== IMAGE_INSTEAD) throw error;
+          await stopAndSettle();
+          if (attempt >= 2) throw new Error('ChatGPT tạo ảnh thay vì trả văn bản (2 lần). Phần này sẽ được giao lại.');
+          if (token !== generation || cancelled) return;
+          await clearImageMode();
+        }
+      }
       await emit({ jobId: command.id, state: 'completed', text });
       finished.add(command.id);
     } catch (error) {
@@ -370,8 +398,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const marker=st.activeJobId && ((last && (last.innerText||'').includes('[VIS_JOB_ID:'+st.activeJobId+']')) || (document.querySelector('main')?.textContent||'').includes('[VIS_JOB_ID:'+st.activeJobId+']'));
         const imagePrompt=st.activeCommand?.type==='image_generation' && st.activeCommand?.id===st.activeJobId && typeof st.activeCommand.prompt==='string' && st.activeCommand.prompt.length>0 && last && (last.innerText||'').includes(st.activeCommand.prompt);
         const verified=currentJobId===st.activeJobId && !!currentJobId || Boolean((marker||imagePrompt) && st.identityJobId===st.activeJobId && st.conversationUrl===url);
-        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.5.9',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now(),account});
-      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.5.9',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
+        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.5.10',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now(),account});
+      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.5.10',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
       return true;
     }
     if (message?.type === 'vis-restore-draft') {
