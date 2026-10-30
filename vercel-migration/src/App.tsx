@@ -525,6 +525,14 @@ function App() {
       setStyleSave({ state: 'error', message }); setNotice(message);
     }
   };
+  // The style box lives in this browser until saved. A Manager run creates images from the server copy,
+  // so the run's main tab saves the browser's style into the project once when the project has none.
+  const styleAutoSent = useRef(false);
+  useEffect(() => {
+    if (styleAutoSent.current || managerLaunch.error || !managerLaunch.runId || managerLaunch.lane || managerLaunch.projectId !== sessionId) return;
+    if (!serverReady || !session || session.id !== sessionId || savedStyle.trim() || !stylePrompt.trim()) return;
+    styleAutoSent.current = true; void saveStyle();
+  }, [serverReady, session, sessionId, savedStyle, stylePrompt]);
   const styleStatus = styleSave.state === 'saving' ? { tone: 'busy', text: 'Đang lưu…' }
     : styleSave.state === 'error' ? { tone: 'bad', text: 'Lỗi lưu: ' + (styleSave.message || '') }
     : styleDirty ? { tone: 'warn', text: savedStyle.trim() ? 'Chưa lưu — bản đang sửa khác bản đã lưu (' + savedStyle.length.toLocaleString('vi-VN') + ' ký tự)' : 'Chưa lưu vào dự án' }
