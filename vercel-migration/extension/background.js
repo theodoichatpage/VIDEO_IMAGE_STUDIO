@@ -49,8 +49,8 @@ async function ensureChatReceiver(preferredId) {
     if (existing.account) chatAccount = existing.account;
     // The tab already runs a NEWER bridge than this background: this service worker is the stale one
     // (its folder was updated). Reload it now instead of refusing to connect.
-    if (existing.version !== '0.5.10' && newerVersion(existing.version, '0.5.10')) { chrome.runtime.reload(); throw new Error('Đang nạp lại tiện ích lên bản ' + existing.version + '…'); }
-    if (existing.version !== '0.5.10') throw new Error('Tab ChatGPT còn cầu nối cũ v' + (existing.version || '?') + '. Hãy F5 tab ChatGPT để nạp Extension 0.5.10.');
+    if (existing.version !== '0.5.11' && newerVersion(existing.version, '0.5.11')) { chrome.runtime.reload(); throw new Error('Đang nạp lại tiện ích lên bản ' + existing.version + '…'); }
+    if (existing.version !== '0.5.11') throw new Error('Tab ChatGPT còn cầu nối cũ v' + (existing.version || '?') + '. Hãy F5 tab ChatGPT để nạp Extension 0.5.11.');
     return tab;
   }
   try {
@@ -60,7 +60,7 @@ async function ensureChatReceiver(preferredId) {
   }
   try {
     const pong = await chrome.tabs.sendMessage(tab.id, { type: 'vis-ping' });
-    if (pong?.ready && pong.version === '0.5.10') return tab;
+    if (pong?.ready && pong.version === '0.5.11') return tab;
   } catch {}
   throw new Error('Tab ChatGPT chưa sẵn sàng: có thể ChatGPT chưa đăng nhập. Mở tab chatgpt.com, đăng nhập rồi thử lại.');
 }
@@ -68,11 +68,23 @@ async function ensureChatReceiver(preferredId) {
 // Very long conversations (full script + several parts of JSON) freeze the ChatGPT tab mid-answer.
 // Text analysis jobs carry their own [VIS_JOB_ID] prompt, so they can safely start in a new chat.
 const NEW_CHAT_AFTER_CHARS = 60000;
+// ChatGPT copies the look of earlier pictures in the same chat, so a new image style starts a new chat.
+async function styleChanged(tab, command) {
+  if (command?.type !== 'image_generation' || !command.styleKey) return false;
+  const st = await chrome.storage.local.get(['chatStyleKeys']);
+  return (st.chatStyleKeys || {})[tab.id] !== command.styleKey;
+}
+async function rememberStyle(tab, command) {
+  if (command?.type !== 'image_generation' || !command.styleKey) return;
+  const st = await chrome.storage.local.get(['chatStyleKeys']);
+  await chrome.storage.local.set({ chatStyleKeys: { ...(st.chatStyleKeys || {}), [tab.id]: command.styleKey } });
+}
 async function freshConversationIfLong(tab, command, token) {
-  if (!['part_analysis', 'script_structure'].includes(command?.type)) return tab;
+  const newStyle = await styleChanged(tab, command);
+  if (!newStyle && !['part_analysis', 'script_structure'].includes(command?.type)) return tab;
   let size;
   try { size = await chrome.tabs.sendMessage(tab.id, { type: 'vis-conversation-size' }); } catch { return tab; }
-  if (!size || size.generating || !/^\/c\//.test(size.path || '') || size.chars < NEW_CHAT_AFTER_CHARS) return tab;
+  if (!size || size.generating || !/^\/c\//.test(size.path || '') || (!newStyle && size.chars < NEW_CHAT_AFTER_CHARS)) return tab;
   checkStop(token, command.id);
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => { chrome.tabs.onUpdated.removeListener(listener); reject(new Error('Không mở được hội thoại ChatGPT mới. Hãy mở chatgpt.com rồi gửi lại.')); }, 30000);
@@ -280,7 +292,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       try { await ensureChatReceiver(); chatReady = true; } catch (caught) { error = caught?.message || String(caught); }
       const pending = await chrome.storage.local.get(['pendingChatEvents','transcriptJobs']);
       const transcriptEvents = Object.values(pending.transcriptJobs || {}).filter(job => job.pairCode === stored.pairCode && job.result && !job.acknowledged && job.state !== 'stopped').map(job => job.result);
-      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic:deliveryDiagnostic || syncDiagnostic, version: '0.5.10', account: chatAccount, chatTabCount: (await chatTabs()).length, activeJobId: (await chrome.storage.local.get(['activeJobId'])).activeJobId || '', transcriptEvents, pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
+      sendResponse({ ok: true, pairCode: stored.pairCode || '', chatReady, error, syncDiagnostic:deliveryDiagnostic || syncDiagnostic, version: '0.5.11', account: chatAccount, chatTabCount: (await chatTabs()).length, activeJobId: (await chrome.storage.local.get(['activeJobId'])).activeJobId || '', transcriptEvents, pendingEvents: Array.isArray(pending.pendingChatEvents) ? pending.pendingChatEvents : [] });
       return;
     }
     if (message?.type === 'vis-pair') {
@@ -291,7 +303,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (chosen) await chrome.storage.local.set({ chatTabId: chosen.id });
       await ensureChatReceiver();
       await chrome.storage.local.set({ pairCode, ...(message.studioOrigin ? { studioOrigin: String(message.studioOrigin) } : {}) });
-      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.5.10' });
+      sendResponse({ ok: true, pairCode, chatReady: true, version: '0.5.11' });
       await broadcastToStudio({ type: 'vis-status-changed' });
       return;
     }
@@ -314,6 +326,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const result = await chrome.tabs.sendMessage(tab.id, { type: 'vis-command', command: message.command, replaceStale: true });
       checkStop(token,message.command.id);
       if (!result?.ok) throw new Error(result?.error || 'ChatGPT không nhận được lệnh.');
+      await rememberStyle(tab, message.command);
       let currentTab=tab;try {currentTab=await chrome.tabs.get(tab.id);}catch{}
       const conversationUrl = /^https:\/\/chatgpt\.com\/c\/[^/?#]+/.test(currentTab.url || '') ? new URL(currentTab.url).origin + new URL(currentTab.url).pathname : null;
       await chrome.storage.local.set({ activeJobId: message.command.id, activeJobType: String(message.command.type || ''), chatTabId: tab.id, conversationUrl, identityJobId:message.command.id });
@@ -422,7 +435,7 @@ async function managerHeartbeat() {
   }
   const watch=(await chrome.storage.local.get(['chatWatch'])).chatWatch||null;
   const diagnostic={sync:String(syncDiagnostic||deliveryDiagnostic||'').slice(0,300),capture:lastCapture,watch:watch&&{jobId:watch.jobId,reloads:watch.reloads,lastReason:watch.lastReason||null,gaveUp:Boolean(watch.gaveUp),aliveAgo:Math.round((Date.now()-watch.aliveAt)/1000),busyAgo:Math.round((Date.now()-watch.busyAt)/1000)},pingOk:Boolean(reply),candidates:candidates.length};
-  const body={diagnostic,pairCode:st.pairCode,activeJobId:st.activeJobId||null,chatTabId:chosen?.id??null,conversationUrl:st.identityJobId===st.activeJobId?st.conversationUrl||null:null,lastHeartbeatAt:reply?.lastHeartbeatAt??null,version:'0.5.10',identityVersion:1};
+  const body={diagnostic,pairCode:st.pairCode,activeJobId:st.activeJobId||null,chatTabId:chosen?.id??null,conversationUrl:st.identityJobId===st.activeJobId?st.conversationUrl||null:null,lastHeartbeatAt:reply?.lastHeartbeatAt??null,version:'0.5.11',identityVersion:1};
   try { await fetch('http://127.0.0.1:8765/api/ext/heartbeat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(5000)}); } catch {}
 }
 chrome.tabs.onUpdated.addListener((tabId,change,tab)=>{ if(!change.url)return; void (async()=>{const st=await chrome.storage.local.get(['chatTabId','activeJobId','identityJobId']); if(tabId!==st.chatTabId||!st.activeJobId||st.activeJobId!==st.identityJobId)return; try {const u=new URL(change.url);if(u.origin==='https://chatgpt.com'&&/^\/c\/[^/]+$/.test(u.pathname))await chrome.storage.local.set({conversationUrl:u.origin+u.pathname});}catch{}})(); });

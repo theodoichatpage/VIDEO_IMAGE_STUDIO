@@ -339,7 +339,9 @@ function normalizeScenes(value: unknown): Scene[] {
   if (!Array.isArray(value) || !value.length) throw new Error('ChatGPT chưa trả về scenes.');
   return value.slice(0, 30).map((item, index) => { const row = item && typeof item === 'object' ? item as Record<string, unknown> : {}; return { title: String(row.title || 'Cảnh ' + (index + 1)), backdrop: String(row.backdrop || 'Theo kịch bản'), content: String(row.content || ''), character: String(row.character || 'Theo kịch bản'), emotion: String(row.emotion || 'Theo ngữ cảnh'), shot: String(row.shot || 'Góc máy điện ảnh'), image: String(row.image || 'Theo nội dung cảnh'), prompt: String(row.prompt || ''), imageStatus: 'waiting', imageResults: [] }; });
 }
-function imagePrompt(style: string, scene: Scene, _ratio: string) { const template = style.trim(); const scenePrompt = scene.prompt.trim(); if (template.includes('{{SCENE_PROMPT}}')) return template.replaceAll('{{SCENE_PROMPT}}', scenePrompt); return ['SCENE:\n' + scenePrompt, template].filter(Boolean).join('\n\n'); }
+// The scene goes where the style template asks for it: {{SCENE_PROMPT}} or an empty {{ }} slot.
+const SCENE_SLOT = /\{\{\s*(?:SCENE_PROMPT)?\s*\}\}/;
+function imagePrompt(style: string, scene: Scene, _ratio: string) { const template = style.trim(); const scenePrompt = scene.prompt.trim(); if (SCENE_SLOT.test(template)) return template.replace(new RegExp(SCENE_SLOT.source, 'g'), () => scenePrompt); return ['SCENE:\n' + scenePrompt, template].filter(Boolean).join('\n\n'); }
 
 function separationMetadata(value: unknown) {
   if (!value || typeof value !== 'object' || JSON.stringify(value).length > 256000) throw new Error('Metadata kết quả tách ảnh không hợp lệ.');

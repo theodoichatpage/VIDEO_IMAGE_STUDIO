@@ -2,14 +2,14 @@
 const assert=require('node:assert/strict');const fs=require('node:fs');const vm=require('node:vm');
 const src=fs.readFileSync(__dirname+'/background.js','utf8');
 const section=src.slice(src.indexOf('const NEW_CHAT_AFTER_CHARS'),src.indexOf('async function broadcastToStudio'));
-function harness(size){
+function harness(size,store={}){
  const calls=[];let listener=null;
- const chrome={tabs:{
+ const chrome={storage:{local:{get:async()=>({...store}),set:async o=>Object.assign(store,o)}},tabs:{
   sendMessage:async(_id,msg)=>{calls.push(msg.type);return size;},
   update:async(id,o)=>{calls.push('update:'+o.url);setTimeout(()=>listener&&listener(id,{status:'complete'},{url:'https://chatgpt.com/'}),5);return {};},
   onUpdated:{addListener:f=>{listener=f;},removeListener:()=>{listener=null;}}}};
  const c={chrome,setTimeout,clearTimeout,CHATGPT_PREFIX:'https://chatgpt.com/',checkStop(){},ensureChatReceiver:async id=>{calls.push('ensure:'+id);return {id};}};
- vm.createContext(c);vm.runInContext(section+';globalThis.fresh=freshConversationIfLong;',c);return {c,calls};
+ vm.createContext(c);vm.runInContext(section+';globalThis.fresh=freshConversationIfLong;globalThis.remember=rememberStyle;',c);return {c,calls};
 }
 (async()=>{
  let h=harness({chars:150000,path:'/c/abc',generating:false});
@@ -23,5 +23,14 @@ function harness(size){
  assert.deepEqual(h.calls,['vis-conversation-size'],'already a new chat');
  h=harness({chars:150000,path:'/c/abc',generating:false});await h.c.fresh({id:7},{id:'j',type:'image_generation'},0);
  assert.deepEqual(h.calls,[],'image jobs keep their conversation');
+ // A new image style opens a new chat once; the same style keeps the chat (its earlier pictures guide variety).
+ const store={};const img={id:'i',type:'image_generation',styleKey:'s1'};
+ h=harness({chars:5000,path:'/c/abc',generating:false},store);await h.c.fresh({id:7},img,0);
+ assert.deepEqual(h.calls,['vis-conversation-size','update:https://chatgpt.com/','ensure:7'],'unknown style: new chat');
+ await h.c.remember({id:7},img);
+ h=harness({chars:5000,path:'/c/abc',generating:false},store);await h.c.fresh({id:7},img,0);
+ assert.deepEqual(h.calls,[],'same style keeps the chat');
+ h=harness({chars:5000,path:'/c/abc',generating:false},store);await h.c.fresh({id:7},{...img,styleKey:'s2'},0);
+ assert.deepEqual(h.calls,['vis-conversation-size','update:https://chatgpt.com/','ensure:7'],'changed style: new chat');
  console.log('test_new_chat PASS');
 })().catch(e=>{console.error(e);process.exit(1);});

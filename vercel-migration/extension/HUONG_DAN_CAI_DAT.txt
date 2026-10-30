@@ -47,3 +47,4 @@ Nếu ChatGPT đang bật chế độ Tạo ảnh trong ô nhập, tắt chế �
 30. Bản 0.5.8: khi Studio bỏ một lệnh Transcript (lỗi hoặc quá thời gian), tiện ích đánh dấu lệnh đó đã dừng ngay, lệnh sau không còn bị báo "đang xử lý tác vụ khác".
 31. Bản 0.5.9: tác vụ treo quá 30 phút không còn giữ tiện ích ở trạng thái bận; tab Studio do AI MANAGER mở luôn kết nối được tiện ích với dự án đang chạy.
 32. Bản 0.5.10: nếu ChatGPT tự vẽ ảnh khi Studio chỉ yêu cầu văn bản (phân cảnh, viết lại), tiện ích dừng ngay và hỏi lại một lần; phần chạy nền tự nạp lại khi tab ChatGPT đã có bản mới hơn.
+33. Bản 0.5.11: khi phong cách ảnh của dự án thay đổi, tiện ích mở hội thoại ChatGPT mới trước khi tạo ảnh, để ảnh cũ trong hội thoại không kéo theo phong cách cũ.

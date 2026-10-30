@@ -21,6 +21,13 @@ const imageStateText = (status?: ImageState) => ({ waiting: 'Chờ', queued: 'Đ
 const shortText = (text: string, limit: number) => text.length > limit ? text.slice(0, limit).trimEnd() + '…' : text;
 const partName = (title: string) => title.replace(/^Phần\s*\d+\s*[-–:]?\s*/i, '').trim() || title;
 
+// Image commands carry a short key of the project's image style, so the extension can start a new ChatGPT
+// chat when the style changes (ChatGPT copies the look of earlier pictures in the same chat).
+function withStyleKey<T extends { type?: string }>(command: T, style?: string): T {
+  if (command?.type !== 'image_generation' || !style?.trim()) return command;
+  let h = 2166136261; for (const ch of style.trim()) { h ^= ch.codePointAt(0) || 0; h = Math.imul(h, 16777619) >>> 0; }
+  return { ...command, styleKey: h.toString(36) + ':' + style.trim().length };
+}
 function App() {
   const [managerLaunch] = useState(() => resolveManagerLaunch(localStorage, location.search));
   const [sessionId] = useState(() => {
@@ -236,7 +243,7 @@ function App() {
     return () => { window.removeEventListener('message', receive); window.clearInterval(timer); };
   }, [sessionId]);
 
-  const bridgeConnected = extensionPairCode === sessionId && ['0.4.10', '0.4.11', '0.4.12', '0.4.13', '0.4.14', '0.4.15', '0.4.16', '0.4.17', '0.4.18', '0.4.19', '0.4.20', '0.4.21', '0.4.22', '0.4.23', '0.4.24', '0.4.25', '0.4.26', '0.4.27', '0.4.28', '0.4.29', '0.4.30', '0.4.31', '0.4.32', '0.4.33', '0.4.34', '0.5.0', '0.5.1', '0.5.2', '0.5.3', '0.5.4', '0.5.5', '0.5.6', '0.5.7', '0.5.8', '0.5.9', EXTENSION_VERSION].includes(extensionVersion) && chatReady;
+  const bridgeConnected = extensionPairCode === sessionId && ['0.4.10', '0.4.11', '0.4.12', '0.4.13', '0.4.14', '0.4.15', '0.4.16', '0.4.17', '0.4.18', '0.4.19', '0.4.20', '0.4.21', '0.4.22', '0.4.23', '0.4.24', '0.4.25', '0.4.26', '0.4.27', '0.4.28', '0.4.29', '0.4.30', '0.4.31', '0.4.32', '0.4.33', '0.4.34', '0.5.0', '0.5.1', '0.5.2', '0.5.3', '0.5.4', '0.5.5', '0.5.6', '0.5.7', '0.5.8', '0.5.9', '0.5.10', EXTENSION_VERSION].includes(extensionVersion) && chatReady;
 
   // Optional, read-only status signal to the local AI MANAGER.
   const [managerWatch, setManagerWatch] = useState(() => !managerLaunch.error && (Boolean(managerLaunch.runId) || localStorage.getItem('vis-manager-watch') === '1'));
@@ -362,7 +369,7 @@ function App() {
     const generation=workGeneration.current;
     const dispatch = () => {if(stopGate.current||!holdsDispatch())return;void api.get('/api/bridge/' + sessionId + '/next?worker=' + laneId).then(({ data }) => {
       if(generation!==workGeneration.current||stopGate.current)return;
-      if (!cancelled && data.discarded) { setSession(data.session as Session); setNotice('Đã chặn lệnh tồn đọng từ luồng cũ. Phần đang xử lý đã trở về Sẵn sàng; hãy bấm Phân tích phân cảnh lại.'); return; } if (!cancelled && data.command) window.postMessage({ source: 'vis-web', type: 'studio-send', pairCode: sessionId, command: data.command }, '*');
+      if (!cancelled && data.discarded) { setSession(data.session as Session); setNotice('Đã chặn lệnh tồn đọng từ luồng cũ. Phần đang xử lý đã trở về Sẵn sàng; hãy bấm Phân tích phân cảnh lại.'); return; } if (!cancelled && data.command) window.postMessage({ source: 'vis-web', type: 'studio-send', pairCode: sessionId, command: withStyleKey(data.command, sessionRef.current?.stylePrompt) }, '*');
     }).catch(() => { if (!cancelled&&!stopGate.current) setNotice('Không thể lấy lệnh để gửi cho tiện ích.'); });};
     dispatch();
     const timer = window.setInterval(dispatch, 2000);
@@ -507,7 +514,7 @@ function App() {
     } catch (caught) { setNotice(caught instanceof Error ? caught.message : 'Không thể khởi tạo đồng bộ kết quả.'); }
   };
   const changeStylePrompt = (value: string) => { setStylePrompt(value); localStorage.setItem('vis-style-prompt', value); };
-  const combinedPrompt = (scene: Scene) => stylePrompt.includes('{{SCENE_PROMPT}}') ? stylePrompt.trim().replaceAll('{{SCENE_PROMPT}}', scene.prompt.trim()) : ['SCENE:\n' + scene.prompt.trim(), stylePrompt.trim()].filter(Boolean).join('\n\n');
+  const combinedPrompt = (scene: Scene) => /\{\{\s*(?:SCENE_PROMPT)?\s*\}\}/.test(stylePrompt) ? stylePrompt.trim().replace(/\{\{\s*(?:SCENE_PROMPT)?\s*\}\}/g, () => scene.prompt.trim()) : ['SCENE:\n' + scene.prompt.trim(), stylePrompt.trim()].filter(Boolean).join('\n\n');
   // Visible save state next to the button (the shared notice is not shown on the image tab).
   const [styleSave, setStyleSave] = useState<{ state: 'idle' | 'saving' | 'saved' | 'error'; at?: number; message?: string }>({ state: 'idle' });
   const savedStyle = String(session?.stylePrompt || '');
