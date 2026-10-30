@@ -3,10 +3,13 @@ type ResponseLike = { setHeader(name: string, value: string): void; status(code:
 
 type Scene = { title: string; backdrop: string; content: string; character: string; emotion: string; shot: string; image: string; prompt: string; imageStatus?: string; imageResults?: { url: string; prompt: string; createdAt: number; storagePath?: string; expiresAt?: number; jobId?: string }[]; imagePrompt?: string; imageError?: string };
 type Part = { id: string; title: string; range: string; content: string; status: string; scenes: Scene[]; analysisText: string; receivedAt?: number };
-type Job = { id: string; type: 'script_structure' | 'part_analysis' | 'image_generation'; status: string; prompt: string; partId?: string; sceneKey?: string; protocol: 2 | 3; expiresAt?: number; lane?: string };
-type LaneResult = { jobId: string; type: string; status: string; partId?: string; sceneKey?: string; error?: string; at: number };
+type Job = { id: string; type: 'script_structure' | 'part_analysis' | 'image_generation' | 'transcript_rewrite'; status: string; prompt: string; partId?: string; sceneKey?: string; sectionId?: string; protocol: 2 | 3; expiresAt?: number; lane?: string };
+// Rewrite sections handed out to ChatGPT lanes by AI MANAGER (Get Transcript run in parallel).
+type RewriteSection = { id: string; title: string; prompt: string; status: string; text: string; error?: string };
+type Rewrite = { sections: RewriteSection[]; updatedAt: number };
+type LaneResult = { jobId: string; type: string; status: string; partId?: string; sceneKey?: string; sectionId?: string; error?: string; at: number };
 // laneJobs: one job per ChatGPT tab ("lane") so AI MANAGER can run several tabs/browsers in parallel.
-type Session = { id: string; script: string; status: string; activeJob: Job | null; lastJob?: Job; parts: Part[]; imageJobs: Job[]; imageCaptures?: Job[]; laneJobs?: Job[]; laneLast?: Record<string, LaneResult>; workEpoch?: number; updatedAt: number; bridgeLastSeen?: number; finishedJobIds?: string[]; lastError?: string; analysisQueue?: string[]; batchAnalysis?: boolean; stylePrompt?: string; separations?: Record<string, unknown>[]; analysisBackup?: { script: string; parts: Part[]; savedAt: number } };
+type Session = { id: string; script: string; status: string; activeJob: Job | null; lastJob?: Job; parts: Part[]; imageJobs: Job[]; imageCaptures?: Job[]; laneJobs?: Job[]; laneLast?: Record<string, LaneResult>; rewrite?: Rewrite; workEpoch?: number; updatedAt: number; bridgeLastSeen?: number; finishedJobIds?: string[]; lastError?: string; analysisQueue?: string[]; batchAnalysis?: boolean; stylePrompt?: string; separations?: Record<string, unknown>[]; analysisBackup?: { script: string; parts: Part[]; savedAt: number } };
 type Change = { fail?: [string, number]; skip?: boolean; [key: string]: unknown };
 const laneOk = (value: string) => /^[A-Za-z0-9_-]{6,64}$/.test(value);
 
@@ -21,17 +24,18 @@ function slim(session: Session | null | undefined) {
   return { ...session, parts: (session.parts || []).map(part => ({ ...part, analysisText: '', scenes: (part.scenes || []).map(scene => {
     const { imagePrompt: _p, ...rest } = scene;
     return { ...rest, imageResults: (scene.imageResults || []).map(({ prompt: _q, ...image }) => image) };
-  }) })) };
+  }) })), ...(session.rewrite ? { rewrite: { ...session.rewrite, sections: session.rewrite.sections.map(({ prompt: _r, ...section }) => section) } } : {}) };
 }
 const send = (res: ResponseLike, code: number, value: unknown) => {
   const body = value && typeof value === 'object' && 'session' in (value as Record<string, unknown>) ? { ...(value as Record<string, unknown>), session: slim((value as { session: Session | null }).session) } : value;
   return res.status(code).json(body);
 };
 // A small summary stored inside the record so polling can read a few hundred bytes instead of the whole project.
-const compactJob = (job: Job | null | undefined) => job ? { id: job.id, type: job.type, status: job.status, lane: job.lane, partId: job.partId, sceneKey: job.sceneKey } : null;
+const compactJob = (job: Job | null | undefined) => job ? { id: job.id, type: job.type, status: job.status, lane: job.lane, partId: job.partId, sceneKey: job.sceneKey, sectionId: job.sectionId } : null;
 function stamp<T extends Session>(session: T): T {
   (session as Session & { summary?: unknown }).summary = { updatedAt: session.updatedAt, workEpoch: session.workEpoch || 0, status: session.status, lastError: session.lastError || '',
-    activeJob: compactJob(session.activeJob), lastJob: compactJob(session.lastJob), laneJobs: (session.laneJobs || []).map(compactJob), imageJobs: (session.imageJobs || []).filter(job => ['queued', 'sending'].includes(job.status)).length };
+    activeJob: compactJob(session.activeJob), lastJob: compactJob(session.lastJob), laneJobs: (session.laneJobs || []).map(compactJob), imageJobs: (session.imageJobs || []).filter(job => ['queued', 'sending'].includes(job.status)).length,
+    rewrite: session.rewrite ? { total: session.rewrite.sections.length, done: session.rewrite.sections.filter(s => s.status === 'done').length, updatedAt: session.rewrite.updatedAt } : null };
   return session;
 }
 const fail = (res: ResponseLike, message: string, code = 400) => send(res, code, { error: message });
@@ -121,7 +125,7 @@ async function mutate(id: string, change: (fresh: Session) => Change | void): Pr
 function finishLane(session: Session, job: Job, status: string, error = '') {
   session.laneJobs = (session.laneJobs || []).filter(item => item.id !== job.id);
   session.finishedJobIds = [...(session.finishedJobIds || []), job.id].slice(-200);
-  session.laneLast = { ...(session.laneLast || {}), [String(job.lane)]: { jobId: job.id, type: job.type, status, partId: job.partId, sceneKey: job.sceneKey, error: error.slice(0, 1000), at: Date.now() } };
+  session.laneLast = { ...(session.laneLast || {}), [String(job.lane)]: { jobId: job.id, type: job.type, status, partId: job.partId, sceneKey: job.sceneKey, sectionId: job.sectionId, error: error.slice(0, 1000), at: Date.now() } };
 }
 async function laneEvent(session: Session, hit: Job, body: Record<string, unknown>) {
   const state = String(body.state || ''); const text = String(body.text || '').trim();
@@ -150,6 +154,14 @@ async function laneEvent(session: Session, hit: Job, body: Record<string, unknow
       if (!scenes) { if (part.status !== 'complete') part.status = 'error'; finishLane(fresh, job, 'error', parseError); return {}; }
       part.scenes = scenes; part.analysisText = analysisText; part.status = 'complete'; finishLane(fresh, job, 'completed'); return {};
     }
+    if (job.type === 'transcript_rewrite') {
+      const section = fresh.rewrite?.sections.find(item => item.id === job.sectionId);
+      if (state === 'progress') return { skip: true, acknowledged: true, ignored: true };
+      if (state === 'completed' && text && section) { section.text = text; section.status = 'done'; section.error = ''; fresh.rewrite!.updatedAt = Date.now(); finishLane(fresh, job, 'completed'); return {}; }
+      const message = state === 'completed' ? 'ChatGPT trả về kịch bản trống.' : text || 'ChatGPT không viết lại được phần này.';
+      if (section && section.status !== 'done') { section.status = 'error'; section.error = message.slice(0, 500); fresh.rewrite!.updatedAt = Date.now(); }
+      finishLane(fresh, job, 'error', message); return {};
+    }
     if (state === 'completed' && job.type === 'image_generation') {
       if (scene && image) { scene.imageResults = [image]; scene.imageStatus = 'complete'; scene.imageError = ''; }
       finishLane(fresh, job, 'completed'); return {};
@@ -174,6 +186,8 @@ function laneCommand(fresh: Session, lane: string, path: string[], body: Record<
     if (part && job.type === 'part_analysis' && part.status !== 'complete') part.status = 'stopped';
     const scene = job.sceneKey ? findScene(fresh, job.sceneKey).scene : undefined;
     if (scene && job.type === 'image_generation' && scene.imageStatus !== 'complete') scene.imageStatus = 'stopped';
+    const section = job.sectionId ? fresh.rewrite?.sections.find(item => item.id === job.sectionId) : undefined;
+    if (section && section.status !== 'done') section.status = 'stopped';
     finishLane(fresh, job, 'released', String(body.reason || 'Manager chuyển việc sang tab khác.'));
     return { released: true };
   }
@@ -187,6 +201,15 @@ function laneCommand(fresh: Session, lane: string, path: string[], body: Record<
     part.status = 'processing'; part.scenes = []; part.analysisText = ''; delete part.receivedAt;
     const command: Job = { id: newId(), type: 'part_analysis', status: 'queued', prompt: partPrompt(part), partId: part.id, protocol: 2, lane };
     laneJobs.push(command); fresh.lastError = ''; return { command };
+  }
+  if (path[4] === 'rewrite' && path[5] && path.length === 6) {
+    const section = fresh.rewrite?.sections.find(item => item.id === path[5]); if (!section) return { fail: ['Không tìm thấy phần cần viết lại.', 404] };
+    if (busy) return busy.sectionId === section.id && busy.type === 'transcript_rewrite' ? { skip: true, command: busy } : { fail: ['Tab ChatGPT này đang bận.', 409] };
+    if (section.status === 'done' && section.text) return { fail: ['Phần này đã viết lại xong.', 409] };
+    if (laneJobs.some(item => item.sectionId === section.id)) return { fail: ['Phần này đang được tab khác viết lại.', 409] };
+    section.status = 'processing'; section.error = ''; fresh.rewrite!.updatedAt = Date.now();
+    const command: Job = { id: newId(), type: 'transcript_rewrite', status: 'queued', prompt: section.prompt, sectionId: section.id, protocol: 2, lane };
+    laneJobs.push(command); return { command };
   }
   if (path[4] === 'images' && path.length === 5) {
     const key = String(body.sceneKey || ''); const style = String(body.stylePrompt || fresh.stylePrompt || '').trim();
@@ -382,6 +405,21 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         return send(res, 200, { session: await read(session.id) });
       }
       if(req.method==='POST'&&path[2]!=='stop'&&typeof body.expectedWorkEpoch==='number'&&body.expectedWorkEpoch!==(session.workEpoch||0))return fail(res,'Yêu cầu cũ đã bị Dừng.',409);
+      if (path[2] === 'rewrite' && path.length === 3 && req.method === 'POST') {
+        const raw = Array.isArray(body.sections) ? body.sections : [];
+        if (!raw.length || raw.length > 60) return fail(res, 'Cần từ 1 đến 60 phần để viết lại.', 422);
+        const sections = raw.map((item: unknown) => { const row = (item || {}) as Record<string, unknown>; return { id: String(row.id || '').slice(0, 80), title: String(row.title || '').slice(0, 300), prompt: String(row.prompt || '') }; });
+        if (sections.some(s => !/^[A-Za-z0-9_-]{1,80}$/.test(s.id) || !s.prompt.trim() || s.prompt.length > 200000) || new Set(sections.map(s => s.id)).size !== sections.length) return fail(res, 'Danh sách phần viết lại không hợp lệ.', 422);
+        const out = await mutate(session.id, fresh => {
+          if ((fresh.laneJobs || []).some(job => job.type === 'transcript_rewrite')) return { fail: ['Đang viết lại; không thay danh sách phần.', 409] };
+          // Same section with the same prompt keeps its finished text; anything else starts fresh.
+          const old = new Map((fresh.rewrite?.sections || []).map(s => [s.id, s]));
+          fresh.rewrite = { updatedAt: Date.now(), sections: sections.map(s => { const prev = old.get(s.id); return prev && prev.prompt === s.prompt && prev.status === 'done' ? prev : { ...s, status: 'waiting', text: '' }; }) };
+          return {};
+        });
+        if (out.fail) return fail(res, out.fail[0], out.fail[1]);
+        return send(res, 200, { session: out.session });
+      }
       if (path[2] === 'lanes' && path[3] && req.method === 'POST') {
         if (!laneOk(path[3])) return fail(res, 'Mã tab ChatGPT không hợp lệ.');
         const out = await mutate(session.id, fresh => laneCommand(fresh, path[3], path, body));

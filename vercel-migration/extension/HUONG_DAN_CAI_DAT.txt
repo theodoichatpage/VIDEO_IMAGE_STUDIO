@@ -41,3 +41,4 @@ Nếu ChatGPT đang bật chế độ Tạo ảnh trong ô nhập, tắt chế �
 24. Bản 0.5.2: không cần tự mở tab ChatGPT. Nếu chưa có tab chatgpt.com, tiện ích tự mở một tab chạy nền (tối đa 1 lần mỗi 2 phút); tab ChatGPT đang làm việc không bị Edge cho "ngủ". Chỉ cần ChatGPT đã đăng nhập trên trình duyệt này.
 25. Bản 0.5.3: tự cập nhật. Cài một lần từ thư mục do AI MANAGER quản lý (AI MANAGER > Cài đặt > Cài Extension một lần). Sau đó AI MANAGER tự đưa bản mới vào thư mục, tiện ích tự nạp lại khi không có tác vụ và tự gắn lại vào tab Studio/ChatGPT đang mở, không cần F5.
 26. Bản 0.5.4: tab ChatGPT không còn kẹt "đang xử lý phần khác" vì một tác vụ cũ đã bỏ dở; khi ChatGPT đang rảnh, lệnh mới thay tác vụ cũ.
+27. Bản 0.5.5: tab Studio nào cũng tự kết nối tiện ích với dự án đang mở; tác vụ cũ đã chết không còn giữ tiện ích ở trạng thái bận. Viết lại transcript có thể chia cho nhiều tab ChatGPT (AI MANAGER điều phối).

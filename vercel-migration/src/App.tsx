@@ -204,7 +204,7 @@ function App() {
     return () => { window.removeEventListener('message', receive); window.clearInterval(timer); };
   }, [sessionId]);
 
-  const bridgeConnected = extensionPairCode === sessionId && ['0.4.10', '0.4.11', '0.4.12', '0.4.13', '0.4.14', '0.4.15', '0.4.16', '0.4.17', '0.4.18', '0.4.19', '0.4.20', '0.4.21', '0.4.22', '0.4.23', '0.4.24', '0.4.25', '0.4.26', '0.4.27', '0.4.28', '0.4.29', '0.4.30', '0.4.31', '0.4.32', '0.4.33', '0.4.34', '0.5.0', '0.5.1', '0.5.2', '0.5.3', EXTENSION_VERSION].includes(extensionVersion) && chatReady;
+  const bridgeConnected = extensionPairCode === sessionId && ['0.4.10', '0.4.11', '0.4.12', '0.4.13', '0.4.14', '0.4.15', '0.4.16', '0.4.17', '0.4.18', '0.4.19', '0.4.20', '0.4.21', '0.4.22', '0.4.23', '0.4.24', '0.4.25', '0.4.26', '0.4.27', '0.4.28', '0.4.29', '0.4.30', '0.4.31', '0.4.32', '0.4.33', '0.4.34', '0.5.0', '0.5.1', '0.5.2', '0.5.3', '0.5.4', EXTENSION_VERSION].includes(extensionVersion) && chatReady;
 
   // Optional, read-only status signal to the local AI MANAGER.
   const [managerWatch, setManagerWatch] = useState(() => !managerLaunch.error && (Boolean(managerLaunch.runId) || localStorage.getItem('vis-manager-watch') === '1'));
@@ -306,9 +306,13 @@ function App() {
   // A Studio tab AI MANAGER opened to run this project (main or extra ChatGPT browser) connects the
   // extension to the project by itself, unless the extension is busy with another job.
   // Retried every 20 s while not connected (e.g. the ChatGPT tab was not open yet).
-  const autoBound = useRef(0);
+  // Every Studio tab connects the extension to its project by itself: once when it opens, and again every
+  // 20 s only while it has never been connected (failed attempt). If another tab later takes the extension,
+  // this tab does not fight back. A job that is really running in this browser is never interrupted.
+  const autoBound = useRef(0), everConnected = useRef(false);
+  if (extensionPairCode === sessionId) everConnected.current = true;
   useEffect(() => {
-    if (!(managerLaunch.lane || (managerLaunch.runId && managerLaunch.projectId === sessionId)) || !extensionVersion || extensionPairCode === sessionId || extensionFacts.activeJobId) return;
+    if (managerLaunch.error || !extensionVersion || extensionPairCode === sessionId || extensionFacts.activeJobId || everConnected.current) return;
     const bind = () => {
       if (Date.now() - autoBound.current < 20000) return;
       autoBound.current = Date.now();

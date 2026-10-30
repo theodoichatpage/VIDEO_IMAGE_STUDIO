@@ -145,3 +145,28 @@ test('egress: an old record without a stamp gets one on the first check, later c
   assert.equal(v.version.updatedAt, before); assert.ok(h.stored.summary, 'stamp saved'); assert.equal(h.stored.updatedAt, before, 'content and updatedAt unchanged');
   h.fullReads = 0; await h.call('GET', `sessions/${id}/version`); assert.equal(h.fullReads, 0);
 });
+
+test('rewrite sections run on several lanes; finished text kept on re-upload; release frees a section', async () => {
+  const h = harness();
+  await h.call('POST', 'sessions', { id });
+  const sections = [1, 2, 3].map(i => ({ id: 's' + i, title: 'Phần ' + i, prompt: 'Viết lại phần ' + i }));
+  let r = await h.call('POST', `sessions/${id}/rewrite`, { sections });
+  assert.equal(r.session.rewrite.sections[0].prompt, undefined, 'reply leaves prompts out');
+  const a = await h.call('POST', `sessions/${id}/lanes/laneA01/rewrite/s1`, {});
+  const b = await h.call('POST', `sessions/${id}/lanes/laneB01/rewrite/s2`, {});
+  assert.equal(a.command.type, 'transcript_rewrite'); assert.equal(a.command.prompt, 'Viết lại phần 1');
+  await h.call('POST', `sessions/${id}/lanes/laneC01/rewrite/s1`, {}, 409);
+  assert.equal((await h.call('GET', `bridge/${id}/next`, undefined, 200, { worker: 'laneB01' })).command.id, b.command.id);
+  await h.call('POST', `bridge/${id}/event`, { jobId: a.command.id, state: 'completed', text: 'Bản viết lại 1' });
+  await h.call('POST', `bridge/${id}/event`, { jobId: b.command.id, state: 'error', text: 'Lỗi' });
+  assert.equal(h.stored.rewrite.sections[0].status, 'done'); assert.equal(h.stored.rewrite.sections[0].text, 'Bản viết lại 1');
+  assert.equal(h.stored.rewrite.sections[1].status, 'error');
+  assert.deepEqual((await h.call('GET', `sessions/${id}/version`)).version.rewrite.done, 1);
+  // Re-upload while nothing runs: finished section with the same prompt keeps its text.
+  r = await h.call('POST', `sessions/${id}/rewrite`, { sections });
+  assert.equal(h.stored.rewrite.sections[0].text, 'Bản viết lại 1'); assert.equal(h.stored.rewrite.sections[1].status, 'waiting');
+  const c = await h.call('POST', `sessions/${id}/lanes/laneA01/rewrite/s3`, {});
+  await h.call('POST', `sessions/${id}/rewrite`, { sections }, 409);
+  await h.call('POST', `sessions/${id}/lanes/laneA01/release`, { jobId: c.command.id });
+  assert.equal(h.stored.rewrite.sections[2].status, 'stopped');
+});

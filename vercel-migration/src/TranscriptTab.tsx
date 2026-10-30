@@ -6,6 +6,7 @@ import { assembleRewrittenScript, loadTranscriptWorkspace, saveTranscriptWorkspa
 import { fetchTranscript } from './transcriptProvider';
 import { buildRewritePrompt } from './transcriptAi';
 import { statusLabel } from './rewriteQueue';
+import { api } from './api';
 import { readManagerTranscript, readManagerTranscriptState, writeManagerTranscriptState, type ManagerTranscript, type ManagerTranscriptState } from './managerTranscript';
 
 type Props={onUseTranscript:(text:string,title?:string)=>void;projectId?:string};
@@ -141,11 +142,50 @@ export default function TranscriptTab({onUseTranscript,projectId=localStorage.ge
   if(!ws.stylePrompt.trim()){fail('Chưa có prompt phong cách viết lại. Nhập trong AI MANAGER hoặc tab Get Transcript.');return}
   if(!ws.sections.length){if(!attempt('partition'))return;sendChat(buildPartitionPrompt(ws.transcript.text,ws.language),'mindmap');return}
   const done=ws.sections.filter(x=>x.status==='done').length;
+  // Several ChatGPT tabs: hand the sections to the Studio server; AI MANAGER gives each tab its share.
+  if(mgr.parallel&&done<ws.sections.length){
+   if(!state.uploaded){
+    const sections=ws.sections.map((s,i)=>({id:s.id,title:s.title,prompt:buildRewritePrompt(s,ws.stylePrompt,[ws.sections[i-1]?.summary,ws.sections[i+1]?.summary].filter(Boolean).join(' | '))}));
+    save({stage:'rewrite',done,total:ws.sections.length,uploaded:false});
+    void api.post('/api/sessions/'+projectId+'/rewrite',{sections}).then(()=>save({stage:'rewrite',done,total:ws.sections.length,uploaded:true})).catch(err=>{if(attempt('upload'))setError(err instanceof Error?err.message:'Không gửi được danh sách phần.')});
+   }
+   return;
+  }
   if(done<ws.sections.length){if(batchRunning){if(state.stage!=='rewrite'||state.done!==done)save({stage:'rewrite',done,total:ws.sections.length,attempts:state.stage==='rewrite'?state.attempts:0});return}
    const failed=ws.sections.filter(x=>x.status==='error'||x.status==='stopped').length;if(failed&&!attempt('rewrite'))return;save({stage:'rewrite',done,total:ws.sections.length});setBatch(true);return}
   const text=assembleRewrittenScript(ws.sections);if(!text.trim()){fail('Kịch bản viết lại trống.');return}
   save({stage:'done',done,total:ws.sections.length});setMgr(null);void onUseTranscript(text,ws.transcript.title);
  },[mgr,busy,aiBusy,batchRunning,ws.transcript,ws.url,ws.sections,ws.stylePrompt,error]);
+
+ // Parallel rewrite: read the results the tabs saved on the Studio server (small stamp first).
+ useEffect(()=>{
+  if(!mgr?.parallel)return;
+  let seen='';
+  const pull=async()=>{
+   const st=readManagerTranscriptState();if(!st||st.id!==mgr.id||!st.uploaded)return;
+   try{
+    const v=(await api.get<{version:{rewrite?:{done:number;total:number;updatedAt:number}|null}|null}>('/api/sessions/'+projectId+'/version')).data.version?.rewrite;
+    if(!v)return;const key=v.done+':'+v.updatedAt;if(key===seen)return;seen=key;
+    const rows=((await api.get('/api/sessions/'+projectId)).data.session as unknown as {rewrite?:{sections:{id:string;status:string;text:string;error?:string}[]}}|null)?.rewrite?.sections||[];
+    const byId=new Map(rows.map(r=>[r.id,r]));
+    setWs(s=>({...s,sections:s.sections.map(x=>{const r=byId.get(x.id);if(!r)return x;return r.status==='done'?{...x,status:'done',rewrittenText:r.text}:r.status==='processing'?{...x,status:'processing'}:r.status==='error'?{...x,status:'error',error:r.error}:x})}));
+    writeManagerTranscriptState({...st,stage:'rewrite',done:v.done,total:v.total,at:Date.now()});
+   }catch{/* next round */}
+  };
+  void pull();const t=window.setInterval(()=>void pull(),8000);return()=>window.clearInterval(t);
+ },[mgr?.id,mgr?.parallel,projectId]);
+ // A job lost in a browser restart (the extension no longer has it) is dropped at once, not after 10 minutes.
+ const lostChecks=useRef(0);
+ useEffect(()=>{
+  const onStatus=(e:MessageEvent)=>{
+   if(e.source!==window||e.data?.source!=='vis-extension'||e.data.type!=='studio-status')return;
+   const job=pending.current;if(!job?.started){lostChecks.current=0;return}
+   const known=String(e.data.activeJobId||'')===job.id||(e.data.transcriptEvents||[]).some((x:{jobId?:string})=>x?.jobId===job.id);
+   lostChecks.current=known?0:lostChecks.current+1;
+   if(lostChecks.current>=3){lostChecks.current=0;failPending('Tác vụ dở bị mất khi trình duyệt khởi động lại; sẽ làm lại phần này.')}
+  };
+  window.addEventListener('message',onStatus);return()=>window.removeEventListener('message',onStatus);
+ },[]);
  const selectedPart=ws.sections.find(x=>x.branchId===ws.selectedBranchId)||ws.sections[0];
  const chars=ws.transcript?.text.length||0;
  return <section className="transcript-page workspace">
