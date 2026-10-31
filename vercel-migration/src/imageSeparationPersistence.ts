@@ -1,7 +1,7 @@
 import type {LibraryImage} from './imageSeparationState';
 import type {SeparationResult} from './localEngine';
 export type PersistedOutput={imageKey:string;imageName:string;jobId:string;result:SeparationResult};
-export type PersistedSeparationState={selectedKeys:string[];outputs:PersistedOutput[];activeOutput:number;fill:boolean;mode?:'parallax'|'edit';layerCount?:3|4};
+export type PersistedSeparationState={selectedKeys:string[];outputs:PersistedOutput[];activeOutput:number;fill:boolean;mode?:'parallax'|'edit';layerCount?:3|4;sceneNames?:Record<string,string>};
 const DB='video-image-studio-separation';const STORE='images';const VERSION=1;
 const stateKey=(projectId:string)=>`video-image-studio:separation:${projectId}`;
 function db(){return new Promise<IDBDatabase>((resolve,reject)=>{const req=indexedDB.open(DB,VERSION);req.onupgradeneeded=()=>{if(!req.result.objectStoreNames.contains(STORE))req.result.createObjectStore(STORE,{keyPath:'id'})};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)})}
