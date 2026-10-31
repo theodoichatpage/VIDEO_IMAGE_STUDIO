@@ -51,7 +51,27 @@ function settings() {
   if (!url || !key) throw new Error('Thiếu cấu hình Supabase.');
   return { url: url.replace(/\/$/, ''), key };
 }
-async function database(path: string, init?: RequestInit) {
+// Small columns next to the big `record` (migration 20261031120000): `summary` answers the frequent "anything new?"
+// checks and `bridge_last_seen` takes heartbeats, so neither makes Postgres unpack or rewrite the whole project.
+// Until that migration runs, the function keeps working the old way (columnsReady turns false on the first miss).
+let columnsReady = true;
+const missingColumn = (message: string) => /summary|bridge_last_seen/.test(message) && /column|schema cache|PGRST204|42703/i.test(message);
+async function database(path: string, init?: RequestInit): Promise<any> {
+  // A write never needs the multi-MB record sent back: ask only for the id (enough to know a row was updated).
+  if (init?.method === 'PATCH' && /return=representation/.test(String((init.headers as Record<string, string> | undefined)?.Prefer || '')) && !/[?&]select=/.test(path)) path += '&select=id';
+  if (columnsReady && typeof init?.body === 'string' && /^studio_sessions\?/.test(path) && init.body.startsWith('{"record":')) {
+    const record = JSON.parse(init.body).record as Session & { summary?: unknown };
+    try { return await rest(path, { ...init, body: JSON.stringify({ record, summary: record?.summary ?? null }) }); }
+    catch (error) { if (!missingColumn(String((error as Error).message))) throw error; columnsReady = false; }
+  }
+  if (init?.method === 'POST' && /^studio_sessions\?on_conflict/.test(path) && columnsReady && typeof init.body === 'string') {
+    const row = JSON.parse(init.body) as { id: string; record: Session & { summary?: unknown } };
+    try { return await rest(path, { ...init, body: JSON.stringify({ ...row, summary: row.record?.summary ?? null }) }); }
+    catch (error) { if (!missingColumn(String((error as Error).message))) throw error; columnsReady = false; }
+  }
+  return rest(path, init);
+}
+async function rest(path: string, init?: RequestInit) {
   const { url, key } = settings();
   const result = await fetch(url + '/rest/v1/' + path, {
     ...init,
@@ -88,9 +108,12 @@ async function saveImage(session: Session, job: Job, value: unknown) {
 }
 
 async function read(id: string): Promise<Session | null> {
-  const rows = await database('studio_sessions?id=eq.' + encodeURIComponent(id) + '&select=record') as { record: Session }[];
+  let rows: { record: Session; bridge_last_seen?: number }[];
+  try { rows = await database('studio_sessions?id=eq.' + encodeURIComponent(id) + '&select=record' + (columnsReady ? ',bridge_last_seen' : '')); }
+  catch (error) { if (!columnsReady || !missingColumn(String((error as Error).message))) throw error; columnsReady = false; rows = await database('studio_sessions?id=eq.' + encodeURIComponent(id) + '&select=record'); }
   const value = rows?.[0]?.record;
   if (!value) return null;
+  value.bridgeLastSeen = Math.max(Number(value.bridgeLastSeen) || 0, Number(rows[0].bridge_last_seen) || 0);
   const parts = (value.parts || []).map(part => {
     if (part.status !== 'error' || !part.scenes?.length || !part.analysisText) return part;
     try {
@@ -227,7 +250,13 @@ function laneCommand(fresh: Session, lane: string, path: string[], body: Record<
 }
 type Version = { updatedAt: number; workEpoch: number; status: string; lastError: string; activeJob: ReturnType<typeof compactJob>; lastJob?: ReturnType<typeof compactJob>; laneJobs: ReturnType<typeof compactJob>[]; imageJobs: number; full?: boolean };
 async function version(id: string): Promise<Version | null> {
-  const rows = await database('studio_sessions?id=eq.' + encodeURIComponent(id) + '&select=summary:record->summary') as { summary?: Version | null }[];
+  let rows: { summary?: Version | null }[] | null = null;
+  if (columnsReady) {
+    try { rows = await database('studio_sessions?id=eq.' + encodeURIComponent(id) + '&select=summary'); }
+    catch (error) { if (!missingColumn(String((error as Error).message))) throw error; columnsReady = false; }
+  }
+  // No column yet, or a row whose column is still empty: read the summary inside the record (the old, heavy way).
+  if (!rows?.length || !rows[0].summary) rows = await database('studio_sessions?id=eq.' + encodeURIComponent(id) + '&select=summary:record->summary');
   if (!rows?.length) return null;
   const layers = await database('studio_separations?session_id=eq.' + encodeURIComponent(id) + '&select=updated_at&order=updated_at.desc&limit=1') as { updated_at?: number }[];
   const layerAt = Number(layers?.[0]?.updated_at) || 0;
