@@ -476,7 +476,7 @@ def run_gui():
         jobs, skipped = [], 0
         for n, d in scenes:
             out = video_path(dst, n)
-            if v_skip.get() and os.path.exists(out) and os.path.getmtime(out) >= max(os.path.getmtime(p) for p in d.values()):
+            if v_skip.get() and video_up_to_date(out, d):
                 skipped += 1
                 set_row(n, 1, "Đã có video – bỏ qua", "skip")
                 continue
@@ -543,23 +543,186 @@ def run_gui():
     root.mainloop()
 
 
-def run_cli(src, dst, motion="random", workers=2):
-    """Chạy không giao diện: Parallax25D.exe --cli <thư mục ảnh> <thư mục xuất>"""
+def video_up_to_date(out, layers):
+    """Video đã có và mới hơn mọi lớp ảnh -> không cần tạo lại."""
+    try:
+        return os.path.exists(out) and os.path.getmtime(out) >= max(os.path.getmtime(p) for p in layers.values())
+    except OSError:
+        return False
+
+
+CLI_HELP = """Parallax25D.exe --cli <thư mục ảnh> <thư mục xuất> [tùy chọn]
+
+Tự tìm mọi thư mục cảnh trong <thư mục ảnh> (bỏ qua thư mục bắt đầu bằng _ hoặc .),
+mỗi cảnh ra <thư mục xuất>\\<thư mục con>\\<tên cảnh>.mp4.
+Mã thoát: 0 = mọi cảnh OK (kể cả bỏ qua), 1 = có cảnh lỗi, 2 = tham số sai / không có cảnh.
+"""
+
+
+def _write_json(path, data):
+    import json
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)  # ghi nguyên khối: bên đọc không bao giờ thấy file dở
+
+
+def parse_cli(argv):
+    import argparse
+    p = argparse.ArgumentParser(prog="Parallax25D.exe --cli", description=CLI_HELP,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("src")
+    p.add_argument("dst")
+    p.add_argument("--motion", default="random", choices=sorted(set(MOTIONS.values())))
+    p.add_argument("--duration", type=float, default=5.0, help="giây (0.5–60)")
+    p.add_argument("--fps", type=int, default=30, choices=[24, 25, 30, 60])
+    p.add_argument("--res", default="1920x1080", help="RỘNGxCAO, vd 1920x1080, 1080x1920")
+    p.add_argument("--strength", type=float, default=10, help="biên độ %% (2–30)")
+    p.add_argument("--speeds", default="0.05,0.2,0.55,1.1", help="tốc độ far,bg,mid,fg")
+    p.add_argument("--blur", type=float, default=0, help="làm mờ tiền cảnh, px")
+    p.add_argument("--crf", type=int, default=18, help="chất lượng 14–30 (nhỏ = nét)")
+    p.add_argument("--workers", type=int, default=max(1, min((os.cpu_count() or 2) // 2, 6)))
+    p.add_argument("--no-ease", action="store_true", help="chuyển động đều, không chậm đầu/cuối")
+    p.add_argument("--rerun", action="store_true", help="tạo lại cả cảnh đã có video mới hơn ảnh")
+    p.add_argument("--status", help="file JSON tiến trình (mặc định <thư mục xuất>\\parallax_status.json)")
+    a = p.parse_args(argv)
+    try:
+        w, h = (int(x) for x in a.res.lower().split("x"))
+        speeds = [float(x) for x in a.speeds.split(",")]
+        assert len(speeds) == 4 and 16 <= w <= 7680 and 16 <= h <= 7680
+    except Exception:
+        p.error("--res phải dạng 1920x1080 và --speeds phải có 4 số far,bg,mid,fg")
+    cfg = {"W": w - w % 2, "H": h - h % 2, "fps": a.fps, "duration": min(60.0, max(0.5, a.duration)),
+           "strength": min(30.0, max(2.0, a.strength)) / 100, "motion": a.motion,
+           "speeds": dict(zip(("far", "bg", "mid", "fg"), speeds)), "blur": max(0.0, a.blur),
+           "ease": not a.no_ease, "crf": min(30, max(14, a.crf))}
+    return a, cfg
+
+
+def run_cli(argv):
+    """Chạy không giao diện (cho AI MANAGER / script). Ghi tiến trình vào file JSON."""
+    import io
+    import time
+    # exe dạng --windowed không có console: gom lỗi tham số lại để ghi vào file trạng thái
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w")
+    real_err, sys.stderr = sys.stderr, io.StringIO()
+    try:
+        a, cfg = parse_cli(argv)
+    except SystemExit as exc:
+        msg = sys.stderr.getvalue().strip()
+        sys.stderr = real_err
+        if real_err is not None:
+            print(msg, file=real_err)
+        pos = [x for x in argv if not x.startswith("-")]
+        if exc.code and len(pos) >= 2:  # có thư mục xuất -> báo lỗi qua file trạng thái
+            try:
+                os.makedirs(pos[1], exist_ok=True)
+                _write_json(os.path.join(pos[1], "parallax_status.json"),
+                            {"state": "error", "error": msg or "Tham số sai", "updated_at": time.time()})
+            except OSError:
+                pass
+        return 2 if exc.code else 0
+    sys.stderr = real_err
+    src, dst = a.src, a.dst
     os.makedirs(dst, exist_ok=True)
-    cfg = {"W": 1920, "H": 1080, "fps": 30, "duration": 5, "strength": 0.1, "motion": motion,
-           "speeds": {"far": 0.05, "bg": 0.2, "mid": 0.55, "fg": 1.1}, "blur": 0, "ease": True, "crf": 18}
-    jobs = [(n, d, cfg, video_path(dst, n)) for n, d in find_scenes(src)]
+    status_path = a.status or os.path.join(dst, "parallax_status.json")
+    st = {"state": "running", "src": src, "dst": dst, "pid": os.getpid(), "started_at": time.time(),
+          "updated_at": time.time(), "total": 0, "done": 0, "skipped": 0, "failed": 0, "percent": 0,
+          "current": [], "scenes": {}, "settings": {k: v for k, v in cfg.items()}}
+
+    def flush():
+        st["updated_at"] = time.time()
+        run = [s for s in st["scenes"].values() if s["state"] != "skipped"]  # mọi cảnh phải tạo, kể cả đang chờ
+        total = len(run)
+        st["percent"] = round(100 * sum(1 if s["state"] in ("done", "error") else s["percent"] / 100 for s in run) / total, 1) \
+            if total else 100
+        st["current"] = [n for n, s in st["scenes"].items() if s["state"] == "running" and s["percent"] > 0]
+        _write_json(status_path, st)
+
+    if not os.path.isdir(src):
+        st.update(state="error", error=f"Không thấy thư mục ảnh: {src}")
+        flush()
+        return 2
+    scenes = find_scenes(src)
+    if not scenes:
+        st.update(state="error", error="Không tìm thấy cảnh nào (thư mục có ảnh lớp bg/mid/fg).")
+        flush()
+        return 2
+
+    manager = mp.Manager()
+    q = manager.Queue()
+    jobs = []
+    for n, d in scenes:
+        out = video_path(dst, n)
+        if not a.rerun and video_up_to_date(out, d):
+            st["scenes"][n] = {"state": "skipped", "percent": 100, "video": out}
+            st["skipped"] += 1
+        else:
+            st["scenes"][n] = {"state": "waiting", "percent": 0, "video": out}
+            jobs.append((n, d, cfg, out, q))
+    st["total"] = len(jobs)
+    flush()
+
+    stop = threading.Event()
+
+    def drain():
+        import queue as queue_mod
+        last = 0.0
+        while not stop.is_set():
+            try:
+                kind, name, val = q.get(timeout=0.3)
+                s = st["scenes"].get(name)
+                if s and s["state"] in ("waiting", "running"):
+                    s["state"] = "running"
+                    s["percent"] = max(s["percent"], round(float(val) * 100, 1))
+            except queue_mod.Empty:
+                pass
+            except Exception:
+                pass
+            if time.time() - last > 0.5:
+                flush()
+                last = time.time()
+
+    t = threading.Thread(target=drain, daemon=True)
+    t.start()
     lines = []
-    with ProcessPoolExecutor(max_workers=workers) as ex:
-        for f in as_completed([ex.submit(render_scene, j) for j in jobs]):
-            lines.append(repr(f.result()))
+    try:
+        with ProcessPoolExecutor(max_workers=max(1, a.workers)) as ex:
+            futs = {ex.submit(render_scene, j): j[0] for j in jobs}
+            for f in as_completed(futs):
+                name = futs[f]
+                s = st["scenes"][name]
+                try:
+                    _, path, extra = f.result()
+                    if path:
+                        s.update(state="done", percent=100, motion=extra)
+                    else:
+                        s.update(state="error", error=str(extra))
+                except Exception as exc:
+                    s.update(state="error", error=str(exc))
+                st["done"] += s["state"] == "done"
+                st["failed"] += s["state"] == "error"
+                lines.append(f"{s['state'].upper():5} {name} -> {s.get('video')} {s.get('motion') or s.get('error') or ''}")
+                flush()
+    finally:
+        stop.set()
+        t.join(2)
+        try:
+            manager.shutdown()
+        except Exception:
+            pass
+    st["state"] = "done" if not st["failed"] else "error"
+    if st["failed"]:
+        st["error"] = f"{st['failed']} cảnh lỗi"
+    flush()
     with open(os.path.join(dst, "log.txt"), "w", encoding="utf-8") as fh:
-        fh.write("\n".join(lines) + f"\nDONE {len(lines)}/{len(jobs)}\n")
+        fh.write("\n".join(lines) + f"\nDONE {st['done']}/{st['total']} · bỏ qua {st['skipped']} · lỗi {st['failed']}\n")
+    return 1 if st["failed"] else 0
 
 
 if __name__ == "__main__":
     mp.freeze_support()
-    if len(sys.argv) >= 4 and sys.argv[1] == "--cli":
-        run_cli(sys.argv[2], sys.argv[3])
-    else:
-        run_gui()
+    if len(sys.argv) >= 2 and sys.argv[1] == "--cli":
+        sys.exit(run_cli(sys.argv[2:]))
+    run_gui()
