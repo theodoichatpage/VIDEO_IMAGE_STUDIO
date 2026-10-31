@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-const endpoint = 'https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api';
+const endpoint = 'https://gqzolyrdhlabcvjewlpo.supabase.co/functions/v1/studio-api';
 const id = 'bridge-smoke-20261021-' + Date.now();
 console.log('Verification session:', id);
 function call(method, path, body) {

@@ -1,7 +1,7 @@
 import type { Session, Job } from './types';
 type ApiData = { session: Session | null; command?: Job | null; ignored?: boolean; discarded?: boolean; queuedCount?: number; alreadyQueuedCount?: number };
 type ApiResponse<T> = { data: T };
-const apiBase = 'https://wtxgjsorpqjanxoevxuw.supabase.co/functions/v1/studio-api';
+const apiBase = 'https://gqzolyrdhlabcvjewlpo.supabase.co/functions/v1/studio-api';
 
 async function request<T>(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<ApiResponse<T>> {
   const [route, query] = url.replace(/^\/api\//, '').split('?');

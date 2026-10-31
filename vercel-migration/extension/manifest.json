@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "VIDEO IMAGE STUDIO — ChatGPT Bridge",
-  "version": "0.5.12",
+  "version": "0.5.13",
   "description": "Kết nối VIDEO IMAGE STUDIO với tab ChatGPT đang mở.",
   "permissions": [
     "storage",
@@ -12,7 +12,7 @@
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
-    "https://wtxgjsorpqjanxoevxuw.supabase.co/*",
+    "https://gqzolyrdhlabcvjewlpo.supabase.co/*",
     "https://video-image-studio.vercel.app/*",
     "https://*.vercel.app/*",
     "https://video-image-studio-web-ma9gms.v2.appdeploy.ai/*",

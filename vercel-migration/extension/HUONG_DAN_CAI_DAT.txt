@@ -50,3 +50,4 @@ Nếu ChatGPT đang bật chế độ Tạo ảnh trong ô nhập, tắt chế �
 33. Bản 0.5.11: khi phong cách ảnh của dự án thay đổi, tiện ích mở hội thoại ChatGPT mới trước khi tạo ảnh, để ảnh cũ trong hội thoại không kéo theo phong cách cũ.
 
 34. Bản 0.5.12: ảnh gốc gửi thẳng về AI MANAGER trên máy (thư mục dự án); máy chủ Studio chỉ giữ ảnh xem trước nhỏ để tiết kiệm dung lượng tải. Không có AI MANAGER thì ảnh gốc vẫn lưu trên máy chủ như cũ.
+35. Bản 0.5.13: chuyển sang máy chủ Supabase mới (gqzolyrdhlabcvjewlpo). Bản 0.5.12 trở về trước không còn kết nối được Studio.
