@@ -19,6 +19,7 @@ const readProjectName=(id:string)=>{try{const items=JSON.parse(localStorage.getI
 const saveProjectName=(id:string,name:string)=>{try{const items=JSON.parse(localStorage.getItem('vis-project-meta')||'[]');const list=Array.isArray(items)?items:[];const time=Date.now();const found=list.find((x:{id?:string})=>x?.id===id);if(found){found.name=name;found.updatedAt=time}else list.unshift({id,name,createdAt:time,updatedAt:time});localStorage.setItem('vis-project-meta',JSON.stringify(list))}catch{}};
 export default function TranscriptTab({onUseTranscript,projectId=localStorage.getItem('vis-session')||'default'}:Props){
  const [projectName,setProjectName]=useState(()=>readProjectName(projectId));
+ useEffect(()=>{const sync=()=>setProjectName(readProjectName(projectId));window.addEventListener('vis-project-meta',sync);return()=>window.removeEventListener('vis-project-meta',sync)},[projectId]);
  const nameDefault=!projectName.trim()||projectName.trim()==='Dự án VIDEO IMAGE STUDIO';
  const [ws,setWs]=useState<TranscriptWorkspaceState>(()=>loadTranscriptWorkspace(projectId));
  const pairCode=localStorage.getItem('vis-session')||projectId;

@@ -28,6 +28,19 @@ function withStyleKey<T extends { type?: string }>(command: T, style?: string): 
   let h = 2166136261; for (const ch of style.trim()) { h ^= ch.codePointAt(0) || 0; h = Math.imul(h, 16777619) >>> 0; }
   return { ...command, styleKey: h.toString(36) + ':' + style.trim().length };
 }
+// AI MANAGER renamed projects: write the new names into this browser's project list (Manager is the owner).
+function applyManagerRenames(renames: Record<string, unknown>) {
+  try {
+    const list = JSON.parse(localStorage.getItem('vis-project-meta') || '[]');
+    if (!Array.isArray(list)) return;
+    let changed = false;
+    for (const item of list) {
+      const name = item && typeof item.id === 'string' ? renames[item.id] : undefined;
+      if (typeof name === 'string' && name.trim() && name.trim().slice(0, 200) !== item.name) { item.name = name.trim().slice(0, 200); item.updatedAt = Date.now(); changed = true; }
+    }
+    if (changed) { localStorage.setItem('vis-project-meta', JSON.stringify(list)); window.dispatchEvent(new Event('vis-project-meta')); }
+  } catch { /* names stay as they are */ }
+}
 function App() {
   const [managerLaunch] = useState(() => resolveManagerLaunch(localStorage, location.search));
   const [sessionId] = useState(() => {
@@ -294,6 +307,7 @@ function App() {
       }).then(response => response.json()).then(reply => {
         // AI MANAGER may ask this project's tab to get the transcript and rewrite it (Get Transcript tab).
         if (reply?.command && !managerLaunch.lane && acceptManagerTranscript(reply.command, sessionId)) setActiveMenu(0);
+        if (reply?.renames && typeof reply.renames === 'object') applyManagerRenames(reply.renames as Record<string, unknown>);
       }).catch(() => {});
     };
     const close = () => {
@@ -540,6 +554,14 @@ function App() {
     if (!serverReady || !session || session.id !== sessionId || savedStyle.trim() || !stylePrompt.trim()) return;
     styleAutoSent.current = true; void saveStyle();
   }, [serverReady, session, sessionId, savedStyle, stylePrompt]);
+  // The project's own style (set in AI MANAGER) is what a Manager run uses; show it in this tab without
+  // replacing the style this browser keeps for other projects.
+  const styleAdopted = useRef(false);
+  useEffect(() => {
+    if (styleAdopted.current || managerLaunch.error || !managerLaunch.runId || managerLaunch.projectId !== sessionId || !session || session.id !== sessionId) return;
+    styleAdopted.current = true;
+    if (savedStyle.trim() && savedStyle.trim() !== stylePrompt.trim()) setStylePrompt(savedStyle);
+  }, [session, sessionId, savedStyle, stylePrompt]);
   const styleStatus = styleSave.state === 'saving' ? { tone: 'busy', text: 'Đang lưu…' }
     : styleSave.state === 'error' ? { tone: 'bad', text: 'Lỗi lưu: ' + (styleSave.message || '') }
     : styleDirty ? { tone: 'warn', text: savedStyle.trim() ? 'Chưa lưu — bản đang sửa khác bản đã lưu (' + savedStyle.length.toLocaleString('vi-VN') + ' ký tự)' : 'Chưa lưu vào dự án' }

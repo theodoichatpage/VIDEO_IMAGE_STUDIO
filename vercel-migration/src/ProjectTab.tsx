@@ -1,4 +1,4 @@
-import {useMemo,useState} from 'react';
+import {useEffect,useMemo,useState} from 'react';
 import {Copy,FileText,Folder,FolderOpen,Image,MoreVertical,Pencil,Plus,Search,Scissors,Trash2,X} from 'lucide-react';
 import type {Session} from './types';
 import './projectTab.css';
@@ -15,6 +15,7 @@ const fmt=(value:number)=>new Date(value).toLocaleString('vi-VN',{day:'2-digit',
 export default function ProjectTab({projectId,session}:Props){
  const now=Date.now(),initial=readMeta(),currentStored=initial.find(p=>p.id===projectId);const current:ProjectMeta=currentStored||{id:projectId,name:defaultName(session),createdAt:session?.updatedAt||now,updatedAt:session?.updatedAt||now};
  const[projects,setProjects]=useState<ProjectMeta[]>(()=>{const items=currentStored?initial:[current,...initial];saveMeta(items);return items});
+ useEffect(()=>{const sync=()=>setProjects(readMeta());window.addEventListener('vis-project-meta',sync);return()=>window.removeEventListener('vis-project-meta',sync)},[]);
  const[viewId,setViewId]=useState(projectId),[query,setQuery]=useState(''),[section,setSection]=useState<'overview'|'script'|'images'|'separated'|'notes'>('overview');
  const[showCreate,setShowCreate]=useState(false),[newName,setNewName]=useState(''),[newScript,setNewScript]=useState('');
  const selected=projects.find(p=>p.id===viewId)||current;const viewedSession=viewId===projectId?session:readProject(viewId);const parts=viewedSession?.parts||[];const scenes=parts.reduce((n,p)=>n+p.scenes.length,0);const images=parts.flatMap(p=>p.scenes.flatMap(s=>s.imageResults||[]));
