@@ -1,5 +1,5 @@
 export type ImageState = 'waiting' | 'queued' | 'generating' | 'complete' | 'error' | 'stopped';
-export type ImageResult = { url: string; prompt: string; createdAt: number; jobId?: string };
+export type ImageResult = { url: string; prompt: string; createdAt: number; jobId?: string; thumbUrl?: string; local?: boolean };
 export type Scene = { title: string; backdrop: string; content: string; character: string; emotion: string; shot: string; image: string; prompt: string; imageStatus?: ImageState; imageResults?: ImageResult[]; imagePrompt?: string; imageError?: string };
 export type PartStatus = 'pending' | 'ready' | 'processing' | 'complete' | 'error' | 'stopped';
 export type Part = { id: string; title: string; range: string; content: string; status: PartStatus; scenes: Scene[]; analysisText: string; receivedAt?: number };

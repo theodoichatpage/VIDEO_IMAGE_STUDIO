@@ -24,6 +24,10 @@ Deno.serve(async (request) => {
   };
   const worker = url.searchParams.get('worker') || undefined;
   await handler({ method: request.method, query: { path, worker }, body, headers: {} }, response);
+  // reply=minimal (the extension delivering results): drop the whole project from the reply, keep ok/error fields.
+  if (url.searchParams.get('reply') === 'minimal' && result.payload && typeof result.payload === 'object' && 'session' in (result.payload as Record<string, unknown>)) {
+    const { session: _session, ...rest } = result.payload as Record<string, unknown>; result.payload = { ...rest, ok: true };
+  }
   const text = JSON.stringify(result.payload);
   // Compress larger replies (projects are JSON, typically 5-10x smaller gzipped) to cut egress.
   if (text.length > 1024 && /gzip/i.test(request.headers.get('accept-encoding') || '')) {

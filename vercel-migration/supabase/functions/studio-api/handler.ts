@@ -92,7 +92,19 @@ async function signImage(path: string) {
   const signed = await storage('object/sign/studio-images/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expiresIn: 604800 }) });
   return { url: settings().url + '/storage/v1' + signed.signedURL, expiresAt: Date.now() + 604800000 };
 }
-async function saveImage(session: Session, job: Job, value: unknown) {
+// Egress: Studio pages show `thumbUrl` (a ~640px preview). With `localCopy` (extension 0.5.12 + AI MANAGER) the full
+// picture stays on the user's PC and the stored picture IS the preview (`local: true`); otherwise the full picture is
+// stored as before and the preview next to it.
+async function saveImage(session: Session, job: Job, value: unknown, extra: Record<string, unknown> = {}) {
+  const image: Record<string, unknown> = await storeImage(session, job.id, value);
+  if (extra.localCopy === true) Object.assign(image, { local: true, thumbUrl: image.url, thumbPath: image.storagePath, thumbExpiresAt: image.expiresAt });
+  else if (extra.thumbDataUrl) {
+    try { const thumb = await storeImage(session, job.id + '.thumb', extra.thumbDataUrl); Object.assign(image, { thumbUrl: thumb.url, thumbPath: thumb.storagePath, thumbExpiresAt: thumb.expiresAt }); }
+    catch { /* the preview is optional */ }
+  }
+  return { ...image, prompt: job.prompt, createdAt: Date.now(), jobId: job.id } as { url: string; prompt: string; createdAt: number; storagePath?: string; expiresAt?: number; jobId?: string };
+}
+async function storeImage(session: Session, name: string, value: unknown) {
   const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(value || ''));
   if (!match || match[2].length > 11200000) throw new Error('Cần Extension 0.4.16 để chuyển tệp ảnh thật về web. Hãy cập nhật rồi Đồng bộ lại ảnh.');
   const raw = atob(match[2]); const bytes = Uint8Array.from(raw, c => c.charCodeAt(0));
@@ -102,9 +114,9 @@ async function saveImage(session: Session, job: Job, value: unknown) {
     try { await storage('bucket', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'studio-images', name: 'studio-images', public: false, file_size_limit: 8388608, allowed_mime_types: ['image/png','image/jpeg','image/webp'] }) }); }
     catch { await storage('bucket/studio-images'); }
   }
-  const path = session.id + '/' + job.id + '.' + match[1];
+  const path = session.id + '/' + name + '.' + match[1];
   await storage('object/studio-images/' + path, { method: 'POST', headers: { 'Content-Type': 'image/' + match[1], 'x-upsert': 'true' }, body: bytes });
-  return { ...await signImage(path), storagePath: path, prompt: job.prompt, createdAt: Date.now(), jobId: job.id };
+  return { ...await signImage(path), storagePath: path };
 }
 
 async function read(id: string): Promise<Session | null> {
@@ -124,6 +136,8 @@ async function read(id: string): Promise<Session | null> {
   for (const part of parts) for (const scene of part.scenes || []) for (const image of scene.imageResults || []) {
     if (!image.storagePath && /^https:\/\/chatgpt\.com\/backend-api\//.test(image.url)) { scene.imageStatus = 'error'; scene.imageError = 'Ảnh cũ là liên kết ChatGPT cần đăng nhập. Bấm Đồng bộ lại ảnh để lưu tệp về web.'; }
     if (image.storagePath && (!image.expiresAt || image.expiresAt < Date.now() + 3600000)) Object.assign(image, await signImage(image.storagePath));
+    const preview = image as { thumbPath?: string; thumbUrl?: string; thumbExpiresAt?: number; local?: boolean; url: string; expiresAt?: number };
+    if (preview.thumbPath && (!preview.thumbExpiresAt || preview.thumbExpiresAt < Date.now() + 3600000)) { if (preview.local) { preview.thumbUrl = preview.url; preview.thumbExpiresAt = preview.expiresAt; } else { const t = await signImage(preview.thumbPath); preview.thumbUrl = t.url; preview.thumbExpiresAt = t.expiresAt; } }
   }
   const savedLayers = await database('studio_separations?session_id=eq.' + encodeURIComponent(id) + '&select=entry,updated_at&order=updated_at.asc') as { entry?: Record<string, unknown>; updated_at?: number }[];
   const separations = (savedLayers || []).flatMap(item => item.entry ? [item.entry] : []);
@@ -153,7 +167,7 @@ function finishLane(session: Session, job: Job, status: string, error = '') {
 async function laneEvent(session: Session, hit: Job, body: Record<string, unknown>) {
   const state = String(body.state || ''); const text = String(body.text || '').trim();
   let image: Awaited<ReturnType<typeof saveImage>> | undefined;
-  if (state === 'completed' && hit.type === 'image_generation') image = await saveImage(session, hit, body.imageDataUrl);
+  if (state === 'completed' && hit.type === 'image_generation') image = await saveImage(session, hit, body.imageDataUrl, body);
   let scenes: Scene[] | undefined, analysisText = '', parseError = '';
   if (hit.type === 'part_analysis' && (state === 'completed' || state === 'progress')) {
     try {
@@ -634,7 +648,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         if(capture){
           if(body.state!=='completed')return fail(res,'Yêu cầu này chỉ nhận ảnh đã tạo, không tạo ảnh mới.',422);
           if((capture.expiresAt||0)<Date.now())return send(res,200,{session,acknowledged:true,ignored:true});
-          try{return send(res,200,await commitImageCapture(session.id,capture,await saveImage(session,capture,body.imageDataUrl)));}
+          try{return send(res,200,await commitImageCapture(session.id,capture,await saveImage(session,capture,body.imageDataUrl,body)));}
           catch(error){return fail(res,error instanceof Error?error.message:'Không lưu được ảnh đúng cảnh.',422);}
         }
         const laneHit = (session.laneJobs || []).find(item => item.id === eventJobId);
@@ -666,7 +680,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         }
         let savedImage;
         if (state === 'completed' && job.type === 'image_generation') {
-          try { savedImage = await saveImage(session, job, body.imageDataUrl); }
+          try { savedImage = await saveImage(session, job, body.imageDataUrl, body); }
           catch (error) { return fail(res, error instanceof Error ? error.message : 'Không lưu được ảnh.', 422); }
         }
         if (['completed', 'error'].includes(state)) {
