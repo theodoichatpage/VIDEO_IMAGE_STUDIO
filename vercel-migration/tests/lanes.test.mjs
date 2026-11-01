@@ -7,14 +7,16 @@ import ts from 'typescript';
 
 const source = readFileSync(new URL('../supabase/functions/studio-api/handler.ts', import.meta.url), 'utf8');
 const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText;
-const { default: handler } = await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'));
+const { default: handler, mergeTexts } = await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'));
+// The row keeps `record` and `texts` (texts written only when sent), like Postgres; tests read the merged project.
+let TEXTS=null;const keep=(body)=>{const b=JSON.parse(body);if('texts' in b)TEXTS=b.texts;return mergeTexts(b.record,structuredClone(TEXTS));};
 const id = 'lanes-session-20261029';
 const PNG = 'data:image/png;base64,' + Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0]).toString('base64');
 
 function harness() {
   process.env.SUPABASE_URL = 'https://database.test';
   process.env.SUPABASE_SECRET_KEY = 'server-test-key';
-  const h = { stored: null, uploads: 0 };
+  const h = { stored: null, uploads: 0 }; TEXTS = null;
   globalThis.fetch = async (url, init) => {
     url = String(url);
     if (url.includes('/storage/v1/object/sign/')) return Response.json({ signedURL: '/object/sign/x?token=t' });
@@ -27,9 +29,9 @@ function harness() {
       if (!h.stored) return Response.json([]);
       const m = /record->>updatedAt=eq\.(\d+)/.exec(decodeURIComponent(url));
       if (m && Number(m[1]) !== h.stored.updatedAt) return Response.json([]);
-      h.stored = JSON.parse(init.body).record; return Response.json([{ record: structuredClone(h.stored) }]);
+      h.stored = keep(init.body); return Response.json([{ record: structuredClone(h.stored) }]);
     }
-    if (init?.method === 'POST') { h.stored = JSON.parse(init.body).record; return new Response('', { status: 201 }); }
+    if (init?.method === 'POST') { h.stored = keep(init.body); return new Response('', { status: 201 }); }
     return Response.json(h.stored ? [{ record: structuredClone(h.stored) }] : []);
   };
   h.call = async (method, path, body, expected = 200, query = {}) => {

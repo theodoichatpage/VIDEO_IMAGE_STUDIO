@@ -56,18 +56,96 @@ function settings() {
 // Until that migration runs, the function keeps working the old way (columnsReady turns false on the first miss).
 let columnsReady = true;
 const missingColumn = (message: string) => /summary|bridge_last_seen/.test(message) && /column|schema cache|PGRST204|42703/i.test(message);
+
+// Free-plan disk IO: a project is one ~1 MB jsonb row, and Postgres rewrites the whole value on every change. Most of
+// it is text that does not change while pictures are made (script, rewrite, part and scene descriptions, prompts).
+// That text lives in its own `texts` column (migration 20261101090000) and is written only when it changed, so an
+// image result or a lane status rewrites only the small rest. Reads merge it back: callers still see one Session.
+// Until the migration runs (textsReady turns false on the first miss) everything stays in `record` as before.
+let textsReady = true;
+const missingTexts = (message: string) => /texts/.test(message) && /column|schema cache|PGRST204|42703/i.test(message);
+const TOP_TEXT = ['script', 'stylePrompt', 'rewrite'] as const;
+const PART_TEXT = ['title', 'content', 'range'] as const;
+const SCENE_TEXT = ['title', 'backdrop', 'content', 'character', 'emotion', 'shot', 'prompt'] as const;
+const knownTexts = new Map<string, string>(); // session id -> fingerprint of its `texts` column as last read/written here
+type Loose = Record<string, any>;
+function stable(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return '[' + value.map(stable).join(',') + ']';
+  const row = value as Loose;
+  return '{' + Object.keys(row).filter(k => row[k] !== undefined).sort().map(k => JSON.stringify(k) + ':' + stable(row[k])).join(',') + '}';
+}
+function fingerprint(text: string) { let h = 2166136261; for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36) + ':' + text.length; }
+export function splitTexts(record: Loose) {
+  const lean: Loose = { ...record }; const texts: Loose = { parts: {} };
+  for (const k of TOP_TEXT) if (k in lean) { texts[k] = lean[k]; delete lean[k]; }
+  // The last finished job keeps its prompt only when it can be taken up again (analysis); an image prompt is not needed.
+  if (lean.lastJob && typeof lean.lastJob === 'object' && 'prompt' in lean.lastJob) { const { prompt, ...job } = lean.lastJob; lean.lastJob = job; if (job.type !== 'image_generation') texts.lastJobPrompt = prompt; }
+  if (Array.isArray(record.parts)) lean.parts = record.parts.map((part: Loose) => {
+    const p: Loose = { ...part }; const t: Loose = { scenes: [] };
+    for (const k of PART_TEXT) if (k in p) { t[k] = p[k]; delete p[k]; }
+    if (Array.isArray(part.scenes)) p.scenes = part.scenes.map((scene: Loose) => { const s: Loose = { ...scene }; const st: Loose = {}; for (const k of SCENE_TEXT) if (k in s) { st[k] = s[k]; delete s[k]; } t.scenes.push(st); return s; });
+    texts.parts[String(part.id)] = t; return p;
+  });
+  return { lean, texts };
+}
+export function mergeTexts(record: Loose | null | undefined, texts: Loose | null | undefined) {
+  if (!record || !texts) return record;
+  for (const k of TOP_TEXT) if (!(k in record) && k in texts) record[k] = texts[k];
+  if (texts.lastJobPrompt !== undefined && record.lastJob && !('prompt' in record.lastJob)) record.lastJob.prompt = texts.lastJobPrompt;
+  for (const part of record.parts || []) {
+    const t = texts.parts?.[String(part.id)]; if (!t) continue;
+    for (const k of PART_TEXT) if (!(k in part) && k in t) part[k] = t[k];
+    (part.scenes || []).forEach((scene: Loose, i: number) => { const st = t.scenes?.[i]; if (st) for (const k of SCENE_TEXT) if (!(k in scene) && k in st) scene[k] = st[k]; });
+  }
+  return record;
+}
+const sessionOf = (path: string) => { const m = /[?&]id=eq\.([^&]+)/.exec(path); return m ? decodeURIComponent(m[1]) : ''; };
 async function database(path: string, init?: RequestInit): Promise<any> {
   // A write never needs the multi-MB record sent back: ask only for the id (enough to know a row was updated).
   if (init?.method === 'PATCH' && /return=representation/.test(String((init.headers as Record<string, string> | undefined)?.Prefer || '')) && !/[?&]select=/.test(path)) path += '&select=id';
-  if (columnsReady && typeof init?.body === 'string' && /^studio_sessions\?/.test(path) && init.body.startsWith('{"record":')) {
-    const record = JSON.parse(init.body).record as Session & { summary?: unknown };
-    try { return await rest(path, { ...init, body: JSON.stringify({ record, summary: record?.summary ?? null }) }); }
-    catch (error) { if (!missingColumn(String((error as Error).message))) throw error; columnsReady = false; }
+  const sessions = /^studio_sessions\?/.test(path);
+  // Reads of the whole record also fetch `texts` and merge it back.
+  const select = /[?&]select=([^&]*)/.exec(path);
+  if (sessions && textsReady && (!init?.method || init.method === 'GET') && select && select[1].split(',').includes('record')) {
+    try {
+      const rows = await rest(path.replace('select=' + select[1], 'select=' + select[1] + ',texts')) as Loose[] | null;
+      const id = sessionOf(path);
+      for (const row of rows || []) {
+        if (row.texts) { mergeTexts(row.record, row.texts); if (id) knownTexts.set(id, fingerprint(stable(row.texts))); }
+        else if (id) knownTexts.delete(id);
+        delete row.texts;
+      }
+      if (id && !rows?.length) knownTexts.delete(id);  // no row (new or removed project): its next write carries the text
+      return rows;
+    } catch (error) { if (!missingTexts(String((error as Error).message))) throw error; textsReady = false; }
   }
-  if (init?.method === 'POST' && /^studio_sessions\?on_conflict/.test(path) && columnsReady && typeof init.body === 'string') {
-    const row = JSON.parse(init.body) as { id: string; record: Session & { summary?: unknown } };
-    try { return await rest(path, { ...init, body: JSON.stringify({ ...row, summary: row.record?.summary ?? null }) }); }
-    catch (error) { if (!missingColumn(String((error as Error).message))) throw error; columnsReady = false; }
+  const writesRecord = sessions && typeof init?.body === 'string' && (init.body.startsWith('{"record":') || (init.method === 'POST' && /^studio_sessions\?on_conflict/.test(path)));
+  if (!writesRecord) return rest(path, init);
+  const row = JSON.parse(init!.body as string) as Loose;
+  const id = String(row.id || sessionOf(path));
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const body: Loose = { ...row, ...(columnsReady ? { summary: row.record?.summary ?? null } : {}) };
+    let sentTexts = '', fp = '';
+    if (textsReady && row.record && typeof row.record === 'object') {
+      const { lean, texts } = splitTexts(row.record); fp = fingerprint(stable(texts));
+      body.record = lean; if (!id || knownTexts.get(id) !== fp) { body.texts = texts; sentTexts = fp; }
+    }
+    try {
+      const out = await rest(path, { ...init, body: JSON.stringify(body) });
+      if (id && fp) {
+        const minimal = !Array.isArray(out);
+        const applied = init!.method === 'POST' || (Array.isArray(out) && out.length > 0);
+        if (sentTexts && applied && !(minimal && init!.method === 'PATCH')) knownTexts.set(id, sentTexts);
+        else if (sentTexts) knownTexts.delete(id);  // unknown whether this write landed: send the text again next time
+      }
+      return out;
+    } catch (error) {
+      const message = String((error as Error).message);
+      if (textsReady && missingTexts(message)) { textsReady = false; continue; }
+      if (columnsReady && missingColumn(message)) { columnsReady = false; continue; }
+      throw error;
+    }
   }
   return rest(path, init);
 }

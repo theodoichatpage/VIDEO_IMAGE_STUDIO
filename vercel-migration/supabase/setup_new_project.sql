@@ -11,6 +11,7 @@ create table if not exists public.studio_sessions (
 );
 alter table public.studio_sessions add column if not exists summary jsonb;
 alter table public.studio_sessions add column if not exists bridge_last_seen bigint not null default 0;
+alter table public.studio_sessions add column if not exists texts jsonb;
 
 -- Only the studio-api function (service role) may touch the table; browsers cannot read it directly.
 alter table public.studio_sessions enable row level security;

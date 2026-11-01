@@ -5,7 +5,9 @@ import ts from 'typescript';
 
 const source = readFileSync(new URL('../supabase/functions/studio-api/handler.ts', import.meta.url), 'utf8');
 const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText;
-const { default: handler } = await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'));
+const { default: handler, mergeTexts } = await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'));
+// The row keeps `record` and `texts` (texts written only when sent), like Postgres; tests read the merged project.
+let TEXTS=null;const keep=(body)=>{const b=JSON.parse(body);if('texts' in b)TEXTS=b.texts;return mergeTexts(b.record,structuredClone(TEXTS));};
 const id = 'regression-session-20261021';
 
 test('analysis results, repeated delivery, late error, stop and next part remain consistent', async () => {
@@ -15,9 +17,9 @@ test('analysis results, repeated delivery, late error, stop and next part remain
   process.env.SUPABASE_SECRET_KEY = 'server-test-key';
   let stored;
   globalThis.fetch = async (_url, init) => {
-    if(init?.method==='PATCH'){if(!stored)return Response.json([]);stored=JSON.parse(init.body).record;return Response.json([{record:structuredClone(stored)}]);}
+    if(init?.method==='PATCH'){if(!stored)return Response.json([]);stored=keep(init.body);return Response.json([{record:structuredClone(stored)}]);}
     if (init?.method === 'POST') {
-      stored = JSON.parse(init.body).record;
+      stored = keep(init.body);
       // PostgREST return=minimal may return 201 with an empty body.
       return new Response('', { status: 201 });
     }

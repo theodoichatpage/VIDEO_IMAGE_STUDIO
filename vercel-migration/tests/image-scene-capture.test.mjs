@@ -1,6 +1,8 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import ts from 'typescript';
 const js=ts.transpileModule(fs.readFileSync('supabase/functions/studio-api/handler.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
-const {default:handler}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+const {default:handler,mergeTexts}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+// The row keeps `record` and `texts` (texts written only when sent), like Postgres; tests read the merged project.
+let TEXTS=null;const keep=(body)=>{const b=JSON.parse(body);if('texts' in b)TEXTS=b.texts;return mergeTexts(b.record,structuredClone(TEXTS));};
 const png='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
 async function scenario(run){
  const original=globalThis.fetch;process.env.SUPABASE_URL='https://db.test';process.env.SUPABASE_SECRET_KEY='fixture';
@@ -12,9 +14,9 @@ async function scenario(run){
   if(init.method==='PATCH'){
    if(conflict){conflict=false;record.script='Concurrent change';record.updatedAt++;return Response.json([])}
    const params=new URL(url).searchParams,expected=params.get('record->>updatedAt');if(expected)assert.equal(expected,'eq.'+record.updatedAt);else{const epoch=params.get('record->>workEpoch');if(epoch&&epoch!=='eq.'+(record.workEpoch||0))return Response.json([]);if(params.has('or')&&(record.workEpoch||0)!==0)return Response.json([]);}
-   record=JSON.parse(init.body).record;return Response.json([{record:structuredClone(record)}]);
+   record=keep(init.body);return Response.json([{record:structuredClone(record)}]);
   }
-  if(init.method==='POST'){record=JSON.parse(init.body).record;return new Response('',{status:201})}
+  if(init.method==='POST'){record=keep(init.body);return new Response('',{status:201})}
   return Response.json([{record:structuredClone(record)}]);
  };
  const call=async(path,body)=>{let status,data;await handler({method:'POST',query:{path:path.split('/')},headers:{},body},{setHeader(){},status(n){status=n;return{json(d){data=d}}}});return{status,data}};
