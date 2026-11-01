@@ -7,7 +7,7 @@ import ts from 'typescript';
 
 const source = readFileSync(new URL('../supabase/functions/studio-api/handler.ts', import.meta.url), 'utf8');
 const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText;
-const { default: handler, splitTexts, mergeTexts } = await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'));
+const { default: handler, splitTexts, mergeTexts, replyShape } = await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'));
 const id = 'texts-column-20261101';
 
 // One studio_sessions row as Postgres keeps it: columns are written only when the request sends them.
@@ -81,4 +81,32 @@ test('without the texts column everything stays in record, as before', async () 
   assert.equal(db.row.record.script, 'Kịch bản cũ');
   const { session } = await db.call('GET', `sessions/${id}-old`);
   assert.equal(session.script, 'Kịch bản cũ');
+});
+
+test('image prompts are stored as a short reference and rebuilt exactly', () => {
+  const style = 'STYLE '.repeat(500) + '{{SCENE_PROMPT}} END';
+  const scene = { title: 'C1', prompt: 'a door opens', imageStatus: 'complete' };
+  const full = style.trim().replace('{{SCENE_PROMPT}}', 'a door opens');
+  const record = { stylePrompt: style, parts: [{ id: 'p', scenes: [{ ...scene, imagePrompt: full, imageResults: [{ url: 'u', prompt: full }] }, { title: 'C2', prompt: 'x', imagePrompt: 'made with an older style' }] }] };
+  const { lean, texts } = splitTexts(structuredClone(record));
+  const s = lean.parts[0].scenes[0];
+  assert.equal(s.imagePrompt, undefined); assert.ok(s.imagePromptRef); assert.equal(s.imageResults[0].prompt, undefined);
+  assert.ok(JSON.stringify(lean).length < 1000, 'the row no longer carries the long prompt');
+  assert.equal(lean.parts[0].scenes[1].imagePrompt, 'made with an older style', 'a prompt that cannot be rebuilt stays as it is');
+  assert.deepEqual(mergeTexts(structuredClone(lean), texts), record);
+  const changed = mergeTexts(structuredClone(lean), structuredClone(texts)); // same row, the scene prompt was edited later
+  const edited = structuredClone(lean); const t2 = structuredClone(texts); t2.parts.p.scenes[0].prompt = 'a different scene';
+  const merged = mergeTexts(edited, t2);
+  assert.equal(merged.parts[0].scenes[0].imagePrompt, undefined, 'never rebuilt from a prompt the picture was not made from');
+  assert.equal(changed.parts[0].scenes[0].imagePrompt, full);
+});
+
+test('lean replies carry only the changing part and the text fingerprint', () => {
+  const session = { id, script: 'S'.repeat(5000), parts: [{ id: 'p', content: 'C'.repeat(5000), scenes: [{ title: 'T', prompt: 'P'.repeat(3000), imageStatus: 'complete' }] }] };
+  const lean = replyShape({ session, ok: 1 }, 'lean'); const full = replyShape({ session }, 'fp');
+  assert.equal(lean.lean, true); assert.equal(lean.ok, 1); assert.equal(lean.textsFp, full.textsFp);
+  assert.ok(JSON.stringify(lean).length < 600); assert.equal(full.session.script.length, 5000);
+  const other = replyShape({ session: { ...session, script: 'changed' } }, 'lean');
+  assert.notEqual(other.textsFp, lean.textsFp, 'changed text gives another fingerprint');
+  assert.deepEqual(replyShape({ error: 'x' }, 'lean'), { error: 'x' });
 });

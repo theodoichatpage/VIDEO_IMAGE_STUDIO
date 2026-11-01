@@ -65,7 +65,7 @@ const missingColumn = (message: string) => /summary|bridge_last_seen/.test(messa
 let textsReady = true;
 const missingTexts = (message: string) => /texts/.test(message) && /column|schema cache|PGRST204|42703/i.test(message);
 const TOP_TEXT = ['script', 'stylePrompt', 'rewrite'] as const;
-const PART_TEXT = ['title', 'content', 'range'] as const;
+const PART_TEXT = ['title', 'content', 'range', 'analysisText'] as const;
 const SCENE_TEXT = ['title', 'backdrop', 'content', 'character', 'emotion', 'shot', 'prompt'] as const;
 const knownTexts = new Map<string, string>(); // session id -> fingerprint of its `texts` column as last read/written here
 type Loose = Record<string, any>;
@@ -76,17 +76,37 @@ function stable(value: unknown): string {
   return '{' + Object.keys(row).filter(k => row[k] !== undefined).sort().map(k => JSON.stringify(k) + ':' + stable(row[k])).join(',') + '}';
 }
 function fingerprint(text: string) { let h = 2166136261; for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36) + ':' + text.length; }
+// An image prompt is the shared style plus the scene's prompt (~7 KB, kept twice per scene: queued and in the result).
+// The row keeps a short reference instead; the style is stored once in `texts` and the exact prompt is rebuilt on
+// read, but only while the scene's prompt is still the one the picture was made from.
+function promptRef(text: unknown, scenePrompt: string, styles: Loose, candidates: string[]) {
+  if (typeof text !== 'string' || !text) return null;
+  for (const style of candidates) if (text === imagePrompt(style, { prompt: scenePrompt } as Scene, '')) { const styleFp = fingerprint(style); styles[styleFp] = style; return { styleFp, sceneFp: fingerprint(scenePrompt) }; }
+  return null;
+}
+function promptFrom(ref: Loose | undefined, scenePrompt: unknown, styles: Loose | undefined) {
+  const style = ref && styles?.[ref.styleFp];
+  return typeof style === 'string' && fingerprint(String(scenePrompt ?? '')) === ref!.sceneFp ? imagePrompt(style, { prompt: String(scenePrompt ?? '') } as Scene, '') : undefined;
+}
 export function splitTexts(record: Loose) {
-  const lean: Loose = { ...record }; const texts: Loose = { parts: {} };
+  const lean: Loose = { ...record }; const texts: Loose = { parts: {} }; const styles: Loose = {};
+  const candidates = typeof record.stylePrompt === 'string' && record.stylePrompt.trim() ? [record.stylePrompt] : [];
   for (const k of TOP_TEXT) if (k in lean) { texts[k] = lean[k]; delete lean[k]; }
   // The last finished job keeps its prompt only when it can be taken up again (analysis); an image prompt is not needed.
   if (lean.lastJob && typeof lean.lastJob === 'object' && 'prompt' in lean.lastJob) { const { prompt, ...job } = lean.lastJob; lean.lastJob = job; if (job.type !== 'image_generation') texts.lastJobPrompt = prompt; }
   if (Array.isArray(record.parts)) lean.parts = record.parts.map((part: Loose) => {
     const p: Loose = { ...part }; const t: Loose = { scenes: [] };
     for (const k of PART_TEXT) if (k in p) { t[k] = p[k]; delete p[k]; }
-    if (Array.isArray(part.scenes)) p.scenes = part.scenes.map((scene: Loose) => { const s: Loose = { ...scene }; const st: Loose = {}; for (const k of SCENE_TEXT) if (k in s) { st[k] = s[k]; delete s[k]; } t.scenes.push(st); return s; });
+    if (Array.isArray(part.scenes)) p.scenes = part.scenes.map((scene: Loose) => {
+      const s: Loose = { ...scene }; const st: Loose = {}; for (const k of SCENE_TEXT) if (k in s) { st[k] = s[k]; delete s[k]; } t.scenes.push(st);
+      const scenePrompt = String(scene.prompt ?? '');
+      const queued = promptRef(s.imagePrompt, scenePrompt, styles, candidates); if (queued) { delete s.imagePrompt; s.imagePromptRef = queued; }
+      if (Array.isArray(s.imageResults)) s.imageResults = s.imageResults.map((result: Loose) => { const ref = result && promptRef(result.prompt, scenePrompt, styles, candidates); if (!ref) return result; const { prompt: _p, ...rest } = result; return { ...rest, promptRef: ref }; });
+      return s;
+    });
     texts.parts[String(part.id)] = t; return p;
   });
+  if (Object.keys(styles).length) texts.styles = styles;
   return { lean, texts };
 }
 export function mergeTexts(record: Loose | null | undefined, texts: Loose | null | undefined) {
@@ -98,7 +118,20 @@ export function mergeTexts(record: Loose | null | undefined, texts: Loose | null
     for (const k of PART_TEXT) if (!(k in part) && k in t) part[k] = t[k];
     (part.scenes || []).forEach((scene: Loose, i: number) => { const st = t.scenes?.[i]; if (st) for (const k of SCENE_TEXT) if (!(k in scene) && k in st) scene[k] = st[k]; });
   }
+  for (const part of record.parts || []) for (const scene of part.scenes || []) {
+    if (scene.imagePromptRef) { const prompt = promptFrom(scene.imagePromptRef, scene.prompt, texts.styles); if (prompt !== undefined) scene.imagePrompt = prompt; delete scene.imagePromptRef; }
+    if (Array.isArray(scene.imageResults)) scene.imageResults = scene.imageResults.map((result: Loose) => { if (!result?.promptRef) return result; const { promptRef: ref, ...rest } = result; const prompt = promptFrom(ref, scene.prompt, texts.styles); return prompt === undefined ? rest : { ...rest, prompt }; });
+  }
   return record;
+}
+// Egress: a client that keeps the project's text from an earlier full reply asks for `reply=lean` and gets only the
+// changing part plus `textsFp`; when the fingerprint differs from the text it holds, it reads the full project once.
+// `reply=fp` adds the fingerprint to a full reply.
+export function replyShape(payload: unknown, mode: string | null) {
+  if ((mode !== 'lean' && mode !== 'fp') || !payload || typeof payload !== 'object') return payload;
+  const body = payload as Loose; if (!body.session || typeof body.session !== 'object') return payload;
+  const { lean, texts } = splitTexts(body.session); const textsFp = fingerprint(stable(texts));
+  return mode === 'lean' ? { ...body, session: lean, textsFp, lean: true } : { ...body, textsFp };
 }
 const sessionOf = (path: string) => { const m = /[?&]id=eq\.([^&]+)/.exec(path); return m ? decodeURIComponent(m[1]) : ''; };
 async function database(path: string, init?: RequestInit): Promise<any> {

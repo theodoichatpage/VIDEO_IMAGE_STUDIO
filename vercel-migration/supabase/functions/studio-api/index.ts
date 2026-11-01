@@ -1,4 +1,4 @@
-import handler from './handler.ts';
+import handler, { replyShape } from './handler.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -28,6 +28,7 @@ Deno.serve(async (request) => {
   if (url.searchParams.get('reply') === 'minimal' && result.payload && typeof result.payload === 'object' && 'session' in (result.payload as Record<string, unknown>)) {
     const { session: _session, ...rest } = result.payload as Record<string, unknown>; result.payload = { ...rest, ok: true };
   }
+  result.payload = replyShape(result.payload, url.searchParams.get('reply'));
   const text = JSON.stringify(result.payload);
   // Compress larger replies (projects are JSON, typically 5-10x smaller gzipped) to cut egress.
   if (text.length > 1024 && /gzip/i.test(request.headers.get('accept-encoding') || '')) {

@@ -9,6 +9,7 @@ import { EXTENSION_VERSION, EXTENSION_DOWNLOAD_URL } from './extensionRelease';
 import { loadTranscriptWorkspace, workspaceStorageKey } from './transcriptWorkspace';
 
 import { previewUrl, originalUrl } from './imageView';
+import { mergeLean } from './sessionTexts';
 import type { ImageState, Scene, PartStatus, Part, Session, Job } from './types';
 
 const makeId = () => crypto.randomUUID().replaceAll('-', '');
@@ -127,9 +128,15 @@ function App() {
     const generation=workGeneration.current;
     loadInFlight.current = true;
     try {
-      const { data } = await api.get('/api/sessions/' + sessionId);
+      const held = textsHeld.current?.id === sessionId ? textsHeld.current : null;
+      let { data } = await api.get<{ session: Session | null; textsFp?: string; lean?: boolean }>('/api/sessions/' + sessionId + '?reply=' + (held ? 'lean' : 'fp'));
+      if (data.lean && data.session) {
+        if (held && held.fp === data.textsFp) data = { ...data, session: mergeLean(data.session, held.session) };
+        else data = (await api.get<{ session: Session | null; textsFp?: string }>('/api/sessions/' + sessionId + '?reply=fp')).data;
+      }
       if(generation!==workGeneration.current||stopGate.current)return;
       const next = data.session as Session | null;
+      textsHeld.current = next && data.textsFp ? { id: sessionId, fp: data.textsFp, session: next } : null;
       if (next) {
         setSession(next);
         setServerReady(true);
@@ -188,6 +195,7 @@ function App() {
   // reloads the whole project only every 10 minutes (style changes), not on every change.
   const [laneSummary, setLaneSummary] = useState<{ activeJob?: Job | null; laneJobs?: (Job | null)[] } | null>(null);
   const laneFullAt = useRef(0);
+  const textsHeld = useRef<{ id: string; fp: string; session: Session } | null>(null);
   useEffect(() => {
     let stopped = false, timer: ReturnType<typeof setTimeout> | undefined, versionMissing = false;
     const busy = () => { const s = sessionRef.current as (Session & { imageJobs?: { status: string }[] }) | null; return Boolean(s?.activeJob || s?.laneJobs?.length || s?.batchAnalysis || s?.imageJobs?.some(job => ['queued', 'sending', 'sent', 'waiting'].includes(job.status))); };
