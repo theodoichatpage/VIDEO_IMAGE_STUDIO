@@ -69,6 +69,10 @@ const PART_TEXT = ['title', 'content', 'range', 'analysisText'] as const;
 const SCENE_TEXT = ['title', 'backdrop', 'content', 'character', 'emotion', 'shot', 'prompt'] as const;
 const knownTexts = new Map<string, string>(); // session id -> fingerprint of its `texts` column as last read/written here
 type Loose = Record<string, any>;
+// The text itself, so a read that finds the same fingerprint in the record does not fetch the ~1 MB `texts` again.
+const textsCache = { map: new Map<string, { fp: string; texts: Loose }>(),
+  get(id: string) { return this.map.get(id); }, delete(id: string) { this.map.delete(id); },
+  set(id: string, value: { fp: string; texts: Loose }) { this.map.delete(id); this.map.set(id, value); while (this.map.size > 8) this.map.delete(this.map.keys().next().value as string); } };
 function stable(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
   if (Array.isArray(value)) return '[' + value.map(stable).join(',') + ']';
@@ -142,15 +146,29 @@ async function database(path: string, init?: RequestInit): Promise<any> {
   const select = /[?&]select=([^&]*)/.exec(path);
   if (sessions && textsReady && (!init?.method || init.method === 'GET') && select && select[1].split(',').includes('record')) {
     try {
-      const rows = await rest(path.replace('select=' + select[1], 'select=' + select[1] + ',texts')) as Loose[] | null;
       const id = sessionOf(path);
-      for (const row of rows || []) {
-        if (row.texts) { mergeTexts(row.record, row.texts); if (id) knownTexts.set(id, fingerprint(stable(row.texts))); }
-        else if (id) knownTexts.delete(id);
-        delete row.texts;
+      // Egress: the row's text is ~1 MB and rarely changes. The record carries its fingerprint (`textsFp`), so when this
+      // instance already holds that text only the small record is read from the database.
+      const rows = id ? await rest(path) as Loose[] | null : null;
+      if (rows) {
+        const row = rows[0]; const fp = row?.record?.textsFp; const held = id && textsCache.get(id);
+        if (!row) { knownTexts.delete(id); textsCache.delete(id); return rows; }  // no row (new or removed project): its next write carries the text
+        if (fp && held && held.fp === fp) { delete row.record.textsFp; mergeTexts(row.record, held.texts); knownTexts.set(id, fp); return rows; }
+        const only = await rest('studio_sessions?id=eq.' + encodeURIComponent(id) + '&select=texts') as Loose[] | null;
+        const texts = only?.[0]?.texts;
+        if (!texts) { knownTexts.delete(id); textsCache.delete(id); delete row.record?.textsFp; return rows; }
+        const have = fingerprint(stable(texts));
+        if (!fp || fp === have) { delete row.record.textsFp; mergeTexts(row.record, texts); knownTexts.set(id, have); textsCache.set(id, { fp: have, texts }); return rows; }
+        // Written between the two reads: take record and text together, as one consistent row.
       }
-      if (id && !rows?.length) knownTexts.delete(id);  // no row (new or removed project): its next write carries the text
-      return rows;
+      const rows2 = await rest(path.replace('select=' + select[1], 'select=' + select[1] + ',texts')) as Loose[] | null;
+      for (const row of rows2 || []) {
+        if (row.texts) { mergeTexts(row.record, row.texts); if (id) { const f = fingerprint(stable(row.texts)); knownTexts.set(id, f); textsCache.set(id, { fp: f, texts: row.texts }); } }
+        else if (id) { knownTexts.delete(id); textsCache.delete(id); }
+        delete row.texts; if (row.record) delete row.record.textsFp;
+      }
+      if (id && !rows2?.length) { knownTexts.delete(id); textsCache.delete(id); }
+      return rows2;
     } catch (error) { if (!missingTexts(String((error as Error).message))) throw error; textsReady = false; }
   }
   const writesRecord = sessions && typeof init?.body === 'string' && (init.body.startsWith('{"record":') || (init.method === 'POST' && /^studio_sessions\?on_conflict/.test(path)));
@@ -159,18 +177,19 @@ async function database(path: string, init?: RequestInit): Promise<any> {
   const id = String(row.id || sessionOf(path));
   for (let attempt = 0; attempt < 3; attempt++) {
     const body: Loose = { ...row, ...(columnsReady ? { summary: row.record?.summary ?? null } : {}) };
-    let sentTexts = '', fp = '';
+    let sentTexts = '', fp = ''; let writtenTexts: Loose | null = null;
     if (textsReady && row.record && typeof row.record === 'object') {
       const { lean, texts } = splitTexts(row.record); fp = fingerprint(stable(texts));
-      body.record = lean; if (!id || knownTexts.get(id) !== fp) { body.texts = texts; sentTexts = fp; }
+      body.record = { ...lean, textsFp: fp }; if (!id || knownTexts.get(id) !== fp) { body.texts = texts; sentTexts = fp; }
+      writtenTexts = texts;
     }
     try {
       const out = await rest(path, { ...init, body: JSON.stringify(body) });
       if (id && fp) {
         const minimal = !Array.isArray(out);
         const applied = init!.method === 'POST' || (Array.isArray(out) && out.length > 0);
-        if (sentTexts && applied && !(minimal && init!.method === 'PATCH')) knownTexts.set(id, sentTexts);
-        else if (sentTexts) knownTexts.delete(id);  // unknown whether this write landed: send the text again next time
+        if (sentTexts && applied && !(minimal && init!.method === 'PATCH')) { knownTexts.set(id, sentTexts); if (writtenTexts) textsCache.set(id, { fp: sentTexts, texts: writtenTexts }); }
+        else if (sentTexts) { knownTexts.delete(id); textsCache.delete(id); }  // unknown whether this write landed: send the text again next time
       }
       return out;
     } catch (error) {

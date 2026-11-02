@@ -74,6 +74,23 @@ test('text is written once; later status writes carry only the small record', as
   assert.equal(db.writes.at(-1).texts.script, 'Kịch bản mới', 'changed text is written');
 });
 
+test('a read does not fetch the ~1 MB text again while its fingerprint is unchanged', async () => {
+  const db = database(); const seen = []; const inner = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { seen.push(decodeURIComponent(String(url))); return inner(url, init); };
+  const sid = id + '-egress';
+  await db.call('POST', 'sessions', { id: sid });
+  await db.call('POST', `sessions/${sid}/script`, { script: 'Kịch bản dài. '.repeat(500) });
+  await db.call('GET', `sessions/${sid}`);
+  seen.length = 0;
+  const { session } = await db.call('GET', `sessions/${sid}`);
+  assert.match(session.script, /Kịch bản dài/, 'the project is still whole');
+  assert.equal(session.textsFp, undefined, 'the stored fingerprint is not shown');
+  assert.equal(seen.filter(u => /select=[^&]*texts/.test(u)).length, 0, 'texts was not read again');
+  db.row.texts = { ...db.row.texts, script: 'Đổi ở nơi khác' }; db.row.record.textsFp = 'other:1';
+  const changed = await db.call('GET', `sessions/${sid}`);
+  assert.equal(changed.session.script, 'Đổi ở nơi khác', 'a changed fingerprint reads the text again');
+});
+
 test('without the texts column everything stays in record, as before', async () => {
   const db = database({ hasTexts: false });
   await db.call('POST', 'sessions', { id: id + '-old' });
