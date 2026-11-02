@@ -73,6 +73,9 @@ type Loose = Record<string, any>;
 const textsCache = { map: new Map<string, { fp: string; texts: Loose }>(),
   get(id: string) { return this.map.get(id); }, delete(id: string) { this.map.delete(id); },
   set(id: string, value: { fp: string; texts: Loose }) { this.map.delete(id); this.map.set(id, value); while (this.map.size > 8) this.map.delete(this.map.keys().next().value as string); } };
+// Egress: the whole record (~300 KB once pictures exist) is the bulk of what is left. A read first asks for the tiny
+// `summary` (its updatedAt) and answers from this copy when nobody wrote since; any write bumps updatedAt.
+const recordCache = new Map<string, { updatedAt: number; record: Loose }>();
 function stable(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
   if (Array.isArray(value)) return '[' + value.map(stable).join(',') + ']';
@@ -142,23 +145,39 @@ async function database(path: string, init?: RequestInit): Promise<any> {
   // A write never needs the multi-MB record sent back: ask only for the id (enough to know a row was updated).
   if (init?.method === 'PATCH' && /return=representation/.test(String((init.headers as Record<string, string> | undefined)?.Prefer || '')) && !/[?&]select=/.test(path)) path += '&select=id';
   const sessions = /^studio_sessions\?/.test(path);
+  if (sessions && init?.method && init.method !== 'GET') recordCache.delete(sessionOf(path));
   // Reads of the whole record also fetch `texts` and merge it back.
   const select = /[?&]select=([^&]*)/.exec(path);
   if (sessions && textsReady && (!init?.method || init.method === 'GET') && select && select[1].split(',').includes('record')) {
     try {
       const id = sessionOf(path);
+      const columns = select[1].split(',');
+      const keep = (rows: Loose[] | null) => {
+        const record = rows?.[0]?.record;
+        if (id && record && typeof record.updatedAt === 'number') { recordCache.delete(id); recordCache.set(id, { updatedAt: record.updatedAt, record: structuredClone(record) }); while (recordCache.size > 4) recordCache.delete(recordCache.keys().next().value as string); }
+        return rows;
+      };
+      const copy = id ? recordCache.get(id) : undefined;
+      if (copy && columnsReady) {
+        try {
+          const meta = await rest('studio_sessions?id=eq.' + encodeURIComponent(id) + '&select=summary' + (columns.includes('bridge_last_seen') ? ',bridge_last_seen' : '')) as Loose[] | null;
+          const now = meta?.[0];
+          if (now?.summary && Number(now.summary.updatedAt) === copy.updatedAt) return [Object.fromEntries(columns.map(c => [c, c === 'record' ? structuredClone(copy.record) : now[c]]))];
+        } catch { /* read the row below */ }
+        recordCache.delete(id);
+      }
       // Egress: the row's text is ~1 MB and rarely changes. The record carries its fingerprint (`textsFp`), so when this
       // instance already holds that text only the small record is read from the database.
       const rows = id ? await rest(path) as Loose[] | null : null;
       if (rows) {
         const row = rows[0]; const fp = row?.record?.textsFp; const held = id && textsCache.get(id);
-        if (!row) { knownTexts.delete(id); textsCache.delete(id); return rows; }  // no row (new or removed project): its next write carries the text
-        if (fp && held && held.fp === fp) { delete row.record.textsFp; mergeTexts(row.record, held.texts); knownTexts.set(id, fp); return rows; }
+        if (!row) { knownTexts.delete(id); textsCache.delete(id); recordCache.delete(id); return rows; }  // no row (new or removed project): its next write carries the text
+        if (fp && held && held.fp === fp) { delete row.record.textsFp; mergeTexts(row.record, held.texts); knownTexts.set(id, fp); return keep(rows); }
         const only = await rest('studio_sessions?id=eq.' + encodeURIComponent(id) + '&select=texts') as Loose[] | null;
         const texts = only?.[0]?.texts;
-        if (!texts) { knownTexts.delete(id); textsCache.delete(id); delete row.record?.textsFp; return rows; }
+        if (!texts) { knownTexts.delete(id); textsCache.delete(id); delete row.record?.textsFp; return keep(rows); }
         const have = fingerprint(stable(texts));
-        if (!fp || fp === have) { delete row.record.textsFp; mergeTexts(row.record, texts); knownTexts.set(id, have); textsCache.set(id, { fp: have, texts }); return rows; }
+        if (!fp || fp === have) { delete row.record.textsFp; mergeTexts(row.record, texts); knownTexts.set(id, have); textsCache.set(id, { fp: have, texts }); return keep(rows); }
         // Written between the two reads: take record and text together, as one consistent row.
       }
       const rows2 = await rest(path.replace('select=' + select[1], 'select=' + select[1] + ',texts')) as Loose[] | null;
@@ -168,7 +187,7 @@ async function database(path: string, init?: RequestInit): Promise<any> {
         delete row.texts; if (row.record) delete row.record.textsFp;
       }
       if (id && !rows2?.length) { knownTexts.delete(id); textsCache.delete(id); }
-      return rows2;
+      return keep(rows2);
     } catch (error) { if (!missingTexts(String((error as Error).message))) throw error; textsReady = false; }
   }
   const writesRecord = sessions && typeof init?.body === 'string' && (init.body.startsWith('{"record":') || (init.method === 'POST' && /^studio_sessions\?on_conflict/.test(path)));

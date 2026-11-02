@@ -86,7 +86,9 @@ test('a read does not fetch the ~1 MB text again while its fingerprint is unchan
   assert.match(session.script, /Kịch bản dài/, 'the project is still whole');
   assert.equal(session.textsFp, undefined, 'the stored fingerprint is not shown');
   assert.equal(seen.filter(u => /select=[^&]*texts/.test(u)).length, 0, 'texts was not read again');
+  assert.equal(seen.filter(u => /select=[^&]*record/.test(u)).length, 0, 'the record was not read again either: only the small summary');
   db.row.texts = { ...db.row.texts, script: 'Đổi ở nơi khác' }; db.row.record.textsFp = 'other:1';
+  db.row.record.updatedAt += 1; db.row.summary = { ...db.row.summary, updatedAt: db.row.record.updatedAt }; // any real writer bumps updatedAt
   const changed = await db.call('GET', `sessions/${sid}`);
   assert.equal(changed.session.script, 'Đổi ở nơi khác', 'a changed fingerprint reads the text again');
 });
