@@ -181,7 +181,9 @@ function App() {
         const s = sessionRef.current as (Session & { imageJobs?: { status: string }[] }) | null;
         const mine = s?.laneJobs?.some(job => job.lane === laneId) || (s?.activeJob && (!s.activeJob.lane || s.activeJob.lane === laneId));
         const transcriptBusy = Object.keys(localStorage).some(key => key.startsWith('vis-transcript-pending-') && (localStorage.getItem(key) || 'null') !== 'null');
-        if (mine || transcriptBusy || busy || stopGate.current) return;
+        // A running Tách ảnh batch (many minutes) keeps its mark fresh; a reload would cut it after one picture.
+        const separating = Number(localStorage.getItem('vis-separation-busy') || 0) > Date.now() - 120000;
+        if (mine || transcriptBusy || separating || busy || stopGate.current) return;
         location.reload();
       } catch { /* offline: try later */ }
     };
