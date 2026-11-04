@@ -35,56 +35,50 @@ RESOLUTIONS = {
 
 
 # ---------------------------------------------------------------- tìm cảnh
+# Tên file lớp: phải KẾT THÚC bằng dấu hiệu lớp ("01_bg", "rung_mid", "x_tien_canh").
+# Không nhận chữ lẻ như "trung", "tien", "hau", "xa" vì đó là chữ thường gặp trong tên cảnh tiếng Việt.
+LAYER_RE = re.compile(r"^(?P<base>.*?)(?:^|[_\-\s.]+)(?P<key>far|bg|background|mid|midground|fg|foreground|"
+                      r"toan[_\s-]?canh|hau[_\s-]?canh|trung[_\s-]?canh|tien[_\s-]?canh)$", re.I)
+LAYER_ALIAS = {"far": "far", "toancanh": "far", "bg": "bg", "background": "bg", "haucanh": "bg",
+               "mid": "mid", "midground": "mid", "trungcanh": "mid", "fg": "fg", "foreground": "fg", "tiencanh": "fg"}
+
+
+def _layer_match(name):
+    return LAYER_RE.match(os.path.splitext(os.path.basename(name))[0].strip())
+
+
 def layer_key(name):
-    n = os.path.splitext(name)[0].lower()
-    tokens = re.split(r"[^a-z0-9]+", n)
-    if any(t in ("far", "sky", "troi", "xa", "toancanh") for t in tokens) or "toan_canh" in n:
-        return "far"
-    if any(t in ("bg", "back", "background", "hau", "hauc", "haucanh") for t in tokens) or "hau_canh" in n or "background" in n:
-        return "bg"
-    if any(t in ("fg", "front", "foreground", "tien", "tiencanh") for t in tokens) or "tien_canh" in n or "foreground" in n:
-        return "fg"
-    if any(t in ("mid", "middle", "midground", "trung", "trungcanh", "char", "nhanvat") for t in tokens) or "trung_canh" in n or "midground" in n:
-        return "mid"
-    return None
+    m = _layer_match(name)
+    return LAYER_ALIAS.get(re.sub(r"[_\s-]", "", m.group("key").lower())) if m else None
 
 
 def base_name(name):
-    b = os.path.splitext(name)[0]
-    b = re.sub(r"^\d+[_\-\s.]*", "", b)  # "01_bg" -> "bg" (số thứ tự lớp do Local Engine đặt)
-    b = re.sub(r"[_\-\s.]*(far|sky|bg|background|back|mid|middle|midground|fg|foreground|front|"
-               r"hau[_\s-]?canh|trung[_\s-]?canh|tien[_\s-]?canh|hau|trung|tien|layer[_\s-]?\d|[123])$",
-               "", b, flags=re.I)
-    return b.strip() or "canh"
+    m = _layer_match(name)
+    b = m.group("base") if m else os.path.splitext(os.path.basename(name))[0]
+    b = re.sub(r"^\d+[_\-\s.]*", "", b)  # "01_bg" -> "" (số thứ tự lớp do Local Engine đặt)
+    return b.strip(" _-.") or "canh"
 
 
 def natural_key(s):
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", s)]
 
 
-def group_files(files, fallback_name):
-    """files: list đường dẫn ảnh -> list (tên cảnh, {bg,mid,fg})."""
+def group_files(files, fallback_name, stats=None):
+    """files: list đường dẫn ảnh -> list (tên cảnh, {far,bg,mid,fg}).
+    Chỉ nhận ảnh có tên lớp. Ảnh thường (vd ảnh gốc trong thư mục Anh) bị bỏ qua, KHÔNG ghép bừa 3 ảnh thành 1 cảnh."""
     files = sorted(files, key=lambda p: natural_key(os.path.basename(p)))
-    if not files:
-        return []
-    names = [os.path.basename(f) for f in files]
-    if all(layer_key(n) for n in names):
-        groups = {}
-        for f, n in zip(files, names):
-            groups.setdefault(base_name(n), {})[layer_key(n)] = f
-        if len(groups) == 1:
-            return [(fallback_name or next(iter(groups)), next(iter(groups.values())))]
-        return list(groups.items())
-    out = []
-    for i in range(0, len(files), 3):
-        chunk = files[i:i + 3]
-        d = dict(zip(("bg", "mid", "fg"), chunk))  # không có tên lớp: 3 ảnh = hậu, trung, tiền
-        name = fallback_name if (fallback_name and len(files) <= 3) else base_name(os.path.basename(chunk[0]))
-        out.append((name, d))
-    return out
+    tagged = [f for f in files if layer_key(f)]
+    if stats is not None:
+        stats["ignored"] = stats.get("ignored", 0) + len(files) - len(tagged)
+    groups = {}
+    for f in tagged:
+        groups.setdefault(base_name(f), {})[layer_key(f)] = f
+    if len(groups) == 1:
+        return [(fallback_name or next(iter(groups)), next(iter(groups.values())))]
+    return list(groups.items())
 
 
-def find_scenes(folder):
+def find_scenes(folder, stats=None):
     """Quét cả thư mục con nhiều cấp: mỗi thư mục có ảnh = 1 cảnh (hoặc nhiều cảnh nếu ảnh để chung).
     Bỏ qua thư mục bắt đầu bằng '_' hoặc '.' (vd: _kiem_tra do Local Engine tạo)."""
     scenes = []
@@ -96,7 +90,7 @@ def find_scenes(folder):
         rel = os.path.relpath(cur, folder)
         # chọn thẳng 1 thư mục cảnh -> lấy tên thư mục đó làm tên video
         name = os.path.basename(os.path.normpath(folder)) if rel == "." else rel.replace(os.sep, "/")
-        scenes += group_files(imgs, name)
+        scenes += group_files(imgs, name, stats)
     # tên trùng -> thêm số
     seen = {}
     result = []
@@ -195,6 +189,7 @@ def render_scene(job):
         return name, None, "không có ảnh"
 
     n = max(1, round(fps * dur))
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)  # tạo thư mục chỉ khi thật sự làm video
     writer = imageio_ffmpeg.write_frames(
         out_path, (W, H), fps=fps, codec="libx264", pix_fmt_in="rgb24", pix_fmt_out="yuv420p",
         macro_block_size=1, output_params=["-crf", str(cfg["crf"]), "-preset", "fast", "-movflags", "+faststart"],
@@ -236,15 +231,36 @@ def safe_name(n):
 def video_path(dst, name):
     """'du_an_x/Cảnh 1 - abc' -> <dst>/du_an_x/Cảnh 1 - abc.mp4 (giữ cấu trúc thư mục, tên video = tên cảnh)."""
     parts = [safe_name(p) for p in name.split("/") if p.strip()] or ["canh"]
-    path = os.path.join(dst, *parts) + ".mp4"
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    return path
+    return os.path.join(dst, *parts) + ".mp4"
+
+
+SEPARATED_DIR = "Tach anh"         # AI MANAGER: <dự án>\Tach anh\Phan N - ...\Canh M - ...\(lớp)
+PROJECT_VIDEO_DIR = "Video Parallax"  # AI MANAGER: <dự án>\Video Parallax\Phan N - ...\Canh M - ....mp4
+
+
+def project_video_path(layers):
+    """Cảnh nằm trong <dự án>\\Tach anh\\... -> <dự án>\\Video Parallax\\<cùng Phần>\\<Cảnh>.mp4 (như AI MANAGER).
+    Không thuộc dự án nào -> None."""
+    folder = os.path.dirname(os.path.abspath(next(iter(layers.values()))))
+    cur = folder
+    while True:
+        parent = os.path.dirname(cur)
+        if os.path.basename(cur).lower() == SEPARATED_DIR.lower() and cur != folder:
+            rel = os.path.relpath(folder, cur).split(os.sep)
+            parts = [safe_name(p) for p in rel]
+            return os.path.join(parent, PROJECT_VIDEO_DIR, *parts[:-1], parts[-1] + ".mp4")
+        if parent == cur:
+            return None
+        cur = parent
 
 
 # ---------------------------------------------------------------- GUI
 def default_input_dir():
-    p = os.path.join(os.path.expanduser("~"), "Pictures", "VIDEO_IMAGE_STUDIO", "Parallax")
-    return p if os.path.isdir(p) else ""
+    home = os.path.expanduser("~")
+    for p in (os.path.join(home, "VIDEO_PROJECTS"), os.path.join(home, "Pictures", "VIDEO_IMAGE_STUDIO", "Parallax")):
+        if os.path.isdir(p):
+            return p
+    return ""
 
 
 def default_output_dir():
@@ -282,6 +298,7 @@ def run_gui():
     v_blur = tk.IntVar(value=0)
     v_ease = tk.BooleanVar(value=True)
     v_skip = tk.BooleanVar(value=True)
+    v_proj = tk.BooleanVar(value=True)
     v_quality = tk.IntVar(value=18)
     cpu = os.cpu_count() or 2
     v_workers = tk.IntVar(value=max(1, min(cpu // 2, 6)))
@@ -308,8 +325,8 @@ def run_gui():
     folder_row(0, "Thư mục ảnh", v_in, "Chọn thư mục tổng (vd: Pictures\\VIDEO_IMAGE_STUDIO\\Parallax)")
     folder_row(1, "Thư mục xuất", v_out, "Chọn nơi lưu video")
     ttk.Label(frm, foreground="#666", justify="left", text=(
-        "Chọn thư mục tổng: tự tìm mọi thư mục cảnh bên trong (mỗi thư mục = 1 video,\n"
-        "tên video = tên thư mục, vd \"Cảnh 1 - abc\"). Thư mục bắt đầu bằng _ được bỏ qua.")).grid(
+        "Chọn thư mục dự án (VIDEO_PROJECTS\\...) hoặc thư mục tổng: tự tìm mọi cảnh ĐÃ TÁCH LỚP\n"
+        "(thư mục có 01_bg / 02_mid / 03_fg). Ảnh gốc chưa tách (thư mục Anh) được bỏ qua.")).grid(
         row=2, column=0, columnspan=3, sticky="w", **pad)
 
     ttk.Label(frm, text="Khung hình").grid(row=3, column=0, sticky="w", **pad)
@@ -344,8 +361,10 @@ def run_gui():
         row=15, column=0, columnspan=3, sticky="w", **pad)
     ttk.Checkbutton(frm, text="Bỏ qua cảnh đã có video (chỉ tạo cảnh mới / cảnh vừa tách lại)", variable=v_skip).grid(
         row=16, column=0, columnspan=3, sticky="w", **pad)
+    ttk.Checkbutton(frm, text="Video của dự án lưu ngay trong dự án: <dự án>\\Video Parallax\\Phần\\Cảnh.mp4",
+                    variable=v_proj).grid(row=17, column=0, columnspan=3, sticky="w", **pad)
     btn = ttk.Button(frm, text="▶  BẮT ĐẦU TẠO VIDEO")
-    btn.grid(row=17, column=0, columnspan=3, sticky="ew", padx=8, pady=10)
+    btn.grid(row=18, column=0, columnspan=3, sticky="ew", padx=8, pady=10)
     frm.columnconfigure(1, weight=1)
 
     # ---------------- bên phải: tiến trình
@@ -396,18 +415,25 @@ def run_gui():
         if not os.path.isdir(src):
             sum_lab.config(text="Chưa chọn thư mục ảnh")
             return
+        stats = {}
         try:
-            scenes = find_scenes(src)
+            scenes = find_scenes(src, stats)
         except Exception as e:
             write(f"Lỗi đọc thư mục: {e}")
             return
         state["scenes"] = scenes
         for n, d in scenes:
             tree.insert("", "end", iid=n, text=f"{n}   ({len(d)} lớp)", values=("", "Chờ"))
-        sum_lab.config(text=f"Tìm thấy {len(scenes)} cảnh trong thư mục")
         pct_lab.config(text="0%")
         total_bar.config(value=0)
-        write(f"Tìm thấy {len(scenes)} cảnh.")
+        ignored = stats.get("ignored", 0)
+        if not scenes and ignored:
+            sum_lab.config(text=f"Không có cảnh đã tách lớp.\nThư mục chỉ có {ignored} ảnh gốc – hãy tách ảnh trước.")
+            write(f"Thư mục chỉ có {ignored} ảnh gốc (chưa tách lớp). Tách ảnh ở AI MANAGER / tab Tách ảnh, "
+                  f"rồi chọn thư mục dự án hoặc thư mục 'Tach anh'.")
+            return
+        sum_lab.config(text=f"Tìm thấy {len(scenes)} cảnh đã tách lớp")
+        write(f"Tìm thấy {len(scenes)} cảnh" + (f" (bỏ qua {ignored} ảnh gốc chưa tách)." if ignored else "."))
 
     def set_row(name, pct=None, text=None, tag=None):
         if not tree.exists(name):
@@ -473,9 +499,11 @@ def run_gui():
         }
         manager = mp.Manager()
         q = manager.Queue()
-        jobs, skipped = [], 0
+        jobs, skipped, out_dirs = [], 0, set()
         for n, d in scenes:
-            out = video_path(dst, n)
+            pv = project_video_path(d) if v_proj.get() else None
+            out = pv or video_path(dst, n)
+            out_dirs.add(pv[:pv.rindex(PROJECT_VIDEO_DIR) + len(PROJECT_VIDEO_DIR)] if pv else dst)
             if v_skip.get() and video_up_to_date(out, d):
                 skipped += 1
                 set_row(n, 1, "Đã có video – bỏ qua", "skip")
@@ -515,9 +543,10 @@ def run_gui():
                         except Exception as e:
                             root.after(0, lambda n=name, e=e: set_row(n, None, f"Lỗi: {e}", "err"))
                             write(f"✗ {name}: {e}")
-                write(f"XONG: {ok}/{len(jobs)} video → {dst}")
-                if ok and sys.platform == "win32":
-                    os.startfile(dst)
+                where = next(iter(out_dirs)) if len(out_dirs) == 1 else dst
+                write(f"XONG: {ok}/{len(jobs)} video → " + " | ".join(sorted(out_dirs)))
+                if ok and sys.platform == "win32" and os.path.isdir(where):
+                    os.startfile(where)
             except Exception:
                 write(traceback.format_exc())
             finally:
