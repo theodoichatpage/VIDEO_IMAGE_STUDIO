@@ -57,7 +57,7 @@ def pick_folder():
     return jsonify(ok=True,path=path or None,cancelled=not path)
 @app.get('/v1/health')
 def health():
-    caps=adapter.capabilities();return jsonify(ok=True,version='1.2.0',sam2=caps['sam2'],device=caps['device'],ffmpeg=False,parallax=True,pickFolder=True,lama=caps['lama'],parallaxDir=str(default_output_root()))
+    caps=adapter.capabilities();return jsonify(ok=True,version='1.2.0',sam2=caps['sam2'],device=caps['device'],ffmpeg=False,parallax=True,pickFolder=True,busy=any(j['status'] in ('queued','processing') for j in jobs.values()),lama=caps['lama'],parallaxDir=str(default_output_root()))
 @app.post('/v1/separate')
 def separate():
     if any(j['status'] in ('queued','processing') for j in jobs.values()):return jsonify(error='Đang xử lý một ảnh. Vui lòng đợi.'),409

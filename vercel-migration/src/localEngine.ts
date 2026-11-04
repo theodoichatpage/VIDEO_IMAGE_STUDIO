@@ -1,5 +1,5 @@
 export const LOCAL_ENGINE_URL='http://127.0.0.1:17841';
-export type EngineHealth={ok:boolean;version:string;sam2:boolean;device:string;ffmpeg:boolean;parallax?:boolean;pickFolder?:boolean;lama?:boolean;parallaxDir?:string};
+export type EngineHealth={ok:boolean;version:string;sam2:boolean;device:string;ffmpeg:boolean;parallax?:boolean;pickFolder?:boolean;busy?:boolean;lama?:boolean;parallaxDir?:string};
 export type SeparationMode='parallax'|'edit';
 export type SeparationJob={jobId:string;status:'queued'|'processing'|'complete'|'error';progress:number;message:string;error?:string};
 export type SeparationLayer={fileId:string;file:string;title:string;type:'background'|'person'|'person_group'|'text'|'other'|'far'|'midground'|'foreground';x:number;y:number;width:number;height:number;pixels:number};
