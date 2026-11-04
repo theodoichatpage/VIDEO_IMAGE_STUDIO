@@ -51,3 +51,4 @@ Nếu ChatGPT đang bật chế độ Tạo ảnh trong ô nhập, tắt chế �
 
 34. Bản 0.5.12: ảnh gốc gửi thẳng về AI MANAGER trên máy (thư mục dự án); máy chủ Studio chỉ giữ ảnh xem trước nhỏ để tiết kiệm dung lượng tải. Không có AI MANAGER thì ảnh gốc vẫn lưu trên máy chủ như cũ.
 35. Bản 0.5.13: chuyển sang máy chủ Supabase mới (gqzolyrdhlabcvjewlpo). Bản 0.5.12 trở về trước không còn kết nối được Studio.
+36. Bản 0.5.14: ChatGPT trả lời chỉ có ảnh (không có khối văn bản) thì Extension vẫn nhận ra ảnh, không gửi lại lệnh "Tạo ảnh" nhiều lần và không tạo trùng ảnh.

@@ -65,12 +65,16 @@
   // about images), so a picture after this job's prompt means it drew instead.
   const IMAGE_TOOL_TEXT = /creating image|generating image|đang tạo (hình )?ảnh/i;
   // Pictures after the newest prompt carrying this job's marker (older pictures in the chat never count).
-  const picturesAfterPrompt = () => {
-    const marker = '[VIS_JOB_ID:' + (replyContext?.id || '') + ']';
-    const prompt = [...document.querySelectorAll('[data-message-author-role="user"], [data-turn="user"]')].filter(node => (node.textContent || '').includes(marker)).at(-1);
-    if (!prompt) return 0;
-    return [...document.querySelectorAll('main img')].filter(image => !image.closest('form') && (prompt.compareDocumentPosition(image) & 4) && !prompt.contains(image) && (/generated image|hình ảnh đã tạo|ảnh đã tạo/i.test(image.alt || '') || image.naturalWidth >= 256 || Number(image.getAttribute('width')) >= 256)).length;
+  const pictureNodesAfterPrompt = (context = replyContext) => {
+    const marker = '[VIS_JOB_ID:' + (context?.id || '') + ']';
+    const users = [...document.querySelectorAll('[data-message-author-role="user"], [data-turn="user"]')];
+    const prompt = users.filter(node => (node.textContent || '').includes(marker)).at(-1);
+    if (!prompt) return [];
+    // Only pictures between this prompt and the next user message: another job's picture never counts.
+    const next = users.find(node => node !== prompt && (prompt.compareDocumentPosition(node) & 4) && !prompt.contains(node));
+    return [...document.querySelectorAll('main img')].filter(image => (!next || (next.compareDocumentPosition(image) & 2)) && !image.closest('form') && (prompt.compareDocumentPosition(image) & 4) && !prompt.contains(image) && (/generated image|hình ảnh đã tạo|ảnh đã tạo/i.test(image.alt || '') || image.naturalWidth >= 256 || Number(image.getAttribute('width')) >= 256));
   };
+  const picturesAfterPrompt = () => pictureNodesAfterPrompt().length;
   const IMAGE_INSTEAD = 'VIS_IMAGE_INSTEAD';
   const drewImage = () => picturesAfterPrompt() > 0 || VISReplyReader.light(() => VISReplyReader.sources(document, replyContext).sources.some(text => IMAGE_TOOL_TEXT.test(text)));
   async function stopAndSettle() {
@@ -78,7 +82,13 @@
     for (let i = 0; i < 40 && isGenerating(); i += 1) await sleep(500);
     await sleep(1500);
   }
-  const imageUrls = (context = replyContext) => [...(VISReplyReader.sources(document, context).node?.querySelectorAll('img') || [])].filter(image => image.complete && image.naturalWidth >= 256 && image.naturalHeight >= 256).map(image => image.currentSrc || image.src || '').filter(url => /^(https?:|blob:)/.test(url));
+  const finishedUrls = images => images.filter(image => image.complete && image.naturalWidth >= 256 && image.naturalHeight >= 256).map(image => image.currentSrc || image.src || '').filter(url => /^(https?:|blob:)/.test(url));
+  // ChatGPT sometimes shows a picture-only reply with no answer block ("no-new-answer"): the pictures between this
+  // job's prompt and the next message are still this job's, so they are read directly instead of nudging again.
+  const imageUrls = (context = replyContext) => {
+    const fromReply = finishedUrls([...(VISReplyReader.sources(document, context).node?.querySelectorAll('img') || [])]);
+    return fromReply.length ? fromReply : finishedUrls(pictureNodesAfterPrompt(context));
+  };
   const expandedImagePrompts = new WeakSet();
   async function expandImagePrompts(context) {
     // Long ChatGPT prompts can contain only the preview until Show more is clicked.
@@ -398,8 +408,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const marker=st.activeJobId && ((last && (last.innerText||'').includes('[VIS_JOB_ID:'+st.activeJobId+']')) || (document.querySelector('main')?.textContent||'').includes('[VIS_JOB_ID:'+st.activeJobId+']'));
         const imagePrompt=st.activeCommand?.type==='image_generation' && st.activeCommand?.id===st.activeJobId && typeof st.activeCommand.prompt==='string' && st.activeCommand.prompt.length>0 && last && (last.innerText||'').includes(st.activeCommand.prompt);
         const verified=currentJobId===st.activeJobId && !!currentJobId || Boolean((marker||imagePrompt) && st.identityJobId===st.activeJobId && st.conversationUrl===url);
-        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.5.13',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now(),account});
-      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.5.13',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
+        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.5.14',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now(),account});
+      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.5.14',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
       return true;
     }
     if (message?.type === 'vis-restore-draft') {
