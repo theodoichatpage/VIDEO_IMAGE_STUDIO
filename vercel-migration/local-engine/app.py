@@ -41,9 +41,23 @@ def run_job(jid,rgb,fill,parallax=None):
             result['layers']=[dict(layer,type=classify(layer),fileId=layer['file']) for layer in result['layers']]
         update(jid,status='complete',progress=100,message='Hoàn tất',result=result,updatedAt=time.time())
     except Exception as exc:update(jid,status='error',message=str(exc),error=str(exc),updatedAt=time.time())
+@app.post('/v1/pick-folder')
+def pick_folder():
+    """Native folder dialog on this PC (the browser cannot show the real path of a folder)."""
+    start=(request.get_json(silent=True) or {}).get('start') or str(default_output_root())
+    if sys.platform!='win32':return jsonify(error='Chỉ hỗ trợ chọn thư mục trên Windows.'),501
+    script=("Add-Type -AssemblyName System.Windows.Forms;Add-Type -AssemblyName System.Drawing;$o=New-Object System.Windows.Forms.Form;$o.TopMost=$true;$o.ShowInTaskbar=$false;"
+            "$o.StartPosition='CenterScreen';$o.Size=New-Object System.Drawing.Size(1,1);$o.Show();$d=New-Object System.Windows.Forms.FolderBrowserDialog;"
+            "$d.Description='Chọn thư mục lưu các lớp Parallax';$d.ShowNewFolderButton=$true;if(Test-Path -LiteralPath $env:VIS_PICK_START){$d.SelectedPath=$env:VIS_PICK_START};"
+            "if($d.ShowDialog($o) -eq 'OK'){[Console]::OutputEncoding=[Text.Encoding]::UTF8;Write-Output $d.SelectedPath};$o.Close()")
+    try:
+        out=subprocess.run(['powershell','-NoProfile','-STA','-Command',script],capture_output=True,timeout=300,env=dict(os.environ,VIS_PICK_START=str(start)))
+    except subprocess.TimeoutExpired:return jsonify(error='Hộp chọn thư mục chờ quá lâu.'),408
+    path=out.stdout.decode('utf-8','ignore').strip()
+    return jsonify(ok=True,path=path or None,cancelled=not path)
 @app.get('/v1/health')
 def health():
-    caps=adapter.capabilities();return jsonify(ok=True,version='1.2.0',sam2=caps['sam2'],device=caps['device'],ffmpeg=False,parallax=True,lama=caps['lama'],parallaxDir=str(default_output_root()))
+    caps=adapter.capabilities();return jsonify(ok=True,version='1.2.0',sam2=caps['sam2'],device=caps['device'],ffmpeg=False,parallax=True,pickFolder=True,lama=caps['lama'],parallaxDir=str(default_output_root()))
 @app.post('/v1/separate')
 def separate():
     if any(j['status'] in ('queued','processing') for j in jobs.values()):return jsonify(error='Đang xử lý một ảnh. Vui lòng đợi.'),409
@@ -61,8 +75,12 @@ def separate():
     if request.form.get('mode')=='parallax':
         stem=os.path.splitext(os.path.basename(upload.filename or 'anh'))[0]
         project=request.form.get('project') or 'chung'
+        chosen=(request.form.get('outputDir') or '').strip()
+        if chosen and not os.path.isabs(chosen):return jsonify(error='Thư mục lưu phải là đường dẫn đầy đủ.'),400
+        # A folder chosen by the user holds one sub-folder per scene; the default keeps one folder per project.
+        base=Path(chosen) if chosen else default_output_root()/safe_segment(project,'chung')
         parallax={'layers':4 if request.form.get('layers')=='4' else 3,
-                  'save_dir':default_output_root()/safe_segment(project,'chung')/safe_segment(stem,'anh')}
+                  'save_dir':base/safe_segment(stem,'anh')}
     jid=uuid.uuid4().hex;jobs[jid]={'jobId':jid,'status':'queued','progress':0,'message':'Đang chờ xử lý','createdAt':time.time(),'updatedAt':time.time()};pool.submit(run_job,jid,rgb,request.form.get('fill')=='1',parallax);return jsonify(jobId=jid),202
 @app.get('/v1/jobs/<jid>')
 def job(jid):
