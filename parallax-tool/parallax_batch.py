@@ -154,6 +154,14 @@ def prepare_layer(path, W, H, motion, A, k, blur):
     return arr, cover / pre_scale  # 'cover' tính theo ảnh đã chuẩn bị
 
 
+_progress_q = None  # hàng đợi tiến trình, gắn vào mỗi tiến trình con lúc khởi động (không cần tiến trình trung gian)
+
+
+def _init_worker(q):
+    global _progress_q
+    _progress_q = q
+
+
 def _report(q, *msg):
     if q is not None:
         try:
@@ -162,10 +170,77 @@ def _report(q, *msg):
             pass
 
 
+BUSY = "Cảnh này đang được một Parallax25D khác làm (AI MANAGER hoặc cửa sổ khác) – bỏ qua để không ghi đè."
+
+
+def _pid_alive(pid):
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        code = ctypes.c_ulong()
+        ok = k32.GetExitCodeProcess(h, ctypes.byref(code))
+        k32.CloseHandle(h)
+        return bool(ok) and code.value == 259  # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _acquire_scene_lock(out_path):
+    """Khóa riêng cho từng video: 2 chương trình làm cùng 1 cảnh sẽ trộn dữ liệu vào nhau và làm hỏng video.
+    Trả về đường dẫn khóa, hoặc None nếu một tiến trình khác còn sống đang giữ."""
+    lock = out_path + ".lock"
+    os.makedirs(os.path.dirname(os.path.abspath(lock)), exist_ok=True)
+    for _ in range(2):
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            return lock
+        except FileExistsError:
+            try:
+                with open(lock, encoding="utf-8") as fh:
+                    owner = int((fh.read().strip() or "0"))
+            except (OSError, ValueError):
+                owner = 0
+            if owner and owner != os.getpid() and _pid_alive(owner):
+                return None
+            try:
+                os.remove(lock)  # khóa cũ của tiến trình đã tắt
+            except OSError:
+                return None
+    return None
+
+
 def render_scene(job):
     """job = (tên, lớp, cấu hình, file ra[, hàng đợi tiến trình])."""
+    out_path = job[3]
+    lock = _acquire_scene_lock(out_path)
+    if lock is None:
+        return job[0], None, BUSY
+    try:
+        planned = job[2].get("_planned_at")
+        # chương trình khác vừa làm xong cảnh này sau khi lượt này lên kế hoạch -> khỏi làm lại
+        if planned and os.path.exists(out_path) and os.path.getmtime(out_path) >= planned and video_ok(out_path):
+            return job[0], None, BUSY
+        return _render_scene(job)
+    finally:
+        try:
+            os.remove(lock)
+        except OSError:
+            pass
+
+
+def _render_scene(job):
     name, layers, cfg, out_path = job[:4]
-    q = job[4] if len(job) > 4 else None
+    q = job[4] if len(job) > 4 else _progress_q
     _report(q, "start", name, 0)
     import cv2
     import imageio_ffmpeg
@@ -190,8 +265,11 @@ def render_scene(job):
 
     n = max(1, round(fps * dur))
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)  # tạo thư mục chỉ khi thật sự làm video
+    # ghi ra file tạm, xong hẳn mới đổi tên: video dở dang (máy tắt, tiến trình chết) không bị coi là "đã có video"
+    base = out_path[:-4] if out_path.lower().endswith(".mp4") else out_path
+    tmp_path = f"{base}.{os.getpid()}.dang_tao.mp4"  # riêng cho từng tiến trình
     writer = imageio_ffmpeg.write_frames(
-        out_path, (W, H), fps=fps, codec="libx264", pix_fmt_in="rgb24", pix_fmt_out="yuv420p",
+        tmp_path, (W, H), fps=fps, codec="libx264", pix_fmt_in="rgb24", pix_fmt_out="yuv420p",
         macro_block_size=1, output_params=["-crf", str(cfg["crf"]), "-preset", "fast", "-movflags", "+faststart"],
         ffmpeg_log_level="error",
     )
@@ -219,9 +297,68 @@ def render_scene(job):
             writer.send(memoryview(np.ascontiguousarray(frame)))
             if i % 3 == 2 or i == n - 1:
                 _report(q, "frame", name, (i + 1) / n)
-    finally:
-        writer.close()
+        writer.close()  # ffmpeg ghi xong phần cuối file
+    except BaseException:
+        try:
+            writer.close()
+        except Exception:
+            pass
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+    os.replace(tmp_path, out_path)
     return name, out_path, motion
+
+
+def cleanup_leftovers(outs):
+    """Xóa file tạm (*.<pid>.dang_tao.mp4) và khóa (*.mp4.lock) do tiến trình đã tắt để lại."""
+    import glob
+    for out in set(outs):
+        base = out[:-4] if out.lower().endswith(".mp4") else out
+        for f in glob.glob(glob.escape(base) + ".*.dang_tao.mp4") + [out + ".lock"]:
+            try:
+                if f.endswith(".lock"):
+                    with open(f, encoding="utf-8") as fh:
+                        pid = int(fh.read().strip() or "0")
+                else:
+                    pid = int(f[len(base) + 1:].split(".")[0])
+                if not _pid_alive(pid):
+                    os.remove(f)
+            except (OSError, ValueError):
+                pass
+
+
+def run_jobs(jobs, workers, on_done, rounds=3, q=None):
+    """Chạy các cảnh song song. Một tiến trình con chết (thiếu RAM, máy bận…) sẽ làm hỏng cả nhóm, nên các cảnh
+    chưa xong được chạy lại trong nhóm mới (lần cuối chỉ 1 tiến trình). on_done(job, path, motion, error) gọi đúng
+    1 lần cho mỗi cảnh, sau lần thử cuối cùng."""
+    pending = list(jobs)
+    cleanup_leftovers(j[3] for j in pending)  # đồ thừa của lần chạy trước bị tắt ngang
+    for rnd in range(rounds):
+        if not pending:
+            return
+        last = rnd == rounds - 1
+        retry = []
+        with ProcessPoolExecutor(max_workers=1 if last else max(1, workers),
+                                 initializer=_init_worker, initargs=(q,)) as ex:
+            futs = {ex.submit(render_scene, j): j for j in pending}
+            for f in as_completed(futs):
+                j = futs[f]
+                try:
+                    _, path, extra = f.result()
+                    on_done(j, path, extra, None if path else str(extra))  # "không có ảnh": thử lại cũng vô ích
+                except Exception as exc:
+                    if last:
+                        msg = str(exc) or exc.__class__.__name__
+                        if "terminated abruptly" in msg:
+                            msg = "Tiến trình làm video bị tắt đột ngột (máy thiếu RAM hoặc quá bận)."
+                        on_done(j, None, None, msg.splitlines()[0][:300])
+                    else:
+                        retry.append(j)
+        pending = retry
+    cleanup_leftovers(j[3] for j in jobs)
 
 
 def safe_name(n):
@@ -497,18 +634,24 @@ def run_gui():
             "speeds": {"far": v_far.get() / 100, "bg": v_bg.get() / 100, "mid": v_mid.get() / 100, "fg": v_fg.get() / 100},
             "blur": v_blur.get(), "ease": v_ease.get(), "crf": v_quality.get(),
         }
-        manager = mp.Manager()
-        q = manager.Queue()
-        jobs, skipped, out_dirs = [], 0, set()
+        cfg["_planned_at"] = time.time()
+        q = mp.Queue()
+        jobs, skipped, out_dirs, planned = [], 0, set(), []
         for n, d in scenes:
             pv = project_video_path(d) if v_proj.get() else None
             out = pv or video_path(dst, n)
             out_dirs.add(pv[:pv.rindex(PROJECT_VIDEO_DIR) + len(PROJECT_VIDEO_DIR)] if pv else dst)
-            if v_skip.get() and video_up_to_date(out, d):
+            planned.append((n, d, out))
+        if v_skip.get():
+            sum_lab.config(text="Đang kiểm tra các video đã có…")
+            root.update_idletasks()
+        good = existing_ok((out, d) for _, d, out in planned) if v_skip.get() else set()
+        for n, d, out in planned:
+            if out in good:
                 skipped += 1
                 set_row(n, 1, "Đã có video – bỏ qua", "skip")
                 continue
-            jobs.append((n, d, cfg, out, q))
+            jobs.append((n, d, cfg, out))
         state.update(q=q, start=time.time(), running=True, total=len(jobs), done=0,
                      progress={j[0]: 0.0 for j in jobs})
         if skipped:
@@ -517,7 +660,7 @@ def run_gui():
             state.update(running=False, q=None)
             sum_lab.config(text=f"Không có cảnh mới cần tạo ({skipped} cảnh đã có video)")
             pct_lab.config(text="100%")
-            manager.shutdown()
+            pass
             return
         btn.config(state="disabled")
         write(f"Bắt đầu tạo {len(jobs)} video ({W}x{H}, {cfg['fps']}fps, {cfg['duration']}s)…")
@@ -525,24 +668,25 @@ def run_gui():
         def work():
             ok = 0
             try:
-                with ProcessPoolExecutor(max_workers=v_workers.get()) as ex:
-                    futs = {ex.submit(render_scene, j): j[0] for j in jobs}
-                    for f in as_completed(futs):
-                        name = futs[f]
-                        state["done"] += 1
-                        state["progress"][name] = 1.0
-                        try:
-                            _, path, extra = f.result()
-                            if path:
-                                ok += 1
-                                root.after(0, lambda n=name, e=extra: set_row(n, 1, f"Xong ✓ ({e})", "ok"))
-                                write(f"✓ {name} ({extra})")
-                            else:
-                                root.after(0, lambda n=name, e=extra: set_row(n, None, f"Lỗi: {e}", "err"))
-                                write(f"✗ {name}: {extra}")
-                        except Exception as e:
-                            root.after(0, lambda n=name, e=e: set_row(n, None, f"Lỗi: {e}", "err"))
-                            write(f"✗ {name}: {e}")
+                counts = {"ok": 0}
+
+                def done(job, path, extra, err):
+                    name = job[0]
+                    state["done"] += 1
+                    state["progress"][name] = 1.0
+                    if path:
+                        counts["ok"] += 1
+                        root.after(0, lambda n=name, e=extra: set_row(n, 1, f"Xong ✓ ({e})", "ok"))
+                        write(f"✓ {name} ({extra})")
+                    elif err == BUSY:
+                        root.after(0, lambda n=name: set_row(n, 1, "Nơi khác đang làm – bỏ qua", "skip"))
+                        write(f"– {name}: đang được chương trình khác làm, bỏ qua")
+                    else:
+                        root.after(0, lambda n=name, e=err: set_row(n, None, f"Lỗi: {e}", "err"))
+                        write(f"✗ {name}: {err}")
+
+                run_jobs(jobs, v_workers.get(), done, q=q)
+                ok = counts["ok"]
                 where = next(iter(out_dirs)) if len(out_dirs) == 1 else dst
                 write(f"XONG: {ok}/{len(jobs)} video → " + " | ".join(sorted(out_dirs)))
                 if ok and sys.platform == "win32" and os.path.isdir(where):
@@ -558,7 +702,7 @@ def run_gui():
                     btn.config(state="normal")
                     state["q"] = None
                     try:
-                        manager.shutdown()
+                        pass
                     except Exception:
                         pass
                 root.after(300, _end)
@@ -572,12 +716,37 @@ def run_gui():
     root.mainloop()
 
 
-def video_up_to_date(out, layers):
-    """Video đã có và mới hơn mọi lớp ảnh -> không cần tạo lại."""
+def video_ok(path):
+    """Giải mã thử 2 khung đầu: file dở dang / bị 2 chương trình ghi chồng sẽ báo lỗi."""
+    import subprocess
     try:
-        return os.path.exists(out) and os.path.getmtime(out) >= max(os.path.getmtime(p) for p in layers.values())
+        if os.path.getsize(path) < 2048:
+            return False
+        import imageio_ffmpeg
+        r = subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-v", "error", "-i", path, "-map", "0:v:0",
+                            "-frames:v", "2", "-f", "null", "-"], capture_output=True, timeout=60,
+                           creationflags=0x08000000 if sys.platform == "win32" else 0)  # không bật cửa sổ đen
+        return r.returncode == 0 and not r.stderr.strip()
+    except Exception:
+        return False
+
+
+def video_up_to_date(out, layers):
+    """Video đã có, mới hơn mọi lớp ảnh VÀ xem được -> không cần tạo lại."""
+    try:
+        newer = os.path.exists(out) and os.path.getmtime(out) >= max(os.path.getmtime(p) for p in layers.values())
     except OSError:
         return False
+    return newer and video_ok(out)
+
+
+def existing_ok(pairs):
+    """pairs: [(file video, lớp)] -> tập file video không cần làm lại (kiểm tra song song cho nhanh)."""
+    from concurrent.futures import ThreadPoolExecutor
+    pairs = list(pairs)
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        flags = list(ex.map(lambda p: video_up_to_date(*p), pairs))
+    return {out for (out, _), ok in zip(pairs, flags) if ok}
 
 
 CLI_HELP = """Parallax25D.exe --cli <thư mục ảnh> <thư mục xuất> [tùy chọn]
@@ -588,12 +757,34 @@ Mã thoát: 0 = mọi cảnh OK (kể cả bỏ qua), 1 = có cảnh lỗi, 2 = 
 """
 
 
-def _write_json(path, data):
+_json_lock = threading.Lock()
+
+
+def _write_json(path, data, attempts=10):
+    """Ghi nguyên khối (file tạm rồi đổi tên) để bên đọc không bao giờ thấy file dở.
+    Windows không cho thay file khi chương trình khác (AI MANAGER) đang mở đọc nó: thử lại vài lần,
+    vẫn bận thì bỏ lượt này (lượt sau ghi tiếp) — không bao giờ làm chương trình dừng. Trả về True nếu đã ghi."""
     import json
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=1)
-    os.replace(tmp, path)  # ghi nguyên khối: bên đọc không bao giờ thấy file dở
+    import time
+    with _json_lock:  # luồng tiến trình và luồng chính không ghi cùng lúc
+        tmp = f"{path}.{os.getpid()}.tmp"
+        try:
+            text = json.dumps(data, ensure_ascii=False, indent=1)
+        except Exception:
+            return False
+        for i in range(attempts):
+            try:
+                with open(tmp, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+                os.replace(tmp, path)
+                return True
+            except OSError:
+                time.sleep(0.05 * (i + 1))
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return False
 
 
 def parse_cli(argv):
@@ -660,36 +851,38 @@ def run_cli(argv):
           "updated_at": time.time(), "total": 0, "done": 0, "skipped": 0, "failed": 0, "percent": 0,
           "current": [], "scenes": {}, "settings": {k: v for k, v in cfg.items()}}
 
-    def flush():
+    def flush(final=False):
         st["updated_at"] = time.time()
         run = [s for s in st["scenes"].values() if s["state"] != "skipped"]  # mọi cảnh phải tạo, kể cả đang chờ
         total = len(run)
         st["percent"] = round(100 * sum(1 if s["state"] in ("done", "error") else s["percent"] / 100 for s in run) / total, 1) \
             if total else 100
         st["current"] = [n for n, s in st["scenes"].items() if s["state"] == "running" and s["percent"] > 0]
-        _write_json(status_path, st)
+        # bản ghi cuối (done/error) quan trọng: thử lâu hơn (~1 phút) để AI MANAGER chắc chắn đọc được
+        _write_json(status_path, st, attempts=60 if final else 10)
 
     if not os.path.isdir(src):
         st.update(state="error", error=f"Không thấy thư mục ảnh: {src}")
-        flush()
+        flush(final=True)
         return 2
     scenes = find_scenes(src)
     if not scenes:
-        st.update(state="error", error="Không tìm thấy cảnh nào (thư mục có ảnh lớp bg/mid/fg).")
-        flush()
+        st.update(state="error", error="Không tìm thấy cảnh nào đã tách lớp (thư mục có 01_bg / 02_mid / 03_fg).")
+        flush(final=True)
         return 2
 
-    manager = mp.Manager()
-    q = manager.Queue()
+    cfg["_planned_at"] = time.time()
+    q = mp.Queue()
     jobs = []
-    for n, d in scenes:
-        out = video_path(dst, n)
-        if not a.rerun and video_up_to_date(out, d):
+    planned = [(n, d, video_path(dst, n)) for n, d in scenes]
+    good = set() if a.rerun else existing_ok((out, d) for _, d, out in planned)
+    for n, d, out in planned:
+        if out in good:
             st["scenes"][n] = {"state": "skipped", "percent": 100, "video": out}
             st["skipped"] += 1
         else:
             st["scenes"][n] = {"state": "waiting", "percent": 0, "video": out}
-            jobs.append((n, d, cfg, out, q))
+            jobs.append((n, d, cfg, out))
     st["total"] = len(jobs)
     flush()
 
@@ -717,41 +910,60 @@ def run_cli(argv):
     t.start()
     lines = []
     try:
-        with ProcessPoolExecutor(max_workers=max(1, a.workers)) as ex:
-            futs = {ex.submit(render_scene, j): j[0] for j in jobs}
-            for f in as_completed(futs):
-                name = futs[f]
-                s = st["scenes"][name]
-                try:
-                    _, path, extra = f.result()
-                    if path:
-                        s.update(state="done", percent=100, motion=extra)
-                    else:
-                        s.update(state="error", error=str(extra))
-                except Exception as exc:
-                    s.update(state="error", error=str(exc))
-                st["done"] += s["state"] == "done"
-                st["failed"] += s["state"] == "error"
-                lines.append(f"{s['state'].upper():5} {name} -> {s.get('video')} {s.get('motion') or s.get('error') or ''}")
-                flush()
+        def done(job, path, extra, err):
+            name = job[0]
+            s = st["scenes"][name]
+            if path:
+                s.update(state="done", percent=100, motion=extra)
+            elif err == BUSY:  # chương trình khác đang làm cảnh này: không phải lỗi
+                s.update(state="skipped", percent=100, note=err)
+                st["skipped"] += 1
+                st["total"] -= 1
+            else:
+                s.update(state="error", error=err)
+            st["done"] += s["state"] == "done"
+            st["failed"] += s["state"] == "error"
+            lines.append(f"{s['state'].upper():5} {name} -> {s.get('video')} {s.get('motion') or s.get('error') or ''}")
+            flush()
+
+        run_jobs(jobs, a.workers, done, q=q)
     finally:
         stop.set()
         t.join(2)
         try:
-            manager.shutdown()
+            pass
         except Exception:
             pass
     st["state"] = "done" if not st["failed"] else "error"
     if st["failed"]:
         st["error"] = f"{st['failed']} cảnh lỗi"
-    flush()
-    with open(os.path.join(dst, "log.txt"), "w", encoding="utf-8") as fh:
-        fh.write("\n".join(lines) + f"\nDONE {st['done']}/{st['total']} · bỏ qua {st['skipped']} · lỗi {st['failed']}\n")
+    flush(final=True)
+    try:
+        with open(os.path.join(dst, "log.txt"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + f"\nDONE {st['done']}/{st['total']} · bỏ qua {st['skipped']} · lỗi {st['failed']}\n")
+    except OSError:
+        pass
     return 1 if st["failed"] else 0
+
+
+def run_cli_safe(argv):
+    """Chế độ dòng lệnh không bao giờ bật hộp thoại lỗi (exe --windowed sẽ treo AI MANAGER chờ người bấm Close):
+    lỗi bất ngờ được ghi vào file trạng thái, mã thoát 3."""
+    try:
+        return run_cli(argv)
+    except Exception as exc:
+        import time
+        status = next((argv[i + 1] for i, x in enumerate(argv[:-1]) if x == "--status"), None)
+        pos = [x for x in argv if not x.startswith("-")]
+        status = status or (os.path.join(pos[1], "parallax_status.json") if len(pos) >= 2 else None)
+        if status:
+            _write_json(status, {"state": "error", "error": f"Parallax25D lỗi: {exc!r}"[:500],
+                                 "pid": os.getpid(), "updated_at": time.time()}, attempts=60)
+        return 3
 
 
 if __name__ == "__main__":
     mp.freeze_support()
     if len(sys.argv) >= 2 and sys.argv[1] == "--cli":
-        sys.exit(run_cli(sys.argv[2:]))
+        sys.exit(run_cli_safe(sys.argv[2:]))
     run_gui()
