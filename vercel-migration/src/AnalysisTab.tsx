@@ -1,43 +1,300 @@
-import {useEffect,useRef,useState} from 'react';
-import {loadAnalysis,saveAnalysis,type AnalysisState,type AnalysisPending} from './analysisWorkspace';
-import {loadTranscriptWorkspace,saveTranscriptWorkspace} from './transcriptWorkspace';
-import {makeAnalysisPrompt,type Stage} from './analysisPrompts';
-import {analysisSteps,initialStep,stepForMode,type AnalysisStep} from './analysisFlow';
+import { useEffect, useRef, useState } from 'react';
+import { emptyAnalysis, loadAnalysis } from './analysisWorkspace';
+import { loadTranscriptWorkspace, assembleRewrittenScript } from './transcriptWorkspace';
+import { acceptResponse, complete, criteriaWithSource, emptyRun, promptFor, scriptOf, threshold, type Mode, type Run } from './automaticAnalysis';
 import './analysisTab.css';
-import ReviewComparison from './ReviewComparison';
-import {getScopeReview,reviewPromptState} from './reviewScope';
-type Props={projectId:string;onTransfer:(text:string)=>boolean};
-const labels:Record<Stage,string>={research:'Nghiên cứu',directions:'Gợi ý hướng video',routes:'Hai tuyến nội dung',outline:'Dàn ý',write:'Viết phần',review:'Đối chiếu'};
-const target=(s:AnalysisState,p:AnalysisPending)=>p.stage==='review'&&p.reviewScope&&p.reviewScope!=='all'?(s.partReviews?.[p.reviewScope]?.raw||''):p.stage==='write'?s.parts.find(x=>x.id===p.partId)?.text||'':p.stage==='directions'?s.direction:s[p.stage];
-export default function AnalysisTab({projectId,onTransfer}:Props){
- const [state,setState]=useState(()=>loadAnalysis(projectId));const latest=useRef(state);latest.current=state;
- const [style,setStyle]=useState(()=>loadTranscriptWorkspace(projectId).stylePrompt);const [error,setError]=useState('');const [progress,setProgress]=useState('');const [partTitle,setPartTitle]=useState('');const [scope,setScope]=useState('all');const [step,setStepState]=useState<AnalysisStep>(()=>initialStep(localStorage.getItem('vis-analysis-step-'+projectId)));const setStep=(next:AnalysisStep)=>{setStepState(next);try{localStorage.setItem('vis-analysis-step-'+projectId,next)}catch{}};
- const update=(fn:(s:AnalysisState)=>AnalysisState)=>{try{const next=fn(latest.current);saveAnalysis(projectId,next);latest.current=next;setState(next);return true}catch{setError('Không lưu được. Kiểm tra dung lượng lưu trữ của trình duyệt.');return false}};
- const patch=(value:Partial<AnalysisState>)=>{update(s=>({...s,...value,status:'draft'}))};
- const updateStyle=(value:string)=>{try{const ws=loadTranscriptWorkspace(projectId);saveTranscriptWorkspace(projectId,{...ws,stylePrompt:value});localStorage.setItem('vis-transcript-style',value);setStyle(value)}catch{setError('Không lưu được phong cách viết.')}};
- useEffect(()=>{const receive=(e:MessageEvent)=>{if(e.source!==window||e.data?.source!=='vis-extension'||e.data.type!=='studio-transcript-ai-result')return;const p=latest.current.pending,d=e.data;if(!p||d.jobId!==p.id||d.kind!=='rewrite'||d.sectionId!==p.partId)return;
-  if(d.state==='accepted'||d.state==='sent'){setProgress(d.state==='sent'?'ChatGPT đã nhận lệnh, đang chờ kết quả.':'Extension đã nhận lệnh.');return}
-  if(d.state==='error'){update(s=>({...s,pending:null,parts:s.parts.map(x=>x.id===p.partId?{...x,status:'error'}:x)}));setError(String(d.message||'Không gửi được lệnh.'));return}
-  if(d.state!=='completed')return;const text=String(d.text||'').trim();if(!text){setError('ChatGPT trả về nội dung trống.');return}
-  const saved=update(s=>{const changed=target(s,p)!==p.inputSnapshot;const next={...s,pending:null,inbox:changed?text:s.inbox};if(!changed){if(p.stage==='write')next.parts=s.parts.map(x=>x.id===p.partId?{...x,text,status:'done'}:x);else if(p.stage==='directions')next.direction=text;else if(p.stage==='review'){if(p.reviewScope&&p.reviewScope!=='all')next.partReviews={...s.partReviews,[p.reviewScope]:{raw:text,snapshot:p.scriptSnapshot||''}};else {next.review=text;next.reviewScript=p.scriptSnapshot??s.script}}else next[p.stage]=text;}else if(p.partId)next.parts=s.parts.map(x=>x.id===p.partId?{...x,status:'stopped'}:x);return next});
-  if(saved){window.postMessage({source:'vis-web',type:'studio-transcript-ack',jobId:p.id},'*');setProgress('Đã nhận kết quả.');if(target(latest.current,p)!==text&&latest.current.inbox===text)setError('Nội dung đã thay đổi trong lúc chạy. Kết quả được giữ ở ô kết quả chờ, không ghi đè.')}
- };
- window.addEventListener('message',receive);const recover=()=>{const p=latest.current.pending;if(!p)return;if(p.expires<Date.now()){update(s=>({...s,pending:null,parts:s.parts.map(x=>x.id===p.partId?{...x,status:'error'}:x)}));setError('Tác vụ quá thời gian chờ. Kiểm tra ChatGPT rồi thử lại.');return}window.postMessage({source:'vis-web',type:'studio-capture-result',jobId:p.id},'*')};recover();const timer=window.setInterval(recover,8000);return()=>{window.removeEventListener('message',receive);clearInterval(timer)}},[projectId]);
- const run=(stage:Stage,partId?:string)=>{if(latest.current.pending){setError('Đang có tác vụ. Hãy chờ hoặc dừng.');return}const s=latest.current;if(!s.input.trim()&&stage!=='review'){setError('Hãy nhập nội dung đầu vào.');return}if(stage==='review'&&!getScopeReview(s,scope).text.trim()){setError('Chưa có kịch bản để đối chiếu.');return}const section=partId?s.parts.find(x=>x.id===partId):undefined;if(partId&&!section)return;const p:AnalysisPending={id:'transcript-'+crypto.randomUUID(),stage,partId,inputSnapshot:'',scriptSnapshot:stage==='review'?getScopeReview(s,scope).text:s.script,reviewScope:stage==='review'?scope:undefined,expires:Date.now()+600000};p.inputSnapshot=target(s,p);if(p.inputSnapshot&&!confirm(`Kết quả ${labels[stage]} hiện có sẽ được thay khi tác vụ hoàn tất. Tiếp tục?`))return;const prompt=makeAnalysisPrompt(stage,stage==='review'?reviewPromptState(s,scope):s,style,section?.title)+(stage==='review'&&scope!=='all'?'\nĐÂY CHỈ LÀ MỘT PHẦN. Không yêu cầu phần này có mở đầu hay kết thúc toàn video. Tiêu chí toàn video không có đủ bối cảnh phải ghi Chưa đủ dữ liệu. Tập trung tính liên tục, nội dung mới, tương phản và chuyển tiếp.':'');if(!update(v=>({...v,pending:p,parts:v.parts.map(x=>x.id===partId?{...x,status:'processing'}:x)})))return;setError('');setProgress('Đang gửi tới extension; nếu chưa kết nối, hãy kiểm tra ChatGPT.');window.postMessage({source:'vis-web',type:'studio-transcript-ai',pairCode:projectId,command:{id:p.id,type:'transcript_rewrite',kind:'rewrite',sectionId:partId,prompt}},'*')};
- const stop=()=>{const p=latest.current.pending;if(!p)return;update(s=>({...s,pending:null,parts:s.parts.map(x=>x.id===p.partId?{...x,status:'stopped'}:x)}));window.postMessage({source:'vis-web',type:'studio-transcript-ack',jobId:p.id},'*');window.postMessage({source:'vis-web',type:'studio-stop'},'*');setProgress('Đã yêu cầu dừng. Kết quả đến muộn sẽ không ghi đè.')};
- const getTranscript=()=>{const text=loadTranscriptWorkspace(projectId).transcript?.text||'';if(!text){setError('Chưa có transcript trong dự án. Hãy lấy transcript ở tab Get Transcript.');return}if((state.input||state.script)&&!confirm('Thay nội dung đầu vào và bản thảo hiện có?'))return;patch({source:'transcript',input:text,script:text})};
- const transfer=()=>{if(onTransfer(state.script))update(s=>({...s,status:'transferred'}))};
- const stepIndex=analysisSteps.findIndex(x=>x.id===step);
- const useInput=()=>{if(!state.input.trim()){setError('Hãy nhập nội dung trước.');return}if(state.script&&state.script!==state.input&&!confirm('Thay bản thảo đang chỉnh sửa bằng nội dung đầu vào?'))return;patch({script:state.input});setError('');setStep(stepForMode(state.mode))};
- const field=(stage:'research'|'directions'|'routes'|'outline')=>{const key=stage==='directions'?'direction':stage;return <section className="flow-result" key={stage}><div className="flow-result-head"><b>{labels[stage]}</b><button className="outline" disabled={!!state.pending} onClick={()=>run(stage)}>Yêu cầu ChatGPT</button></div><textarea aria-label={labels[stage]} value={state[key]} onChange={e=>patch({[key]:e.target.value})} placeholder="Kết quả xuất hiện ở đây. Bạn có thể chỉnh sửa hoặc tự nhập."/></section>};
- return <section className="analysis-foundation analysis-flow"><header className="flow-header"><div><h1>Phân tích nội dung</h1><p>Chọn nguồn, chuẩn bị câu chuyện, viết và đối chiếu trước khi phân cảnh.</p></div><button className="flow-transfer" disabled={!state.script.trim()} onClick={transfer}>Chuyển sang Phân tách →</button></header>
- <nav className="flow-steps" aria-label="Các bước phân tích">{analysisSteps.map((item,i)=><button type="button" key={item.id} aria-current={step===item.id?'step':undefined} className={step===item.id?'active':''} onClick={()=>setStep(item.id)}><span>{i+1}</span>{item.label}</button>)}</nav>
- <div className="analysis-progress">{state.pending&&<button onClick={stop}>Dừng tác vụ</button>}{(state.pending||progress)&&<span role="status">{state.pending?`${labels[state.pending.stage]}: ${progress||'Đang chờ kết quả; có thể đồng bộ lại.'}`:progress}</span>}{state.pending&&<button onClick={()=>window.postMessage({source:'vis-web',type:'studio-capture-result',jobId:state.pending?.id},'*')}>Đồng bộ kết quả</button>}{error&&<span role="alert">{error}</span>}</div>
- {step==='source'&&<section className="flow-panel"><header><h2>1. Chọn nguồn nội dung</h2><p>Bắt đầu từ transcript, kịch bản sẵn có hoặc một chủ đề mới.</p></header><div className="flow-form-grid"><label>Nguồn nội dung<select value={state.source} onChange={e=>patch({source:e.target.value as AnalysisState['source']})}><option value="transcript">Transcript từ Get Transcript</option><option value="script">Kịch bản tự nhập</option><option value="topic">Chủ đề mới</option></select></label><label>Độ dài dự kiến<input value={state.duration} onChange={e=>patch({duration:e.target.value})} placeholder="Ví dụ: 15 phút"/></label></div>{state.source==='transcript'&&<button className="outline" onClick={getTranscript}>Lấy transcript của dự án</button>}<label>{state.source==='topic'?'Chủ đề':'Nội dung đầu vào'}<textarea className="flow-input" value={state.input} onChange={e=>patch({input:e.target.value})} placeholder={state.source==='topic'?'Nhập chủ đề bạn muốn làm video':'Dán nội dung hoặc lấy transcript từ dự án'}/></label>{state.source==='script'&&<><label>Cách xử lý<select value={state.mode} onChange={e=>patch({mode:e.target.value as AnalysisState['mode']})}><option value="keep">Giữ nguyên để chuyển sang Phân tách</option><option value="review">Kiểm tra, không tự sửa</option><option value="rewrite">Viết lại hoặc xây dựng lại</option></select></label><button className="outline" onClick={useInput}>Sử dụng kịch bản này</button></>}<details className="flow-extra"><summary>Yêu cầu bổ sung và phong cách viết</summary><label>Yêu cầu bổ sung<textarea value={state.requirements} onChange={e=>patch({requirements:e.target.value})}/></label><label>Phong cách viết cá nhân<textarea value={style} onChange={e=>updateStyle(e.target.value)}/></label></details></section>}
- {step==='research'&&<section className="flow-panel"><header><h2>2. Nghiên cứu và chọn hướng video</h2><p>ChatGPT có thể không truy cập được web; hãy kiểm tra nguồn trước khi sử dụng.</p></header><div className="flow-two">{field('research')}{field('directions')}</div><details className="flow-extra"><summary>Chốt tiêu đề và ý tưởng ảnh bìa</summary><div className="flow-form-grid"><label>Tiêu đề đã chọn<input value={state.title} onChange={e=>patch({title:e.target.value})}/></label><label>Ý tưởng ảnh bìa<textarea value={state.cover} onChange={e=>patch({cover:e.target.value})}/></label><label>Ý tưởng cảnh đầu<textarea value={state.openingScene} onChange={e=>patch({openingScene:e.target.value})}/></label></div></details></section>}
- {step==='outline'&&<section className="flow-panel"><header><h2>3. Hai tuyến và dàn ý</h2><p>Chuẩn bị các tuyến nội dung và cấu trúc toàn video trước khi viết.</p></header><div className="flow-two">{field('routes')}{field('outline')}</div></section>}
- {step==='write'&&<section className="flow-panel"><header><h2>4. Viết kịch bản</h2><p>Viết từng phần theo dàn ý hoặc chỉnh sửa trực tiếp bản thảo.</p></header><div className="flow-two"><section className="flow-result"><div className="flow-result-head"><b>Các phần</b><span>{state.parts.filter(x=>x.status==='done').length}/{state.parts.length} hoàn tất</span></div><div className="flow-add"><input value={partTitle} onChange={e=>setPartTitle(e.target.value)} placeholder="Tên hoặc yêu cầu của phần"/><button className="outline" onClick={()=>{if(!partTitle.trim())return;patch({parts:[...state.parts,{id:crypto.randomUUID(),title:partTitle,text:'',status:'waiting'}]});setPartTitle('')}}>Thêm phần</button></div><div className="flow-parts">{state.parts.map((p,i)=><details className="flow-part" key={p.id}><summary>Phần {i+1}: {p.title} · {({waiting:'Chờ',processing:'Đang chạy',done:'Hoàn tất',error:'Lỗi',stopped:'Đã dừng'} as const)[p.status]}</summary><button disabled={!!state.pending} onClick={()=>run('write',p.id)}>Viết / viết lại</button><textarea aria-label={'Nội dung phần '+(i+1)} value={p.text} onChange={e=>patch({parts:state.parts.map(x=>x.id===p.id?{...x,text:e.target.value}:x)})}/></details>)}</div><button className="outline" onClick={()=>{const joined=state.parts.map(x=>x.text.trim()).filter(Boolean).join('\n\n');if(!joined)return;if(state.script&&!confirm('Thay bản thảo hiện tại bằng các phần đã viết?'))return;patch({script:joined})}}>Ghép các phần vào bản thảo</button></section><section className="flow-result"><b>Kịch bản đang chỉnh sửa</b><textarea className="flow-draft" aria-label="Kịch bản đang chỉnh sửa" value={state.script} onChange={e=>patch({script:e.target.value})}/><div className="flow-actions"><button className="outline" onClick={()=>navigator.clipboard?.writeText(state.script)}>Sao chép</button><button className="outline" onClick={()=>{const url=URL.createObjectURL(new Blob([state.script],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='kich-ban.txt';a.click();URL.revokeObjectURL(url)}}>Tải .txt</button></div></section></div></section>}
- {step==='review'&&<ReviewComparison state={state} scope={scope} setScope={setScope} busy={!!state.pending} onReview={()=>run('review')} onScript={text=>scope==='all'?patch({script:text}):patch({parts:state.parts.map(p=>p.id===scope?{...p,text}:p)})}/>}
- {state.inbox&&<details className="flow-extra"><summary>Kết quả chờ — không tự ghi đè</summary><textarea value={state.inbox} onChange={e=>patch({inbox:e.target.value})}/></details>}
- <footer className="flow-footer"><button className="outline" disabled={stepIndex<=0} onClick={()=>setStep(analysisSteps[stepIndex-1].id)}>← Bước trước</button><span>Bước {stepIndex+1} / {analysisSteps.length}</span>{stepIndex<analysisSteps.length-1?<button className="flow-next" onClick={()=>setStep(analysisSteps[stepIndex+1].id)}>Bước tiếp →</button>:<button className="flow-next" disabled={!state.script.trim()} onClick={transfer}>Chuyển sang Phân tách →</button>}</footer></section>
+
+type Props = {
+  projectId: string; projectName: string; connected: boolean; otherWork: boolean; bridgeJob?: string;
+  imported?: { text: string; id: string };
+  onTransfer: (draft: ReturnType<typeof emptyAnalysis>, automatic: boolean) => string;
+};
+
+const send = (type: string, data = {}) => window.postMessage({ source: 'vis-web', type, ...data }, location.origin);
+const labels: Record<Mode, string> = {
+  idle: 'Sẵn sàng', running: 'Đang xử lý', paused: 'Đã tạm dừng', stopped: 'Đã dừng', error: 'Gặp lỗi',
+  limited: 'Đã hết lượt sửa · vẫn còn tiêu chuẩn dưới 8/10',
+  missing: 'Các tiêu chuẩn chấm được đã đạt · còn tiêu chuẩn chưa đủ dữ liệu',
+  passed: 'Tất cả tiêu chuẩn đã đạt', transferred: 'Đã chuyển bản thảo sang Phân tách',
+};
+
+function progress(run: Run) {
+  if (run.mode !== 'running') return labels[run.mode];
+  if (run.phase === 'plan') return 'Đang đọc toàn bộ nguồn và lập cấu trúc';
+  if (run.phase === 'review') return 'Đang đối chiếu toàn bộ kịch bản';
+  const part = `phần ${run.index + 1}/${run.parts.length} · ${run.parts[run.index]?.title}`;
+  return run.phase === 'write' ? 'Đang viết ' + part : `Đang sửa lần ${run.rounds + 1}/${run.limit} · ${part}`;
+}
+
+export default function AnalysisTab({ projectId, projectName, connected, otherWork, bridgeJob, imported, onTransfer }: Props) {
+  const key = 'vis-automatic-analysis-v2-' + projectId;
+  const read = (): Run => {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) return JSON.parse(raw);
+      const legacy = loadAnalysis(projectId);
+      return { ...emptyRun(), input: legacy.input || legacy.script || '' };
+    } catch { return emptyRun(); }
+  };
+  const [run, setRun] = useState(read);
+  const [input, setInputDraft] = useState(run.input);
+  const [error, setError] = useState('');
+  useEffect(() => setInputDraft(run.input), [run.input]);
+  const [scope, setScope] = useState<number | null>(null);
+  const [edited, setEdited] = useState<string | null>(null);
+  const live = useRef({ connected, otherWork, bridgeJob, onTransfer });
+  live.current = { connected, otherWork, bridgeJob, onTransfer };
+
+  const save = (next: Run) => {
+    localStorage.setItem(key, JSON.stringify(next));
+    setRun(next);
+    setError('');
+  };
+  const change = (action: (current: Run) => void) => {
+    if (!navigator.locks) { setError('Hãy dùng Chrome hoặc Edge qua HTTPS để chạy một tác vụ tại một thời điểm.'); return; }
+    void navigator.locks.request(key, () => action(read())).catch(caught => setError(caught instanceof Error ? caught.message : 'Không lưu được trạng thái.'));
+  };
+  const stop = (current: Run, localOnly = false) => {
+    if (!current.pending && !['running', 'paused'].includes(current.mode)) return;
+    save({ ...current, mode: 'stopped', pending: undefined, notice: 'Các phần đã hoàn thành được giữ lại.' });
+    if (!localOnly && current.pending) {
+      if (!live.current.otherWork && (!live.current.bridgeJob || live.current.bridgeJob === current.pending.id)) {
+        send('studio-stop', { cancelledJobIds: [current.pending.id] });
+      }
+      send('studio-transcript-ack', { jobId: current.pending.id });
+    }
+  };
+
+  useEffect(() => {
+    const sync = (event: StorageEvent) => { if (event.key === key) setRun(read()); };
+    const receive = (event: MessageEvent) => {
+      if (event.source !== window) return;
+      const data = event.data;
+      if (data?.source === 'vis-web' && data.type === 'studio-stop-all-local') { change(current => stop(current, true)); return; }
+      if (data?.source !== 'vis-extension' || data.type !== 'studio-transcript-ai-result' || data.kind !== 'rewrite' || data.sectionId !== 'automatic-analysis') return;
+      change(current => {
+        if (current.pending?.id !== data.jobId) return;
+        if (['accepted', 'sent'].includes(data.state)) {
+          save({ ...current, pending: { id: data.jobId, deadline: Date.now() + 600_000 } });
+          return;
+        }
+        if (!['completed', 'error'].includes(data.state)) return;
+        let next: Run;
+        try {
+          if (data.state === 'error') throw new Error(String(data.message || data.text || 'ChatGPT không xử lý được tác vụ.'));
+          next = acceptResponse(current, data.text);
+        } catch (caught) {
+          next = { ...current, pending: undefined, mode: 'error', notice: caught instanceof Error ? caught.message : 'Phản hồi không hợp lệ.' };
+        }
+        save(next);
+        send('studio-transcript-ack', { jobId: data.jobId });
+      });
+    };
+    const recover = () => change(current => {
+      if (!current.pending) return;
+      if (current.mode === 'running' && current.pending.deadline <= Date.now()) {
+        save({ ...current, mode: 'error', notice: 'Quá thời gian chờ. Tiếp tục để đồng bộ lệnh hiện tại hoặc Dừng để gửi lại công đoạn này.' });
+      }
+      if (live.current.connected) send('studio-capture-result', { jobId: current.pending.id });
+    });
+    window.addEventListener('message', receive);
+    window.addEventListener('storage', sync);
+    const timer = window.setInterval(recover, 8000);
+    return () => { clearInterval(timer); window.removeEventListener('message', receive); window.removeEventListener('storage', sync); };
+  }, [key]);
+
+  const previouslyConnected = useRef(connected);
+  useEffect(() => {
+    if (previouslyConnected.current && !connected) change(current => {
+      if (current.mode === 'running') save({ ...current, mode: 'error', notice: 'Mất kết nối ChatGPT. Kết nối lại và bấm Tiếp tục.' });
+    });
+    previouslyConnected.current = connected;
+  }, [connected]);
+
+  const transfer = (current: Run, automatic: boolean) => {
+    if (!complete(current)) return;
+    const plan = current.plan;
+    const handoff = {
+      ...emptyAnalysis(), input: current.source, script: scriptOf(current), status: 'transferred' as const,
+      title: plan?.title || '', cover: plan?.cover || '', openingScene: plan?.opening || '',
+      direction: [plan?.question, plan?.promise].filter(Boolean).join('\n'),
+      routes: plan?.tracks.join('\n') || '', research: plan?.sourceNote || '',
+      outline: [plan?.transitions, plan?.payoff, plan?.ending].filter(Boolean).join('\n'),
+      parts: current.parts.map((part, i) => ({ id: String(i + 1), title: part.title, text: part.text, status: 'done' as const })),
+    };
+    const notice = live.current.onTransfer(handoff, automatic);
+    save({ ...current, mode: 'transferred', notice });
+  };
+
+  useEffect(() => {
+    if (run.mode === 'passed') { change(current => { if (current.mode === 'passed') transfer(current, true); }); return; }
+    if (run.mode !== 'running' || run.pending || !connected || otherWork) return;
+    const timer = window.setTimeout(() => change(current => {
+      if (current.mode !== 'running' || current.pending || !live.current.connected || live.current.otherWork) return;
+      const legacyPending = loadAnalysis(projectId).pending;
+      const transcriptPending = JSON.parse(localStorage.getItem('vis-transcript-pending-' + projectId) || 'null');
+      if (transcriptPending?.expires > Date.now() || (legacyPending && legacyPending.expires > Date.now())) {
+        save({ ...current, mode: 'error', notice: 'Get Transcript hoặc một tác vụ Phân tích cũ đang chờ. Hãy hoàn tất tác vụ đó rồi tiếp tục.' });
+        return;
+      }
+      const id = 'transcript-' + crypto.randomUUID();
+      const prompt = promptFor(current);
+      save({ ...current, pending: { id, deadline: Date.now() + 25_000 }, notice: '' });
+      send('studio-transcript-ai', { pairCode: projectId, command: { id, type: 'transcript_rewrite', kind: 'rewrite', sectionId: 'automatic-analysis', prompt } });
+    }), 400);
+    return () => clearTimeout(timer);
+  }, [run, connected, otherWork, projectId]);
+
+  useEffect(() => {
+    if (!imported) return;
+    change(current => {
+      if (current.mode === 'running' || current.pending) { setError('Dừng tác vụ trước khi đổi nguồn.'); return; }
+      if (current.input && current.input !== imported.text && !window.confirm('Dùng nội dung mới làm đầu vào cho lượt tiếp theo?')) return;
+      save({ ...current, input: imported.text });
+    });
+  }, [imported?.id]);
+
+  const transcript = () => {
+    const workspace = loadTranscriptWorkspace(projectId);
+    return { style: workspace.stylePrompt, raw: workspace.transcript?.text || '',
+      rewritten: workspace.sections.length && workspace.sections.every(part => part.status === 'done' && part.rewrittenText.trim()) ? assembleRewrittenScript(workspace.sections) : '' };
+  };
+  const start = () => change(current => {
+    if (current.mode === 'running' || current.pending) return;
+    const { raw, rewritten, style } = transcript();
+    const source = current.input.trim() || raw.trim() || rewritten.trim();
+    if (!source) { setError('Hãy lấy transcript hoặc dán kịch bản.'); return; }
+    if (!live.current.connected || live.current.otherWork) { setError('Kết nối ChatGPT và chờ tác vụ hiện tại hoàn tất.'); return; }
+    if (current.parts.some(part => part.text)) {
+      if (!window.confirm('Chạy lại từ đầu? Kịch bản và báo cáo hiện tại sẽ được lưu trong lịch sử.')) return;
+      localStorage.setItem(key + '-history-' + crypto.randomUUID(), JSON.stringify(current));
+      localStorage.setItem(key + '-previous', JSON.stringify(current));
+    }
+    save({ ...emptyRun(), input: current.input, source, style, limit: current.limit, mode: 'running' });
+    setScope(null);
+    setEdited(null);
+  });
+
+  const resume = () => change(current => {
+    if (!['paused', 'stopped', 'error', 'limited'].includes(current.mode)) return;
+    if (!live.current.connected) { setError('Kết nối lại đúng hội thoại ChatGPT để tiếp tục.'); return; }
+    if (current.phase === 'repair' && current.mode === 'limited' && current.limit <= current.rounds) {
+      setError('Tăng giới hạn lượt sửa hoặc chỉnh kịch bản rồi kiểm tra lại.'); return;
+    }
+    save({ ...current, mode: 'running', notice: '', pending: current.pending && { ...current.pending, deadline: Date.now() + 600_000 } });
+    if (current.pending) send('studio-capture-result', { jobId: current.pending.id });
+  });
+
+  const working = run.mode === 'running' || !!run.pending;
+  const all = scriptOf(run);
+  const viewed = scope === null ? all : run.parts[scope]?.text || '';
+  const editIndex = scope ?? (run.parts.length === 1 ? 0 : null);
+  const setInput = (value: string) => {
+    setInputDraft(value);
+    change(current => {
+      if (current.mode !== 'running' && !current.pending) save({ ...current, input: value });
+    });
+  };
+  const importSource = (variant: 'raw' | 'rewritten') => {
+    const text = transcript()[variant];
+    if (text) setInput(text);
+    else setError(variant === 'raw' ? 'Dự án này chưa có transcript.' : 'Get Transcript chưa có kịch bản viết lại hoàn chỉnh.');
+  };
+  const download = () => {
+    const url = URL.createObjectURL(new Blob([all], { type: 'text/plain;charset=utf-8' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'kich-ban-hoan-chinh.txt';
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const canTransfer = complete(run) && !working && ['missing', 'passed', 'limited'].includes(run.mode);
+
+  return <section className="analysis-foundation auto-analysis">
+    <header className="flow-panel">
+      <h1>{projectName} · Phân tích kịch bản</h1>
+      <label>Nguồn kịch bản <textarea value={input} disabled={working} onChange={event => setInput(event.target.value)}
+        placeholder="Dán kịch bản hoặc để trống để dùng transcript của dự án"/></label>
+      <div className="flow-actions">
+        <button className="outline" disabled={working} onClick={() => importSource('raw')}>Lấy transcript</button>
+        <button className="outline" disabled={working} onClick={() => importSource('rewritten')}>Lấy bản viết lại từ Get Transcript</button>
+        <label>Giới hạn lượt sửa <select disabled={working} value={run.limit} onChange={event => {
+          const limit = Number(event.target.value); change(current => { if (!current.pending && current.mode !== 'running') save({ ...current, limit }); });
+        }}>{Array.from({ length: 11 }, (_, i) => <option key={i}>{i}</option>)}</select></label>
+      </div>
+      <div className="flow-actions">
+        <button className="analyze-all" disabled={working} onClick={start}>Viết lại &amp; kiểm tra tự động</button>
+        <button className="outline" disabled={run.mode !== 'running'} onClick={() => change(current => {
+          if (current.mode === 'running') save({ ...current, mode: 'paused', notice: 'Nếu đang nhận phản hồi, Studio sẽ lưu phần đó trước khi tạm dừng.' });
+        })}>Tạm dừng</button>
+        <button className="outline" disabled={!['paused', 'stopped', 'error', 'limited'].includes(run.mode)} onClick={resume}>Tiếp tục</button>
+        <button className="danger" disabled={!working && run.mode !== 'paused'} onClick={() => change(current => stop(current))}>Dừng</button>
+      </div>
+      <p className="notice" role="status">{progress(run)} · Đã sửa {run.rounds}/{run.limit} lượt{run.notice && ' · ' + run.notice}</p>
+      {error && <p role="alert">{error}</p>}
+    </header>
+    <section className="flow-panel">
+      <div className="flow-actions">
+        <h2>Kịch bản và đối chiếu</h2>
+        <label>Phạm vi <select value={scope ?? 'all'} onChange={event => { setScope(event.target.value === 'all' ? null : Number(event.target.value)); setEdited(null); }}>
+          <option value="all">Toàn video</option>{run.parts.map((part, i) => <option key={i} value={i}>Phần {i + 1} · {part.title}</option>)}</select></label>
+        {canTransfer && <button className="outline" onClick={() => change(current => {
+          if (current.mode === 'limited' && !window.confirm('Một số tiêu chuẩn còn dưới 8/10. Chuyển bản hiện tại sang Phân tách?')) return;
+          if (['missing', 'passed', 'limited'].includes(current.mode)) transfer(current, false);
+        })}>Chuyển thủ công sang Phân tách</button>}
+      </div>
+      <p>Điểm tham khảo dựa trên kịch bản. Các mục cần ảnh bìa hoặc video thực tế được đánh dấu riêng.</p>
+      {run.rows.length > 0 && (run.phase === 'repair' || run.phase === 'review') && ['running', 'paused', 'stopped', 'error'].includes(run.mode)
+        && <p>Đang hiển thị báo cáo của lần chấm trước. Studio sẽ cập nhật sau khi chấm lại bản sửa.</p>}
+      <div className="auto-output">
+      {run.plan ? <details><summary>Đề xuất về tiêu đề, hai hoặc ba tuyến và cấu trúc</summary>
+        <p>{run.plan.title} · {run.plan.question}</p><ul>{run.plan.tracks.map(track => <li key={track}>{track}</li>)}</ul>
+        <p>{[run.plan.promise, run.plan.opening, run.plan.transitions, run.plan.payoff, run.plan.ending, run.plan.cover, run.plan.sourceNote].join(' · ')}</p>
+      </details> : <p>Kế hoạch tự động sẽ xuất hiện sau khi Studio đọc nguồn.</p>}
+      <details open className="auto-script"><summary>{scope === null ? 'Kịch bản hoàn chỉnh' : 'Kịch bản phần ' + (scope + 1)}</summary>
+        <textarea aria-label="Kịch bản mới" readOnly={edited === null} value={edited ?? viewed} onChange={event => setEdited(event.target.value)}/>
+        <div className="flow-actions">
+          <button className="outline" disabled={!all} onClick={() => void navigator.clipboard.writeText(all).catch(() => setError('Không sao chép được kịch bản.'))}>Sao chép toàn bộ</button>
+          <button className="outline" disabled={!all} onClick={download}>Tải toàn bộ (.txt)</button>
+          {edited === null ? <button className="outline" disabled={working || editIndex === null || !viewed} onClick={() => setEdited(viewed)}>Chỉnh sửa phần đang xem</button>
+          : <><button className="outline" disabled={!edited.trim()} onClick={() => change(current => {
+            if (editIndex === null || current.pending || current.mode === 'running' || !edited.trim()) return;
+            const parts = current.parts.map((part, i) => i === editIndex ? { ...part, text: edited.trim() } : part);
+            const ready = complete({ ...current, parts });
+            save({ ...current, parts, rows: [], repairParts: [], phase: ready ? 'review' : current.phase,
+              mode: ready && live.current.connected ? 'running' : 'paused', notice: 'Đã lưu phần chỉnh sửa.' });
+            setEdited(null);
+          })}>Lưu và kiểm tra lại</button><button className="outline" onClick={() => setEdited(null)}>Hủy chỉnh sửa</button></>}
+        </div>
+      </details>
+      </div>
+      <div className="auto-review-scroll"><table className="auto-review">
+        <thead><tr><th scope="col">Công thức Aprilynne</th><th scope="col">Điểm, dẫn chứng và cách sửa</th></tr></thead>
+        <tbody>{criteriaWithSource.map((criterion, index) => {
+          const row = run.rows.find(item => item.id === criterion.id);
+          const inScope = scope === null || row?.part === scope + 1;
+          return <tr key={criterion.id}>
+            <th scope="row">
+              {(index === 0 || criteriaWithSource[index - 1].group !== criterion.group) && <small className="auto-group">{criterion.group}</small>}
+              {criterion.name} <small>{criterion.start}–{criterion.end} · {criterion.visual ? 'Cần hình ảnh/video' : 'Kiểm tra từ kịch bản'}</small>
+              <details><summary>Trích đoạn gốc</summary><blockquote>{criterion.excerpt}</blockquote></details>
+            </th>
+            <td>{criterion.visual ? <><b>Chưa đủ dữ liệu</b><div>{row?.reason || 'Cần tài sản thực tế để đối chiếu.'}</div></>
+              : row && inScope ? <><b>{row.score}/10 · {(row.score ?? 0) >= threshold ? 'Đạt' : 'Cần sửa'}</b> · Phần {row.part}
+                <blockquote>{row.evidence}</blockquote><div>{row.reason}</div>{row.fix && <div><strong>Cách sửa </strong>{row.fix}</div>}</>
+              : row ? <span>Dẫn chứng của tiêu chuẩn này nằm ở phần {row.part} trong báo cáo toàn video.</span>
+              : <span>Chưa có kết quả đối chiếu.</span>}</td>
+          </tr>;
+        })}</tbody>
+      </table></div>
+      <details><summary>Bản thảo và báo cáo trước đây</summary>
+        <pre>{(() => {
+          const previous = localStorage.getItem(key + '-previous');
+          const legacy = loadAnalysis(projectId);
+          return previous ? scriptOf(JSON.parse(previous)) + '\n\n' + JSON.stringify(JSON.parse(previous).rows, null, 2)
+            : [legacy.script, legacy.review].filter(Boolean).join('\n\n') || 'Chưa có bản cũ.';
+        })()}</pre>
+      </details>
+    </section>
+  </section>;
 }
