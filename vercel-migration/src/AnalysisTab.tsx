@@ -7,7 +7,7 @@ import './analysisTab.css';
 
 type Props = {
   projectId: string; projectName: string; connected: boolean; otherWork: boolean; bridgeJob?: string;
-  active: boolean; onOpenTranscript: () => void;
+  active: boolean;
   onTransfer: (draft: ReturnType<typeof emptyAnalysis>, automatic: boolean) => string;
 };
 
@@ -27,7 +27,7 @@ function progress(run: Run) {
   return run.phase === 'write' ? 'Đang viết ' + part : `Đang sửa lần ${run.rounds + 1}/${run.limit} · ${part}`;
 }
 
-export default function AnalysisTab({ projectId, projectName, connected, otherWork, bridgeJob, active, onOpenTranscript, onTransfer }: Props) {
+export default function AnalysisTab({ projectId, projectName, connected, otherWork, bridgeJob, active, onTransfer }: Props) {
   const key = 'vis-automatic-analysis-v2-' + projectId;
   const read = (): Run => {
     try {
@@ -168,22 +168,20 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
       localStorage.setItem(key + '-history-' + crypto.randomUUID(), JSON.stringify(current));
       localStorage.setItem(key + '-previous', JSON.stringify(current));
     }
-    save({ ...emptyRun(), input: current.input, source, style, limit: current.limit, mode: 'running', phase: 'review', parts: prepared.parts });
+    save({ ...emptyRun(), input: current.input, source, style, mode: 'running', phase: 'review', parts: prepared.parts });
     setScope(null);
     setEdited(null);
   });
 
   const resume = () => change(current => {
-    if (!['paused', 'stopped', 'error', 'limited'].includes(current.mode)) return;
+    if (!['paused', 'stopped', 'error'].includes(current.mode)) return;
     if (!live.current.connected) { setError('Kết nối lại đúng hội thoại ChatGPT để tiếp tục.'); return; }
-    if (current.phase === 'repair' && current.mode === 'limited' && current.limit <= current.rounds) {
-      setError('Tăng giới hạn lượt sửa hoặc chỉnh kịch bản rồi kiểm tra lại.'); return;
-    }
     save({ ...current, mode: 'running', notice: '', pending: current.pending && { ...current.pending, deadline: Date.now() + 600_000 } });
     if (current.pending) send('studio-capture-result', { jobId: current.pending.id });
   });
 
   const working = run.mode === 'running' || !!run.pending;
+  const canResume = ['paused', 'stopped', 'error'].includes(run.mode);
   const all = scriptOf(run);
   const viewed = scope === null ? all : run.parts[scope]?.text || '';
   const editIndex = scope ?? (run.parts.length === 1 ? 0 : null);
@@ -200,24 +198,22 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   return <section className="workspace auto-analysis">
     <section className="panel">
       <div className="panel-heading"><FileText/><div><h1>Công thức Aprilynne</h1><p>Dự án: {projectName}</p></div></div>
-      <div className="analysis-controls">
-        {sourceInfo.text || working
-          ? <button className="analyze-all split-button" disabled={working} onClick={start}><Play size={16}/> Đối chiếu theo Aprilynne</button>
-          : <button className="outline" onClick={onOpenTranscript}>Mở Get Transcript</button>}
+      {(sourceInfo.text || working || canResume || canTransfer) && <div className="analysis-controls">
+        {(sourceInfo.text || working) && <button className="analyze-all split-button" disabled={working} onClick={start}><Play size={16}/> Đối chiếu theo Aprilynne</button>
+        }
         {run.mode === 'running' && <button className="outline" onClick={() => change(current => {
           if (current.mode === 'running') save({ ...current, mode: 'paused', notice: 'Studio sẽ lưu phản hồi đang chờ rồi tạm dừng.' });
         })}>Tạm dừng</button>}
-        {['paused', 'stopped', 'error', 'limited'].includes(run.mode) && <button className="outline" onClick={resume}>Tiếp tục</button>}
+        {canResume && <button className="outline" onClick={resume}>Tiếp tục</button>}
         {(working || run.mode === 'paused') && <button className="danger" onClick={() => change(current => stop(current))}>Dừng</button>}
         {canTransfer && <button className="outline" onClick={() => change(current => {
           if (current.mode === 'limited' && !window.confirm('Một số tiêu chuẩn còn dưới 8/10. Chuyển bản hiện tại sang Phân tách?')) return;
           if (['missing', 'passed', 'limited'].includes(current.mode)) transfer(current, false);
         })}>Chuyển sang Phân tách</button>}
-      </div>
-      <p className="script-meta" role="status">{progress(run)}{run.rounds > 0 && ` · Đã sửa ${run.rounds}/${run.limit} lượt`}{run.notice && ' · ' + run.notice}</p>
-      {!sourceInfo.text && !working && <p>Trong Get Transcript, chia phần và bấm “Viết lại toàn bộ”. Phân tích tự nhận bản hoàn chỉnh.</p>}
+      </div>}
+      <p className="script-meta" role="status">{run.mode === 'idle' && !sourceInfo.text ? 'Đang chờ bản viết lại từ Get Transcript' : progress(run)}{run.rounds > 0 && ` · Đã sửa ${run.rounds}/${run.limit} lượt`}{run.notice && ' · ' + run.notice}</p>
       {error && <p role="alert">{error}</p>}
-      <p>Điểm tham khảo dựa trên kịch bản. Các mục cần ảnh bìa hoặc video thực tế được đánh dấu riêng.</p>
+      {run.rows.length > 0 && <p>Điểm tham khảo dựa trên kịch bản. Các mục cần ảnh bìa hoặc video thực tế được đánh dấu riêng.</p>}
       {run.rows.length > 0 && (run.phase === 'repair' || run.phase === 'review') && ['running', 'paused', 'stopped', 'error'].includes(run.mode)
         && <p>Đang hiển thị báo cáo của lần chấm trước. Studio sẽ cập nhật sau khi chấm lại bản sửa.</p>}
 
@@ -256,11 +252,6 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
           })}>Lưu và kiểm tra lại</button><button className="outline" onClick={() => setEdited(null)}>Hủy chỉnh sửa</button></>}
         </div>
       </details>}
-      <details className="analysis-options"><summary>Tùy chọn</summary>
-        <label>Giới hạn lượt sửa <select disabled={working} value={run.limit} onChange={event => {
-          const limit = Number(event.target.value); change(current => { if (!current.pending && current.mode !== 'running') save({ ...current, limit }); });
-        }}>{Array.from({ length: 11 }, (_, i) => <option key={i}>{i}</option>)}</select></label>
-      </details>
     </section>
   </section>;
 }
