@@ -1,12 +1,13 @@
+import { FileText, Play } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { emptyAnalysis, loadAnalysis } from './analysisWorkspace';
-import { loadTranscriptWorkspace, assembleRewrittenScript } from './transcriptWorkspace';
+import { loadTranscriptWorkspace, preparedAnalysisSource } from './transcriptWorkspace';
 import { acceptResponse, complete, criteriaWithSource, emptyRun, promptFor, scriptOf, threshold, type Mode, type Run } from './automaticAnalysis';
 import './analysisTab.css';
 
 type Props = {
   projectId: string; projectName: string; connected: boolean; otherWork: boolean; bridgeJob?: string;
-  imported?: { text: string; id: string };
+  active: boolean; onOpenTranscript: () => void;
   onTransfer: (draft: ReturnType<typeof emptyAnalysis>, automatic: boolean) => string;
 };
 
@@ -26,7 +27,7 @@ function progress(run: Run) {
   return run.phase === 'write' ? 'Đang viết ' + part : `Đang sửa lần ${run.rounds + 1}/${run.limit} · ${part}`;
 }
 
-export default function AnalysisTab({ projectId, projectName, connected, otherWork, bridgeJob, imported, onTransfer }: Props) {
+export default function AnalysisTab({ projectId, projectName, connected, otherWork, bridgeJob, active, onOpenTranscript, onTransfer }: Props) {
   const key = 'vis-automatic-analysis-v2-' + projectId;
   const read = (): Run => {
     try {
@@ -37,9 +38,7 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
     } catch { return emptyRun(); }
   };
   const [run, setRun] = useState(read);
-  const [input, setInputDraft] = useState(run.input);
   const [error, setError] = useState('');
-  useEffect(() => setInputDraft(run.input), [run.input]);
   const [scope, setScope] = useState<number | null>(null);
   const [edited, setEdited] = useState<string | null>(null);
   const live = useRef({ connected, otherWork, bridgeJob, onTransfer });
@@ -145,32 +144,31 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
     return () => clearTimeout(timer);
   }, [run, connected, otherWork, projectId]);
 
+  const readSource = () => preparedAnalysisSource(loadTranscriptWorkspace(projectId));
+  const [sourceInfo, setSourceInfo] = useState(readSource);
   useEffect(() => {
-    if (!imported) return;
-    change(current => {
-      if (current.mode === 'running' || current.pending) { setError('Dừng tác vụ trước khi đổi nguồn.'); return; }
-      if (current.input && current.input !== imported.text && !window.confirm('Dùng nội dung mới làm đầu vào cho lượt tiếp theo?')) return;
-      save({ ...current, input: imported.text });
-    });
-  }, [imported?.id]);
+    if (!active) return;
+    setSourceInfo(readSource());
+    const sync = (event: StorageEvent) => {
+      if (event.key === 'vis-transcript-workspace-' + projectId) setSourceInfo(readSource());
+    };
+    window.addEventListener('storage', sync);
+    return () => window.removeEventListener('storage', sync);
+  }, [active, projectId]);
 
-  const transcript = () => {
-    const workspace = loadTranscriptWorkspace(projectId);
-    return { style: workspace.stylePrompt, raw: workspace.transcript?.text || '',
-      rewritten: workspace.sections.length && workspace.sections.every(part => part.status === 'done' && part.rewrittenText.trim()) ? assembleRewrittenScript(workspace.sections) : '' };
-  };
   const start = () => change(current => {
     if (current.mode === 'running' || current.pending) return;
-    const { raw, rewritten, style } = transcript();
-    const source = current.input.trim() || raw.trim() || rewritten.trim();
-    if (!source) { setError('Hãy lấy transcript hoặc dán kịch bản.'); return; }
+    const prepared = readSource();
+    setSourceInfo(prepared);
+    const { text: source, style } = prepared;
+    if (!source) { setError('Hãy chuẩn bị bản viết lại trong Get Transcript.'); return; }
     if (!live.current.connected || live.current.otherWork) { setError('Kết nối ChatGPT và chờ tác vụ hiện tại hoàn tất.'); return; }
     if (current.parts.some(part => part.text)) {
       if (!window.confirm('Chạy lại từ đầu? Kịch bản và báo cáo hiện tại sẽ được lưu trong lịch sử.')) return;
       localStorage.setItem(key + '-history-' + crypto.randomUUID(), JSON.stringify(current));
       localStorage.setItem(key + '-previous', JSON.stringify(current));
     }
-    save({ ...emptyRun(), input: current.input, source, style, limit: current.limit, mode: 'running' });
+    save({ ...emptyRun(), input: current.input, source, style, limit: current.limit, mode: 'running', phase: 'review', parts: prepared.parts });
     setScope(null);
     setEdited(null);
   });
@@ -189,17 +187,6 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   const all = scriptOf(run);
   const viewed = scope === null ? all : run.parts[scope]?.text || '';
   const editIndex = scope ?? (run.parts.length === 1 ? 0 : null);
-  const setInput = (value: string) => {
-    setInputDraft(value);
-    change(current => {
-      if (current.mode !== 'running' && !current.pending) save({ ...current, input: value });
-    });
-  };
-  const importSource = (variant: 'raw' | 'rewritten') => {
-    const text = transcript()[variant];
-    if (text) setInput(text);
-    else setError(variant === 'raw' ? 'Dự án này chưa có transcript.' : 'Get Transcript chưa có kịch bản viết lại hoàn chỉnh.');
-  };
   const download = () => {
     const url = URL.createObjectURL(new Blob([all], { type: 'text/plain;charset=utf-8' }));
     const anchor = document.createElement('a');
@@ -210,49 +197,51 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   };
   const canTransfer = complete(run) && !working && ['missing', 'passed', 'limited'].includes(run.mode);
 
-  return <section className="analysis-foundation auto-analysis">
-    <header className="flow-panel">
-      <h1>{projectName} · Phân tích kịch bản</h1>
-      <label>Nguồn kịch bản <textarea value={input} disabled={working} onChange={event => setInput(event.target.value)}
-        placeholder="Dán kịch bản hoặc để trống để dùng transcript của dự án"/></label>
-      <div className="flow-actions">
-        <button className="outline" disabled={working} onClick={() => importSource('raw')}>Lấy transcript</button>
-        <button className="outline" disabled={working} onClick={() => importSource('rewritten')}>Lấy bản viết lại từ Get Transcript</button>
-        <label>Giới hạn lượt sửa <select disabled={working} value={run.limit} onChange={event => {
-          const limit = Number(event.target.value); change(current => { if (!current.pending && current.mode !== 'running') save({ ...current, limit }); });
-        }}>{Array.from({ length: 11 }, (_, i) => <option key={i}>{i}</option>)}</select></label>
-      </div>
-      <div className="flow-actions">
-        <button className="analyze-all" disabled={working} onClick={start}>Viết lại &amp; kiểm tra tự động</button>
-        <button className="outline" disabled={run.mode !== 'running'} onClick={() => change(current => {
-          if (current.mode === 'running') save({ ...current, mode: 'paused', notice: 'Nếu đang nhận phản hồi, Studio sẽ lưu phần đó trước khi tạm dừng.' });
-        })}>Tạm dừng</button>
-        <button className="outline" disabled={!['paused', 'stopped', 'error', 'limited'].includes(run.mode)} onClick={resume}>Tiếp tục</button>
-        <button className="danger" disabled={!working && run.mode !== 'paused'} onClick={() => change(current => stop(current))}>Dừng</button>
-      </div>
-      <p className="notice" role="status">{progress(run)} · Đã sửa {run.rounds}/{run.limit} lượt{run.notice && ' · ' + run.notice}</p>
-      {error && <p role="alert">{error}</p>}
-    </header>
-    <section className="flow-panel">
-      <div className="flow-actions">
-        <h2>Kịch bản và đối chiếu</h2>
-        <label>Phạm vi <select value={scope ?? 'all'} onChange={event => { setScope(event.target.value === 'all' ? null : Number(event.target.value)); setEdited(null); }}>
-          <option value="all">Toàn video</option>{run.parts.map((part, i) => <option key={i} value={i}>Phần {i + 1} · {part.title}</option>)}</select></label>
+  return <section className="workspace auto-analysis">
+    <section className="panel">
+      <div className="panel-heading"><FileText/><div><h1>Công thức Aprilynne</h1><p>Dự án: {projectName}</p></div></div>
+      <div className="analysis-controls">
+        {sourceInfo.text || working
+          ? <button className="analyze-all split-button" disabled={working} onClick={start}><Play size={16}/> Đối chiếu theo Aprilynne</button>
+          : <button className="outline" onClick={onOpenTranscript}>Mở Get Transcript</button>}
+        {run.mode === 'running' && <button className="outline" onClick={() => change(current => {
+          if (current.mode === 'running') save({ ...current, mode: 'paused', notice: 'Studio sẽ lưu phản hồi đang chờ rồi tạm dừng.' });
+        })}>Tạm dừng</button>}
+        {['paused', 'stopped', 'error', 'limited'].includes(run.mode) && <button className="outline" onClick={resume}>Tiếp tục</button>}
+        {(working || run.mode === 'paused') && <button className="danger" onClick={() => change(current => stop(current))}>Dừng</button>}
         {canTransfer && <button className="outline" onClick={() => change(current => {
           if (current.mode === 'limited' && !window.confirm('Một số tiêu chuẩn còn dưới 8/10. Chuyển bản hiện tại sang Phân tách?')) return;
           if (['missing', 'passed', 'limited'].includes(current.mode)) transfer(current, false);
-        })}>Chuyển thủ công sang Phân tách</button>}
+        })}>Chuyển sang Phân tách</button>}
       </div>
+      <p className="script-meta" role="status">{progress(run)}{run.rounds > 0 && ` · Đã sửa ${run.rounds}/${run.limit} lượt`}{run.notice && ' · ' + run.notice}</p>
+      {!sourceInfo.text && !working && <p>Trong Get Transcript, chia phần và bấm “Viết lại toàn bộ”. Phân tích tự nhận bản hoàn chỉnh.</p>}
+      {error && <p role="alert">{error}</p>}
       <p>Điểm tham khảo dựa trên kịch bản. Các mục cần ảnh bìa hoặc video thực tế được đánh dấu riêng.</p>
       {run.rows.length > 0 && (run.phase === 'repair' || run.phase === 'review') && ['running', 'paused', 'stopped', 'error'].includes(run.mode)
         && <p>Đang hiển thị báo cáo của lần chấm trước. Studio sẽ cập nhật sau khi chấm lại bản sửa.</p>}
-      <div className="auto-output">
-      {run.plan ? <details><summary>Đề xuất về tiêu đề, hai hoặc ba tuyến và cấu trúc</summary>
-        <p>{run.plan.title} · {run.plan.question}</p><ul>{run.plan.tracks.map(track => <li key={track}>{track}</li>)}</ul>
-        <p>{[run.plan.promise, run.plan.opening, run.plan.transitions, run.plan.payoff, run.plan.ending, run.plan.cover, run.plan.sourceNote].join(' · ')}</p>
-      </details> : <p>Kế hoạch tự động sẽ xuất hiện sau khi Studio đọc nguồn.</p>}
-      <details open className="auto-script"><summary>{scope === null ? 'Kịch bản hoàn chỉnh' : 'Kịch bản phần ' + (scope + 1)}</summary>
-        <textarea aria-label="Kịch bản mới" readOnly={edited === null} value={edited ?? viewed} onChange={event => setEdited(event.target.value)}/>
+
+      <div className="auto-review-scroll"><table className="auto-review">
+        <thead><tr><th scope="col">Công thức Aprilynne</th><th scope="col">Điểm, dẫn chứng và cách sửa</th></tr></thead>
+        <tbody>{criteriaWithSource.map((criterion, index) => {
+          const row = run.rows.find(item => item.id === criterion.id);
+          return <tr key={criterion.id}>
+            <th scope="row">
+              {(index === 0 || criteriaWithSource[index - 1].group !== criterion.group) && <small className="auto-group">{criterion.group}</small>}
+              {criterion.name} <small>{criterion.start}–{criterion.end} · {criterion.visual ? 'Cần hình ảnh/video' : 'Kiểm tra từ kịch bản'}</small>
+              <details><summary>Trích đoạn gốc</summary><blockquote>{criterion.excerpt}</blockquote></details>
+            </th>
+            <td>{criterion.visual || (row && row.score === null) ? <><b>Chưa đủ dữ liệu</b><div>{row?.reason || 'Cần tài sản thực tế để đối chiếu.'}</div></>
+              : row ? <><b>{row.score}/10 · {(row.score ?? 0) >= threshold ? 'Đạt' : 'Cần sửa'}</b> · Phần {row.part}
+                <blockquote>{row.evidence}</blockquote><div>{row.reason}</div>{row.fix && <div><strong>Cách sửa </strong>{row.fix}</div>}</>
+              : <span>—</span>}</td>
+          </tr>;
+        })}</tbody>
+      </table></div>
+      {all && <details className="auto-script"><summary>{scope === null ? 'Kịch bản hoàn chỉnh' : 'Kịch bản phần ' + (scope + 1)}</summary>
+        {run.parts.length > 1 && <label>Phần kịch bản <select value={scope ?? 'all'} onChange={event => { setScope(event.target.value === 'all' ? null : Number(event.target.value)); setEdited(null); }}>
+          <option value="all">Toàn video</option>{run.parts.map((part, i) => <option key={i} value={i}>Phần {i + 1} · {part.title}</option>)}</select></label>}
+        <textarea className="screenplay" aria-label="Kịch bản mới" readOnly={edited === null} value={edited ?? viewed} onChange={event => setEdited(event.target.value)}/>
         <div className="flow-actions">
           <button className="outline" disabled={!all} onClick={() => void navigator.clipboard.writeText(all).catch(() => setError('Không sao chép được kịch bản.'))}>Sao chép toàn bộ</button>
           <button className="outline" disabled={!all} onClick={download}>Tải toàn bộ (.txt)</button>
@@ -266,34 +255,11 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
             setEdited(null);
           })}>Lưu và kiểm tra lại</button><button className="outline" onClick={() => setEdited(null)}>Hủy chỉnh sửa</button></>}
         </div>
-      </details>
-      </div>
-      <div className="auto-review-scroll"><table className="auto-review">
-        <thead><tr><th scope="col">Công thức Aprilynne</th><th scope="col">Điểm, dẫn chứng và cách sửa</th></tr></thead>
-        <tbody>{criteriaWithSource.map((criterion, index) => {
-          const row = run.rows.find(item => item.id === criterion.id);
-          const inScope = scope === null || row?.part === scope + 1;
-          return <tr key={criterion.id}>
-            <th scope="row">
-              {(index === 0 || criteriaWithSource[index - 1].group !== criterion.group) && <small className="auto-group">{criterion.group}</small>}
-              {criterion.name} <small>{criterion.start}–{criterion.end} · {criterion.visual ? 'Cần hình ảnh/video' : 'Kiểm tra từ kịch bản'}</small>
-              <details><summary>Trích đoạn gốc</summary><blockquote>{criterion.excerpt}</blockquote></details>
-            </th>
-            <td>{criterion.visual ? <><b>Chưa đủ dữ liệu</b><div>{row?.reason || 'Cần tài sản thực tế để đối chiếu.'}</div></>
-              : row && inScope ? <><b>{row.score}/10 · {(row.score ?? 0) >= threshold ? 'Đạt' : 'Cần sửa'}</b> · Phần {row.part}
-                <blockquote>{row.evidence}</blockquote><div>{row.reason}</div>{row.fix && <div><strong>Cách sửa </strong>{row.fix}</div>}</>
-              : row ? <span>Dẫn chứng của tiêu chuẩn này nằm ở phần {row.part} trong báo cáo toàn video.</span>
-              : <span>Chưa có kết quả đối chiếu.</span>}</td>
-          </tr>;
-        })}</tbody>
-      </table></div>
-      <details><summary>Bản thảo và báo cáo trước đây</summary>
-        <pre>{(() => {
-          const previous = localStorage.getItem(key + '-previous');
-          const legacy = loadAnalysis(projectId);
-          return previous ? scriptOf(JSON.parse(previous)) + '\n\n' + JSON.stringify(JSON.parse(previous).rows, null, 2)
-            : [legacy.script, legacy.review].filter(Boolean).join('\n\n') || 'Chưa có bản cũ.';
-        })()}</pre>
+      </details>}
+      <details className="analysis-options"><summary>Tùy chọn</summary>
+        <label>Giới hạn lượt sửa <select disabled={working} value={run.limit} onChange={event => {
+          const limit = Number(event.target.value); change(current => { if (!current.pending && current.mode !== 'running') save({ ...current, limit }); });
+        }}>{Array.from({ length: 11 }, (_, i) => <option key={i}>{i}</option>)}</select></label>
       </details>
     </section>
   </section>;

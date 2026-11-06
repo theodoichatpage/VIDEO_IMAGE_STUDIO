@@ -57,3 +57,14 @@ describe('one-button analysis', () => {
     expect(limited.rows[0].score).toBe(7);
   });
 });
+
+it('reviews already rewritten sections directly and leaves the missing target title unscored', () => {
+ const run: Run = { ...written(), plan: undefined };
+ expect(promptFor(run)).toContain('Chưa có tiêu đề đích');
+ const report = score(run);
+ expect(() => reply(run, report)).toThrow();
+ report.rows[0] = { id: 0, score: null, part: null, evidence: '', reason: 'Chưa có tiêu đề đích' };
+ const reviewed = reply(run, report);
+ expect(reviewed.mode).toBe('missing');
+ expect(reviewed.rows.filter(row => row.score === null).map(row => row.id)).toEqual([0, 1, 8]);
+});

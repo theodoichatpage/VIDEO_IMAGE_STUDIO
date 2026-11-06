@@ -45,18 +45,18 @@ ${reference}`;
   if (run.phase === 'plan') {
     const units = sourceUnits(run.source);
     return `${base}
-Đọc toàn bộ nguồn. Xác định câu hỏi chính, lời hứa, mở đầu, các điểm chuyển, giải đáp, kết thúc, hai hoặc ba tuyến liên hệ, và giới hạn dữ kiện. Đề xuất tiêu đề và ảnh bìa. Lập các phần liền mạch phù hợp nội dung, ít nhất ${minimumParts(run.source)} phần, mỗi phần không quá 9.000 ký tự nguồn. end là chỉ số đơn vị nguồn cuối của phần (bắt đầu từ 1), tăng dần, end cuối bằng ${units.length}. Không chép lại nguồn. Trả JSON ${planShape}.
+Nguồn đã được chia và viết theo văn phong cá nhân. Đọc toàn bộ, sắp xếp lại ý, bổ sung chuyển đoạn và giải thích có căn cứ từ nguồn. Xác định câu hỏi chính, lời hứa, mở đầu, các điểm chuyển, giải đáp, kết thúc, hai hoặc ba tuyến liên hệ, và giới hạn dữ kiện. Đề xuất tiêu đề và ảnh bìa. Lập các phần liền mạch phù hợp nội dung, ít nhất ${minimumParts(run.source)} phần, mỗi phần không quá 9.000 ký tự nguồn. end là chỉ số đơn vị nguồn cuối của phần (bắt đầu từ 1), tăng dần, end cuối bằng ${units.length}. Không chép lại nguồn. Trả JSON ${planShape}.
 NGUỒN: ${JSON.stringify(units.map((unit, index) => [index + 1, unit]))}`;
   }
   if (run.phase === 'review') {
     return `${base}
-Đối chiếu toàn bộ video dưới dạng kịch bản. Tiêu đề trong kế hoạch chỉ là tiêu đề đề xuất; chấm độ khớp với chính tiêu đề này. Chấm từng tiêu chí áp dụng 0–10 theo đúng ID (0–12), ghi part là số phần bắt đầu từ 1 và evidence là đoạn trích NGUYÊN VĂN từ đúng phần đó. Nếu dưới 8, chọn phần cần sửa nhất và ghi cách sửa cụ thể. Mục 1 và 8 cần ảnh bìa/cảnh dựng thật nên trả score:null, part:null, evidence:"", kèm lý do thiếu dữ liệu. Các mục còn lại phải có điểm; nếu kịch bản thiếu yếu tố thì cho điểm thấp và trích đoạn liên quan. Điểm chỉ là đánh giá tham khảo. Trả {"rows":[{"id":0,"score":7,"part":1,"evidence":"trích nguyên văn","reason":"...","fix":"..."}]} với đủ 13 dòng.
+Đối chiếu toàn bộ video dưới dạng kịch bản. ${run.plan?.title ? 'Chấm độ khớp với tiêu đề đề xuất trong kế hoạch.' : 'Chưa có tiêu đề đích; mục 0 trả score:null, part:null và evidence rỗng.'} Chấm từng tiêu chí áp dụng 0–10 theo đúng ID (0–12), ghi part là số phần bắt đầu từ 1 và evidence là đoạn trích NGUYÊN VĂN từ đúng phần đó. Nếu dưới 8, chọn phần cần sửa nhất và ghi cách sửa cụ thể. Mục 1 và 8 cần ảnh bìa/cảnh dựng thật nên trả score:null, part:null, evidence:"", kèm lý do thiếu dữ liệu. Các mục có đủ dữ liệu phải có điểm; nếu kịch bản thiếu yếu tố thì cho điểm thấp và trích đoạn liên quan. Điểm chỉ là đánh giá tham khảo. Trả {"rows":[{"id":0,"score":7,"part":1,"evidence":"trích nguyên văn","reason":"...","fix":"..."}]} với đủ 13 dòng.
 ${JSON.stringify({ plan: run.plan, parts: run.parts.map((part, i) => ({ part: i + 1, title: part.title, source: part.source, script: part.text })) })}`;
   }
   const part = run.parts[run.index];
   const repair = run.phase === 'repair';
   return `${base}
-${repair ? 'Chỉ sửa phần được chỉ định theo các lỗi dưới 8. Giữ những đoạn tốt, dữ kiện và liên kết với các phần khác. Trả đầy đủ phần này sau sửa.' : 'Chỉ viết phần được chỉ định theo kế hoạch toàn video. Giữ liên kết với phần trước và sau, tăng tiến đến giải đáp theo đúng vị trí. Không nhắc lại mở đầu hoặc kết luận toàn video ở mỗi phần.'}
+${repair ? 'Chỉ sửa phần được chỉ định theo các lỗi dưới 8. Giữ những đoạn tốt, dữ kiện và liên kết với các phần khác. Trả đầy đủ phần này sau sửa.' : 'Chỉ biên tập lại phần được chỉ định theo kế hoạch toàn video. Sắp xếp ý, bổ sung kết nối và giải thích dựa trên dữ kiện trong nguồn. Giữ liên kết với phần trước và sau, tăng tiến đến giải đáp theo đúng vị trí. Không nhắc lại mở đầu hoặc kết luận toàn video ở mỗi phần.'}
 Trả {"text":"lời kịch bản hoàn chỉnh của phần này"}. Giữ giọng và ngôn ngữ theo phong cách đã lưu, mặc định dùng ngôn ngữ của nguồn.
 ${JSON.stringify({ plan: run.plan, structure: run.parts.map(item => item.title), part: run.index + 1, total: run.parts.length,
     source: part.source, script: repair ? part.text : undefined, previousEnding: run.parts[run.index - 1]?.text.slice(-1500),
@@ -92,7 +92,7 @@ function reviewed(value: ReturnType<typeof parse>, run: Run): Row[] {
     const matches = value.rows.filter((row: Row | null) => row?.id === id);
     const row = matches[0];
     if (matches.length !== 1 || !required(row.reason)) throw new Error('Thiếu nhận xét hợp lệ cho ' + name + '.');
-    if (visual) {
+    if (visual || (id === 0 && !run.plan?.title)) {
       if (row.score !== null || row.part !== null || row.evidence !== '') throw new Error('Cần đánh dấu chưa đủ dữ liệu cho ' + name + '.');
       return { id, score: null, part: null, evidence: '', reason: row.reason, fix: required(row.fix) ? row.fix : '' };
     }

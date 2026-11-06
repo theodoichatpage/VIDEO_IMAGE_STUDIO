@@ -17,3 +17,11 @@ export function validateMindmapPayload(value:unknown):MindmapBranch[]{
 }
 export const sectionsFromBranches=(branches:MindmapBranch[]):ScriptSection[]=>branches.map(x=>({id:x.id,branchId:x.id,title:x.title,summary:x.summary,sourceText:x.content,status:'waiting',rewrittenText:''}));
 export const assembleRewrittenScript=(sections:ScriptSection[])=>sections.map(x=>x.rewrittenText.trim()).filter(Boolean).join('\n\n');
+
+export function preparedAnalysisSource(workspace: TranscriptWorkspaceState) {
+ const { sections, stylePrompt } = workspace;
+ const done = sections.filter(part => part.status === 'done' && part.rewrittenText.trim()).length;
+ const ready = !!stylePrompt.trim() && sections.length > 0 && done === sections.length;
+ return { done, total: sections.length, style: stylePrompt, text: ready ? assembleRewrittenScript(sections) : '',
+  parts: ready ? sections.map(part => ({ title: part.title, source: part.rewrittenText.trim(), text: part.rewrittenText.trim() })) : [] };
+}

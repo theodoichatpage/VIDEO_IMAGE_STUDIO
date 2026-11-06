@@ -70,7 +70,6 @@ function App() {
   const [incoming, setIncoming] = useState<ReturnType<typeof makeHandoff> | null>(() => {
     try { return JSON.parse(localStorage.getItem(incomingKey) || 'null'); } catch { return null; }
   });
-  const [analysisInput, setAnalysisInput] = useState<{ text: string; id: string }>();
   const [script, setScript] = useState(() => localStorage.getItem('vis-script-draft-' + sessionId) ?? (localStorage.getItem('vis-script-draft-owner') === sessionId ? localStorage.getItem('vis-script-draft') : null) ?? session?.script ?? '');
   const [stylePrompt, setStylePrompt] = useState(() => localStorage.getItem('vis-style-prompt') || '');
   const [notice, setNotice] = useState(managerLaunch.error || 'Nhập toàn bộ kịch bản, sau đó bấm Phân tích & chia kịch bản.');
@@ -672,7 +671,6 @@ function App() {
   if (managerLaunch.error) return <main className="studio"><p role="alert">{managerLaunch.error}</p><a href={location.origin}>Mở Studio bình thường</a></main>;
   const useTranscript = (text: string) => {
     if (!text.trim()) return;
-    setAnalysisInput({ text, id: makeId() });
     setActiveMenu(1);
   };
   const projectName = (() => {
@@ -720,7 +718,7 @@ function App() {
     {showResultImport && <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Dán JSON kết quả"><section className="connection-dialog json-import-dialog"><button type="button" className="modal-close" disabled={importBusy} onClick={() => setShowResultImport(false)} aria-label="Đóng">×</button><h2>Dán JSON kết quả</h2><p className="modal-help">Sao chép toàn bộ câu trả lời JSON của ChatGPT và dán vào đây. Lưu thành công sẽ chuyển phần này sang Hoàn tất để tiếp tục phần kế tiếp.</p><label>Lưu vào phần<select value={importPartId} disabled={importBusy} onChange={event => selectImportPart(event.target.value)}>{session?.parts?.map(part => <option key={part.id} value={part.id} disabled={part.status === 'complete' && part.scenes.length > 0}>{part.title}{part.status === 'complete' ? ' — Đã có kết quả' : ''}</option>)}</select></label><div className="import-clipboard"><button type="button" className="outline" disabled={importBusy} onClick={pasteResult}>Dán từ clipboard</button><span>Hoặc nhấn Ctrl + V trong ô bên dưới</span></div><textarea aria-label="JSON kết quả phân cảnh" value={importText} disabled={importBusy} onChange={event => setImportText(event.target.value)} placeholder={'Dán toàn bộ JSON: {"scenes":[…]}'} spellCheck={false} />{importError && <p className="import-error" role="alert">{importError}</p>}<button type="button" className="analyze-all modal-copy" disabled={importBusy || !importPartId || !importText.trim()} onClick={saveImportedResult}>{importBusy ? 'Đang lưu kết quả…' : 'Lưu kết quả vào phần đã chọn'}</button></section></div>}
     <div hidden={activeMenu !== 1}><AnalysisTab projectId={sessionId} projectName={projectName}
       connected={bridgeConnected} otherWork={Boolean(busy || stopping || session?.activeJob || session?.laneJobs?.some(Boolean))}
-      bridgeJob={extensionFacts.activeJobId} imported={analysisInput} onTransfer={transferAnalysis} /></div>
+      bridgeJob={extensionFacts.activeJobId} active={activeMenu === 1} onOpenTranscript={() => setActiveMenu(0)} onTransfer={transferAnalysis} /></div>
     {activeMenu === 1 ? null : activeMenu === 0 ? <TranscriptTab projectId={sessionId} onUseTranscript={useTranscript} /> : activeMenu === 2 ? <div className="workspace">
       <section className="left-column panel"><div className="panel-heading"><FileText /><div><h1>Dự án: {(() => { try { const items = JSON.parse(localStorage.getItem('vis-project-meta') || '[]') as Array<{id:string;name:string}>; return items.find(item => item.id === sessionId)?.name || 'Dự án VIDEO IMAGE STUDIO'; } catch { return 'Dự án VIDEO IMAGE STUDIO'; } })()}</h1></div><button type="button" className="outline result-import-launch" disabled={!session?.parts?.length} onClick={openResultImport}>Dán JSON kết quả</button></div>
         {incoming && <section className="script-box">
