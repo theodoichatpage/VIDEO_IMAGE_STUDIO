@@ -691,6 +691,31 @@ function App() {
     if (!text.trim()) return;
     setActiveMenu(1);
   };
+  // The extension can keep reporting a job that already finished (a rewrite lane job whose reply was taken elsewhere).
+  // Such a job is no longer on the Studio server and nobody waits for it: after 90 s it is released, so the analysis does not wait forever.
+  const bridgeJobId = extensionFacts.activeJobId || '';
+  const knownJob = (id: string) => {
+    if (!id) return true;
+    if (session?.activeJob?.id === id || session?.laneJobs?.some(job => job?.id === id)) return true;
+    try {
+      if (readAnalysisRun(sessionId)?.pending?.id === id) return true;
+      if (JSON.parse(localStorage.getItem('vis-transcript-pending-' + sessionId) || 'null')?.id === id) return true;
+    } catch { return true; }
+    return false;
+  };
+  const staleSince = useRef<{ id: string; at: number }>({ id: '', at: 0 });
+  const [staleJob, setStaleJob] = useState('');
+  useEffect(() => {
+    const check = () => {
+      if (!bridgeJobId || knownJob(bridgeJobId)) { staleSince.current = { id: '', at: 0 }; setStaleJob(''); return; }
+      if (staleSince.current.id !== bridgeJobId) { staleSince.current = { id: bridgeJobId, at: Date.now() }; return; }
+      if (Date.now() - staleSince.current.at < 90_000) return;
+      setStaleJob(bridgeJobId);
+      window.postMessage({ source: 'vis-web', type: 'studio-transcript-ack', jobId: bridgeJobId }, location.origin);
+    };
+    check(); const timer = window.setInterval(check, 15_000); return () => clearInterval(timer);
+  }, [bridgeJobId, session?.activeJob?.id, session?.laneJobs, sessionId]);
+  const liveBridgeJob = staleJob && staleJob === bridgeJobId ? undefined : bridgeJobId || undefined;
   const projectName = (() => {
     try {
       const projects = JSON.parse(localStorage.getItem('vis-project-meta') || '[]') as { id: string; name: string }[];
@@ -753,7 +778,7 @@ function App() {
     {showResultImport && <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Dán JSON kết quả"><section className="connection-dialog json-import-dialog"><button type="button" className="modal-close" disabled={importBusy} onClick={() => setShowResultImport(false)} aria-label="Đóng">×</button><h2>Dán JSON kết quả</h2><p className="modal-help">Sao chép toàn bộ câu trả lời JSON của ChatGPT và dán vào đây. Lưu thành công sẽ chuyển phần này sang Hoàn tất để tiếp tục phần kế tiếp.</p><label>Lưu vào phần<select value={importPartId} disabled={importBusy} onChange={event => selectImportPart(event.target.value)}>{session?.parts?.map(part => <option key={part.id} value={part.id} disabled={part.status === 'complete' && part.scenes.length > 0}>{part.title}{part.status === 'complete' ? ' — Đã có kết quả' : ''}</option>)}</select></label><div className="import-clipboard"><button type="button" className="outline" disabled={importBusy} onClick={pasteResult}>Dán từ clipboard</button><span>Hoặc nhấn Ctrl + V trong ô bên dưới</span></div><textarea aria-label="JSON kết quả phân cảnh" value={importText} disabled={importBusy} onChange={event => setImportText(event.target.value)} placeholder={'Dán toàn bộ JSON: {"scenes":[…]}'} spellCheck={false} />{importError && <p className="import-error" role="alert">{importError}</p>}<button type="button" className="analyze-all modal-copy" disabled={importBusy || !importPartId || !importText.trim()} onClick={saveImportedResult}>{importBusy ? 'Đang lưu kết quả…' : 'Lưu kết quả vào phần đã chọn'}</button></section></div>}
     <div hidden={activeMenu !== 1}><AnalysisTab projectId={sessionId} projectName={projectName}
       connected={bridgeConnected} otherWork={Boolean(busy || stopping || session?.activeJob || session?.laneJobs?.some(Boolean))}
-      bridgeJob={extensionFacts.activeJobId} active={activeMenu === 1} enabled={!managerLaunch.lane} ready={serverReady} workEpoch={session?.workEpoch || 0} onCheckpoint={saveAnalysisCheckpoint} managerReview={managerReview} managerScript={session?.script || script} onTransfer={transferAnalysis} /></div>
+      bridgeJob={liveBridgeJob} active={activeMenu === 1} enabled={!managerLaunch.lane} ready={serverReady} workEpoch={session?.workEpoch || 0} onCheckpoint={saveAnalysisCheckpoint} managerReview={managerReview} managerScript={session?.script || script} onTransfer={transferAnalysis} /></div>
     {activeMenu === 1 ? null : activeMenu === 0 ? <TranscriptTab projectId={sessionId} onUseTranscript={useTranscript} /> : activeMenu === 2 ? <div className="workspace">
       <section className="left-column panel"><div className="panel-heading"><FileText /><div><h1>Dự án: {(() => { try { const items = JSON.parse(localStorage.getItem('vis-project-meta') || '[]') as Array<{id:string;name:string}>; return items.find(item => item.id === sessionId)?.name || 'Dự án VIDEO IMAGE STUDIO'; } catch { return 'Dự án VIDEO IMAGE STUDIO'; } })()}</h1></div><button type="button" className="outline result-import-launch" disabled={!session?.parts?.length} onClick={openResultImport}>Dán JSON kết quả</button></div>
         {incoming && <section className="script-box">
