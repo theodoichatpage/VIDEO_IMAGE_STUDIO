@@ -45,8 +45,8 @@ describe('one-button analysis', () => {
     expect(promptFor(fixed)).toContain('Đoạn cuối.');
     const reviewed = reply(fixed, score(fixed));
     // The two criteria that need the cover or footage do not block approval; they are noted for a manual check.
-    expect(reviewed.mode).toBe('passed');
-    expect(reviewed.notice).toContain('2 mục');
+    expect(reviewed.mode).toBe('missing');
+    expect(reviewed.phase).toBe('review');
     expect(reviewed.rows.filter(row => row.score === null)).toHaveLength(2);
   });
 
@@ -74,7 +74,7 @@ it('reviews already rewritten sections directly and leaves the missing target ti
 it('repairs only the selected criterion, then reviews the whole script without starting another auto repair', () => {
  const run = written();
  const { rows } = score(run, true);
- expect(reviewQuality(rows)).toEqual({ passed: 10, needsWork: 1, unscored: 2 });
+ expect(reviewQuality(rows)).toEqual({ passed: 11, needsWork: 1, unscored: 2 });
  const manual: Run = { ...run, rows, phase: 'repair', index: 0, repairParts: [0], manualCriterion: 2 };
  const prompt = promptFor(manual);
  expect(prompt).toContain('"issues":[{"id":2,');

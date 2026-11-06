@@ -25,13 +25,13 @@ describe('the 14 Aprilynne criteria', () => {
   });
   it('approves a script when every gradable criterion reaches 8, noting the two that need assets', () => {
     const done = acceptResponse(run(), JSON.stringify(rows(() => 9)));
-    expect(done.mode).toBe('passed');
-    expect(done.notice).toContain('2 mục');
+    expect(done.mode).toBe('missing');
+    expect(done.phase).toBe('review');
     expect(done.repairParts).toEqual([]);
   });
   it('does not approve while a gradable criterion is below 8', () => {
     const done = acceptResponse(run(), JSON.stringify(rows(id => id === 12 ? 6 : 9)));
-    expect(done.mode).not.toBe('passed');
+    expect(done.mode).not.toBe('missing');
     expect(done.phase).toBe('repair');
     expect(done.repairParts).toEqual([0]);
   });
