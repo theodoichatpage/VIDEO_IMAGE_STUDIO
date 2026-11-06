@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { acceptResponse, criteriaWithSource, emptyRun, promptFor, scriptOf, type Run } from './automaticAnalysis';
+import { acceptResponse, criteriaWithSource, emptyRun, promptFor, reviewQuality, scriptOf, type Run } from './automaticAnalysis';
 
 const source = 'A'.repeat(3500) + 'B'.repeat(3500) + 'C'.repeat(3500);
 const plan = {
@@ -67,4 +67,19 @@ it('reviews already rewritten sections directly and leaves the missing target ti
  const reviewed = reply(run, report);
  expect(reviewed.mode).toBe('missing');
  expect(reviewed.rows.filter(row => row.score === null).map(row => row.id)).toEqual([0, 1, 8]);
+});
+
+it('repairs only the selected criterion, then reviews the whole script without starting another auto repair', () => {
+ const run = written();
+ const { rows } = score(run, true);
+ expect(reviewQuality(rows)).toEqual({ passed: 10, needsWork: 1, unscored: 2 });
+ const manual: Run = { ...run, rows, phase: 'repair', index: 0, repairParts: [0], manualCriterion: 2 };
+ const prompt = promptFor(manual);
+ expect(prompt).toContain('"issues":[{"id":2,');
+ expect(prompt).not.toContain('"issues":[{"id":0,');
+ const fixed = reply(manual, { text: 'Đã sửa phần được chọn.' });
+ expect(fixed.parts[1]).toEqual(run.parts[1]);
+ expect(fixed.rounds).toBe(0);
+ expect(fixed.phase).toBe('review');
+ expect(reply(fixed, score(fixed, true)).mode).toBe('limited');
 });

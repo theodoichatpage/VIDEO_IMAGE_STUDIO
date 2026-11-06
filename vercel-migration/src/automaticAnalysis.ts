@@ -19,6 +19,7 @@ export type Mode = 'idle' | 'running' | 'paused' | 'stopped' | 'error' | 'limite
 export type Run = {
   input: string; source: string; style: string; limit: number; rounds: number; mode: Mode; phase: Phase;
   plan?: Plan; parts: Part[]; index: number; rows: Row[]; repairParts: number[];
+  manualCriterion?: number;
   pending?: { id: string; deadline: number }; notice: string;
 };
 export const emptyRun = (): Run => ({
@@ -26,6 +27,11 @@ export const emptyRun = (): Run => ({
 });
 export const complete = (run: Run) => run.parts.length > 0 && run.parts.every(part => !!part.text);
 export const scriptOf = (run: Run) => run.parts.map(part => part.text).filter(Boolean).join('\n\n');
+export function reviewQuality(rows: Row[]) {
+  const passed = rows.filter(row => row.score !== null && row.score >= threshold).length;
+  const needsWork = rows.filter(row => row.score !== null && row.score < threshold).length;
+  return { passed, needsWork, unscored: criteria.length - passed - needsWork };
+}
 const required = (value: unknown): value is string => typeof value === 'string' && Boolean(value.trim());
 const tidy = (value: string) => value.replace(/\s+/gu, ' ').trim();
 const reference = criteriaWithSource.map(c => `${c.id}. ${c.name} (${c.start}–${c.end})\n${c.excerpt}`).join('\n');
@@ -56,12 +62,12 @@ ${JSON.stringify({ plan: run.plan, parts: run.parts.map((part, i) => ({ part: i 
   const part = run.parts[run.index];
   const repair = run.phase === 'repair';
   return `${base}
-${repair ? 'Chỉ sửa phần được chỉ định theo các lỗi dưới 8. Giữ những đoạn tốt, dữ kiện và liên kết với các phần khác. Trả đầy đủ phần này sau sửa.' : 'Chỉ biên tập lại phần được chỉ định theo kế hoạch toàn video. Sắp xếp ý, bổ sung kết nối và giải thích dựa trên dữ kiện trong nguồn. Giữ liên kết với phần trước và sau, tăng tiến đến giải đáp theo đúng vị trí. Không nhắc lại mở đầu hoặc kết luận toàn video ở mỗi phần.'}
+${repair ? 'Chỉ sửa phần được chỉ định theo các tiêu chí gửi kèm. Giữ những đoạn tốt, dữ kiện và liên kết với các phần khác. Trả đầy đủ phần này sau sửa.' : 'Chỉ biên tập lại phần được chỉ định theo kế hoạch toàn video. Sắp xếp ý, bổ sung kết nối và giải thích dựa trên dữ kiện trong nguồn. Giữ liên kết với phần trước và sau, tăng tiến đến giải đáp theo đúng vị trí. Không nhắc lại mở đầu hoặc kết luận toàn video ở mỗi phần.'}
 Trả {"text":"lời kịch bản hoàn chỉnh của phần này"}. Giữ giọng và ngôn ngữ theo phong cách đã lưu, mặc định dùng ngôn ngữ của nguồn.
 ${JSON.stringify({ plan: run.plan, structure: run.parts.map(item => item.title), part: run.index + 1, total: run.parts.length,
     source: part.source, script: repair ? part.text : undefined, previousEnding: run.parts[run.index - 1]?.text.slice(-1500),
     nextOpening: run.parts[run.index + 1]?.text.slice(0, 1000),
-    issues: repair ? run.rows.filter(row => row.part === run.index + 1 && row.score !== null && row.score < threshold) : undefined })}`;
+    issues: repair ? run.rows.filter(row => row.part === run.index + 1 && (run.manualCriterion === undefined ? row.score !== null && row.score < threshold : row.id === run.manualCriterion)) : undefined })}`;
 }
 
 function parse(text: unknown) {
@@ -112,12 +118,13 @@ export function acceptResponse(run: Run, text: unknown): Run {
   if (run.phase === 'review') {
     const rows = reviewed(value, run);
     const repairParts = [...new Set(rows.filter(row => row.score !== null && row.score < threshold).map(row => row.part! - 1))].sort((a, b) => a - b);
-    if (!repairParts.length) return { ...next, rows, mode: rows.some(row => row.score === null) ? 'missing' : next.mode === 'running' ? 'passed' : 'paused' };
-    return { ...next, rows, repairParts, index: repairParts[0], phase: 'repair', mode: run.rounds >= run.limit ? 'limited' : next.mode };
+    if (!repairParts.length) return { ...next, rows, manualCriterion: undefined, mode: rows.some(row => row.score === null) ? 'missing' : next.mode === 'running' ? 'passed' : 'paused' };
+    return { ...next, rows, repairParts, index: repairParts[0], phase: 'repair', manualCriterion: undefined,
+      mode: run.manualCriterion !== undefined || run.rounds >= run.limit ? 'limited' : next.mode };
   }
   if (!required(value?.text)) throw new Error('ChatGPT chưa trả kịch bản của phần này.');
   const parts = run.parts.map((part, i) => i === run.index ? { ...part, text: value.text.trim() } : part);
   const following = run.phase === 'repair' ? run.repairParts.find(index => index > run.index) : run.index + 1;
   if (following !== undefined && following < parts.length) return { ...next, parts, index: following };
-  return { ...next, parts, phase: 'review', rounds: run.rounds + Number(run.phase === 'repair'), repairParts: [] };
+  return { ...next, parts, phase: 'review', rounds: run.rounds + Number(run.phase === 'repair' && run.manualCriterion === undefined), repairParts: [] };
 }

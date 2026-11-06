@@ -2,7 +2,7 @@ import { FileText, Play } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { emptyAnalysis, loadAnalysis } from './analysisWorkspace';
 import { loadTranscriptWorkspace, preparedAnalysisSource } from './transcriptWorkspace';
-import { acceptResponse, complete, criteriaWithSource, emptyRun, promptFor, scriptOf, threshold, type Mode, type Run } from './automaticAnalysis';
+import { acceptResponse, complete, criteriaWithSource, emptyRun, promptFor, reviewQuality, scriptOf, threshold, type Mode, type Run } from './automaticAnalysis';
 import './analysisTab.css';
 
 type Props = {
@@ -14,7 +14,7 @@ type Props = {
 const send = (type: string, data = {}) => window.postMessage({ source: 'vis-web', type, ...data }, location.origin);
 const labels: Record<Mode, string> = {
   idle: 'Sẵn sàng', running: 'Đang xử lý', paused: 'Đã tạm dừng', stopped: 'Đã dừng', error: 'Gặp lỗi',
-  limited: 'Đã hết lượt sửa · vẫn còn tiêu chuẩn dưới 8/10',
+  limited: 'Chưa đạt · vẫn còn tiêu chuẩn dưới 8/10',
   missing: 'Các tiêu chuẩn chấm được đã đạt · còn tiêu chuẩn chưa đủ dữ liệu',
   passed: 'Tất cả tiêu chuẩn đã đạt', transferred: 'Đã chuyển bản thảo sang Phân tách',
 };
@@ -111,7 +111,7 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   }, [connected]);
 
   const transfer = (current: Run, automatic: boolean) => {
-    if (!complete(current)) return;
+    if (!complete(current) || reviewQuality(current.rows).needsWork > 0) return;
     const plan = current.plan;
     const handoff = {
       ...emptyAnalysis(), input: current.source, script: scriptOf(current), status: 'transferred' as const,
@@ -193,7 +193,17 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
     anchor.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-  const canTransfer = complete(run) && !working && ['missing', 'passed', 'limited'].includes(run.mode);
+  const hasCurrentReview = !working && ['missing', 'passed', 'limited', 'transferred'].includes(run.mode);
+  const quality = reviewQuality(run.rows);
+  const canTransfer = complete(run) && hasCurrentReview && quality.needsWork === 0 && ['missing', 'passed'].includes(run.mode);
+  const repairCriterion = (id: number) => change(current => {
+    if (current.pending || !['missing', 'passed', 'limited', 'transferred'].includes(current.mode)) return;
+    const row = current.rows.find(item => item.id === id);
+    if (!row || row.score === null || row.part === null || !current.parts[row.part - 1]?.text) return;
+    if (!live.current.connected || live.current.otherWork) { setError('Kết nối ChatGPT và chờ tác vụ hiện tại hoàn tất.'); return; }
+    save({ ...current, phase: 'repair', mode: 'running', index: row.part - 1, repairParts: [row.part - 1],
+      manualCriterion: id, notice: 'Sửa phần ' + row.part + ' theo tiêu chí đã chọn.' });
+  });
 
   return <section className="workspace auto-analysis">
     <section className="panel">
@@ -207,8 +217,7 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
         {canResume && <button className="outline" onClick={resume}>Tiếp tục</button>}
         {(working || run.mode === 'paused') && <button className="danger" onClick={() => change(current => stop(current))}>Dừng</button>}
         {canTransfer && <button className="outline" onClick={() => change(current => {
-          if (current.mode === 'limited' && !window.confirm('Một số tiêu chuẩn còn dưới 8/10. Chuyển bản hiện tại sang Phân tách?')) return;
-          if (['missing', 'passed', 'limited'].includes(current.mode)) transfer(current, false);
+          if (['missing', 'passed'].includes(current.mode) && reviewQuality(current.rows).needsWork === 0) transfer(current, false);
         })}>Chuyển sang Phân tách</button>}
       </div>}
       <p className="script-meta" role="status">{run.mode === 'idle' && !sourceInfo.text ? 'Đang chờ bản viết lại từ Get Transcript' : progress(run)}{run.rounds > 0 && ` · Đã sửa ${run.rounds}/${run.limit} lượt`}{run.notice && ' · ' + run.notice}</p>
@@ -217,6 +226,13 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
       {run.rows.length > 0 && (run.phase === 'repair' || run.phase === 'review') && ['running', 'paused', 'stopped', 'error'].includes(run.mode)
         && <p>Đang hiển thị báo cáo của lần chấm trước. Studio sẽ cập nhật sau khi chấm lại bản sửa.</p>}
 
+      <section className="auto-quality" aria-label="Chất lượng kịch bản">
+        <strong>Chất lượng kịch bản · {hasCurrentReview
+          ? quality.needsWork ? 'Chưa đạt' : quality.unscored ? 'Đạt các mục đã chấm · cần duyệt mục còn thiếu' : 'Đạt'
+          : run.rows.length ? 'Kết quả lần chấm trước' : 'Chưa chấm'}</strong>
+        <meter min={0} max={criteriaWithSource.length} value={quality.passed} aria-label="Số tiêu chí đạt từ 8 điểm"/>
+        {run.rows.length > 0 && <small>{quality.passed}/{criteriaWithSource.length} đạt · {quality.needsWork} cần sửa · {quality.unscored} chưa đủ dữ liệu</small>}
+      </section>
       <div className="auto-review-scroll"><table className="auto-review">
         <thead><tr><th scope="col">Công thức Aprilynne</th><th scope="col">Điểm, dẫn chứng và cách sửa</th></tr></thead>
         <tbody>{criteriaWithSource.map((criterion, index) => {
@@ -229,7 +245,7 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
             </th>
             <td>{criterion.visual || (row && row.score === null) ? <><b>Chưa đủ dữ liệu</b><div>{row?.reason || 'Cần tài sản thực tế để đối chiếu.'}</div></>
               : row ? <><b>{row.score}/10 · {(row.score ?? 0) >= threshold ? 'Đạt' : 'Cần sửa'}</b> · Phần {row.part}
-                <blockquote>{row.evidence}</blockquote><div>{row.reason}</div>{row.fix && <div><strong>Cách sửa </strong>{row.fix}</div>}</>
+                <blockquote>{row.evidence}</blockquote><div>{row.reason}</div>{row.fix && <div><strong>Cách sửa </strong>{row.fix}</div>}{hasCurrentReview && <button className="outline" onClick={() => repairCriterion(row.id)}>Nhờ ChatGPT sửa phần {row.part}</button>}</>
               : <span>—</span>}</td>
           </tr>;
         })}</tbody>

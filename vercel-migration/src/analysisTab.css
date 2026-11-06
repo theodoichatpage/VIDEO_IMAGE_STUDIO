@@ -21,3 +21,7 @@
 .auto-review blockquote { margin: 4px 0; white-space: pre-line; font-weight: normal; }
 .auto-script textarea { margin-bottom: 8px; }
 .auto-analysis pre { max-height: 180px; overflow: auto; white-space: pre-wrap; }
+
+.auto-quality { display: grid; gap: 4px; padding: 8px 10px; background: #edf4ff; border-radius: 6px; }
+.auto-quality meter { width: 100%; height: 12px; }
+.auto-review td > button { margin-top: 6px; }
