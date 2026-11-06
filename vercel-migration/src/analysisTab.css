@@ -17,6 +17,7 @@
 .auto-review th, .auto-review td { padding: 8px 9px; border-bottom: 1px solid #e0e7f0; vertical-align: top; }
 .auto-review thead th { position: sticky; top: 0; background: #edf4ff; }
 .auto-review-columns > :first-child th:first-child { width: 60%; }
+.auto-review-columns > :first-child tbody th { font-weight: normal; }
 .auto-review-columns > :last-child th:first-child { width: 30%; }
 .auto-review small { display: block; color: #596b82; }
 .auto-review .auto-group { margin-bottom: 4px; color: #135ab0; }
