@@ -20,7 +20,7 @@ async function request<T>(method: string, url: string, body?: unknown, signal?: 
 }
 
 export const api = {
-  get: <T = ApiData>(url: string) => request<T>('GET', url),
+  get: <T = ApiData>(url: string, signal?: AbortSignal) => request<T>('GET', url, undefined, signal),
   post: <T = ApiData>(url: string, body?: unknown, signal?: AbortSignal) => request<T>('POST', url, body, signal),
 };
 
