@@ -8,9 +8,11 @@
     "dev": "vite",
     "prebuild": "node scripts/write-build-id.mjs && node scripts/apply_image_separation_tab.mjs && node scripts/apply_transcript_engine_settings.mjs && node scripts/apply_compact_image_workspace.mjs && node scripts/package-extension.mjs",
     "build": "vite build",
-    "test": "vitest run",
+    "test": "npm run test:unit && npm run test:node",
     "preview": "vite preview",
-    "package:extension": "node scripts/package-extension.mjs"
+    "package:extension": "node scripts/package-extension.mjs",
+    "test:unit": "vitest run src",
+    "test:node": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.469.0",

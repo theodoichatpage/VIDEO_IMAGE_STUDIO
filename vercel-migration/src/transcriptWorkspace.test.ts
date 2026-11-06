@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+if (typeof localStorage === 'undefined') vi.stubGlobal('localStorage', {getItem: () => null});
 import { assembleRewrittenScript, defaultTranscriptWorkspace, validateMindmapPayload, workspaceStorageKey } from './transcriptWorkspace';
 
 describe('transcript workspace', () => {
