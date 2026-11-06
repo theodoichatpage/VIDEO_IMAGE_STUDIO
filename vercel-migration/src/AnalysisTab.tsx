@@ -1,13 +1,15 @@
-import { FileText, Play } from 'lucide-react';
+import { FileText } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { emptyAnalysis, loadAnalysis } from './analysisWorkspace';
 import { loadTranscriptWorkspace, preparedAnalysisSource } from './transcriptWorkspace';
-import { acceptResponse, complete, criteriaWithSource, emptyRun, promptFor, reviewPartsFromScript, reviewQuality, scriptOf, threshold, type Mode, type Run } from './automaticAnalysis';
+import { acceptResponse, approvedRun, criteriaWithSource, emptyRun, promptFor, reviewPartsFromScript, reviewQuality, restoreRun, scriptOf, threshold, type Mode, type Run } from './automaticAnalysis';
 import './analysisTab.css';
+import { readManagerTranscript, readManagerTranscriptState } from './managerTranscript';
 
 type Props = {
   projectId: string; projectName: string; connected: boolean; otherWork: boolean; bridgeJob?: string;
-  active: boolean;
+  active: boolean; ready: boolean; enabled?: boolean; workEpoch?: number;
+  onCheckpoint: (run: Run) => Promise<void>;
   managerReview?: { id: string; source: 'transcript' | 'script' };
   managerScript?: string;
   onTransfer: (draft: ReturnType<typeof emptyAnalysis>, automatic: boolean, managed?: boolean) => string;
@@ -16,7 +18,7 @@ type Props = {
 const send = (type: string, data = {}) => window.postMessage({ source: 'vis-web', type, ...data }, location.origin);
 const labels: Record<Mode, string> = {
   idle: 'Sẵn sàng', running: 'Đang xử lý', paused: 'Đã tạm dừng', stopped: 'Đã dừng', error: 'Gặp lỗi',
-  limited: 'Chưa đạt · vẫn còn tiêu chuẩn dưới 8/10',
+  limited: 'Lỗi: đã hết số vòng sửa tự động · còn tiêu chí dưới 8/10, chờ xử lý',
   missing: 'Các tiêu chuẩn chấm được đã đạt · còn tiêu chuẩn chưa đủ dữ liệu',
   passed: 'Mọi tiêu chuẩn chấm được từ kịch bản đã đạt', transferred: 'Đã chuyển bản thảo sang Phân tách',
 };
@@ -29,12 +31,12 @@ function progress(run: Run) {
   return run.phase === 'write' ? 'Đang viết ' + part : `Đang sửa lần ${run.rounds + 1}/${run.limit} · ${part}`;
 }
 
-export default function AnalysisTab({ projectId, projectName, connected, otherWork, bridgeJob, active, managerReview, managerScript, onTransfer }: Props) {
+export default function AnalysisTab({ projectId, projectName, connected, otherWork, bridgeJob, active, ready, enabled = true, workEpoch = 0, managerReview, managerScript, onCheckpoint, onTransfer }: Props) {
   const key = 'vis-automatic-analysis-v2-' + projectId;
   const read = (): Run => {
     try {
       const raw = localStorage.getItem(key);
-      if (raw) return JSON.parse(raw);
+      if (raw) return restoreRun(JSON.parse(raw), projectId, workEpoch);
       const legacy = loadAnalysis(projectId);
       return { ...emptyRun(), input: legacy.input || legacy.script || '' };
     } catch { return emptyRun(); }
@@ -42,15 +44,18 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   const [run, setRun] = useState(read);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<'all' | 'low' | 'pass'>('all');
-  const live = useRef({ connected, otherWork, bridgeJob, onTransfer });
-  live.current = { connected, otherWork, bridgeJob, onTransfer };
+  const live = useRef({ connected, otherWork, bridgeJob, onTransfer, onCheckpoint });
+  live.current = { connected, otherWork, bridgeJob, onTransfer, onCheckpoint };
+  const checkpointing = useRef(false);
+  const [tick, setTick] = useState(0);
+  useEffect(() => { const timer = setInterval(() => setTick(value => value + 1), 2000); return () => clearInterval(timer); }, []);
 
   const save = (next: Run) => {
     localStorage.setItem(key, JSON.stringify(next));
     setRun(next);
     setError('');
   };
-  const change = (action: (current: Run) => void) => {
+  const change = (action: (current: Run) => void | Promise<void>) => {
     if (!navigator.locks) { setError('Hãy dùng Chrome hoặc Edge qua HTTPS để chạy một tác vụ tại một thời điểm.'); return; }
     void navigator.locks.request(key, () => action(read())).catch(caught => setError(caught instanceof Error ? caught.message : 'Không lưu được trạng thái.'));
   };
@@ -82,8 +87,15 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
         if (!['completed', 'error'].includes(data.state)) return;
         let next: Run;
         try {
-          if (data.state === 'error') throw new Error(String(data.message || data.text || 'ChatGPT không xử lý được tác vụ.'));
-          next = acceptResponse(current, data.text);
+          if (data.state === 'error') {
+            const message = String(data.message || data.text || 'ChatGPT không xử lý được tác vụ.');
+            if (/đang (xử lý|bận)|tác vụ khác|chưa kết nối|mất kết nối|chưa sẵn sàng|không tìm thấy.*ChatGPT/i.test(message)) {
+              save({ ...current, pending: undefined, notice: 'Đang xếp hàng · chờ ChatGPT sẵn sàng.' });
+              send('studio-transcript-ack', { jobId: data.jobId }); return;
+            }
+            throw new Error(message);
+          }
+          next = { ...acceptResponse(current, data.text), needsSave: true, revision: (current.revision || 0) + 1 };
         } catch (caught) {
           next = { ...current, pending: undefined, mode: 'error', notice: caught instanceof Error ? caught.message : 'Phản hồi không hợp lệ.' };
         }
@@ -92,7 +104,7 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
       });
     };
     const recover = () => change(current => {
-      if (!current.pending) return;
+      if (!current.pending || !live.current.connected) return;
       if (current.mode === 'running' && current.pending.deadline <= Date.now()) {
         save({ ...current, mode: 'error', notice: 'Quá thời gian chờ. Tiếp tục để đồng bộ lệnh hiện tại hoặc Dừng để gửi lại công đoạn này.' });
       }
@@ -104,16 +116,20 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
     return () => { clearInterval(timer); window.removeEventListener('message', receive); window.removeEventListener('storage', sync); };
   }, [key]);
 
-  const previouslyConnected = useRef(connected);
+  const disconnectedAt = useRef<number | undefined>(undefined);
   useEffect(() => {
-    if (previouslyConnected.current && !connected) change(current => {
-      if (current.mode === 'running') save({ ...current, mode: 'error', notice: 'Mất kết nối ChatGPT. Kết nối lại và bấm Tiếp tục.' });
-    });
-    previouslyConnected.current = connected;
+    if (!connected && disconnectedAt.current === undefined) disconnectedAt.current = Date.now();
+    if (connected && disconnectedAt.current !== undefined) {
+      const elapsed = Date.now() - disconnectedAt.current; disconnectedAt.current = undefined;
+      change(current => { if (current.pending) {
+        save({ ...current, pending: { ...current.pending, deadline: current.pending.deadline + elapsed } });
+        send('studio-capture-result', { jobId: current.pending.id });
+      } });
+    }
   }, [connected]);
 
   const transfer = (current: Run, automatic: boolean) => {
-    if (!complete(current) || reviewQuality(current.rows).needsWork > 0) return;
+    if (!approvedRun(current) || current.needsSave) return;
     const plan = current.plan;
     const handoff = {
       ...emptyAnalysis(), input: current.source, script: scriptOf(current), status: 'transferred' as const,
@@ -128,81 +144,86 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   };
 
   useEffect(() => {
-    if (run.mode === 'passed') { change(current => { if (current.mode !== 'passed') return;
+    if (!enabled || !ready || checkpointing.current) return;
+    if (run.needsSave && !run.pending && !otherWork && ['running', 'passed', 'limited'].includes(run.mode)) {
+      checkpointing.current = true;
+      change(async current => {
+        try {
+          if (!current.needsSave || !['running', 'passed', 'limited'].includes(current.mode)) return;
+          await live.current.onCheckpoint(current);
+          save({ ...current, needsSave: false, mode: current.restoreTransferred ? 'transferred' : current.mode, restoreTransferred: undefined });
+        } catch (caught) {
+          const message = caught instanceof Error ? caught.message : 'lỗi máy chủ';
+          save(/tác vụ khác/i.test(message) ? { ...current, notice: 'Đang xếp hàng · chờ tác vụ hiện tại trước khi lưu.' }
+            : { ...current, mode: 'error', notice: 'Chưa lưu dự án: ' + message });
+        } finally { checkpointing.current = false; }
+      });
+      return;
+    }
+    if (run.mode === 'passed' && !run.needsSave) { change(current => {
+      if (current.mode !== 'passed' || current.needsSave) return;
       try { transfer(current, true); } catch (caught) {
         save({ ...current, mode: 'error', notice: caught instanceof Error ? caught.message : 'Chưa chuyển được kịch bản.' });
-      } }); return; }
-    if (run.mode !== 'running' || run.pending || !connected || otherWork) return;
+      }
+    }); return; }
+    if (run.mode !== 'running' || run.needsSave || run.pending || !connected || otherWork || bridgeJob) return;
     const timer = window.setTimeout(() => change(current => {
-      if (current.mode !== 'running' || current.pending || !live.current.connected || live.current.otherWork) return;
+      if (current.mode !== 'running' || current.pending || current.needsSave || !live.current.connected || live.current.otherWork || live.current.bridgeJob) return;
       const legacyPending = loadAnalysis(projectId).pending;
       const transcriptPending = JSON.parse(localStorage.getItem('vis-transcript-pending-' + projectId) || 'null');
-      if (transcriptPending?.expires > Date.now() || (legacyPending && legacyPending.expires > Date.now())) {
-        save({ ...current, mode: 'error', notice: 'Get Transcript hoặc một tác vụ Phân tích cũ đang chờ. Hãy hoàn tất tác vụ đó rồi tiếp tục.' });
-        return;
-      }
+      if (transcriptPending?.expires > Date.now() || (legacyPending && legacyPending.expires > Date.now())) return;
       const id = 'transcript-' + crypto.randomUUID();
-      const prompt = promptFor(current);
       const sectionId = `automatic-analysis:${current.phase}:${current.index + 1}`;
       save({ ...current, pending: { id, sectionId, deadline: Date.now() + 25_000 }, notice: '' });
-      send('studio-transcript-ai', { pairCode: projectId, command: { id, type: 'transcript_rewrite', kind: 'rewrite', sectionId, prompt } });
+      send('studio-transcript-ai', { pairCode: projectId, command: { id, type: 'transcript_rewrite', kind: 'rewrite', sectionId, prompt: promptFor(current) } });
     }), 400);
     return () => clearTimeout(timer);
-  }, [run, connected, otherWork, projectId]);
+  }, [run, connected, otherWork, bridgeJob, projectId, enabled, ready, tick]);
 
   const readSource = () => preparedAnalysisSource(loadTranscriptWorkspace(projectId));
   const [sourceInfo, setSourceInfo] = useState(readSource);
   useEffect(() => {
-    if (!active) return;
-    setSourceInfo(readSource());
-    const sync = (event: StorageEvent) => {
-      if (event.key === 'vis-transcript-workspace-' + projectId) setSourceInfo(readSource());
-    };
+    const sync = () => setSourceInfo(readSource());
+    const onWorkspace = (event: Event) => { if ((event as CustomEvent).detail?.projectId === projectId) sync(); };
+    sync();
     window.addEventListener('storage', sync);
-    return () => window.removeEventListener('storage', sync);
+    window.addEventListener('vis-transcript-workspace-updated', onWorkspace);
+    return () => { window.removeEventListener('storage', sync); window.removeEventListener('vis-transcript-workspace-updated', onWorkspace); };
   }, [active, projectId]);
 
-  const start = () => change(current => {
-    if (current.mode === 'running' || current.pending) return;
-    if (complete(current)) {
-      if (!live.current.connected || live.current.otherWork) { setError('Kết nối ChatGPT và chờ tác vụ hiện tại hoàn tất.'); return; }
-      save({ ...current, source: current.mode === 'transferred' ? scriptOf(current) : current.source,
-        phase: 'review', mode: 'running', rounds: 0, repairParts: [], manualCriterion: undefined, manualBatch: undefined, notice: '' });
-      return;
-    }
-    const prepared = readSource();
-    setSourceInfo(prepared);
-    const source = prepared.text || managerScript?.trim();
-    const style = prepared.style;
-    if (!source) { setError('Hãy chuẩn bị bản viết lại trong Get Transcript.'); return; }
-    if (!live.current.connected || live.current.otherWork) { setError('Kết nối ChatGPT và chờ tác vụ hiện tại hoàn tất.'); return; }
-    if (current.parts.some(part => part.text)) {
-      if (!window.confirm('Chạy lại từ đầu? Kịch bản và báo cáo hiện tại sẽ được lưu trong lịch sử.')) return;
-      localStorage.setItem(key + '-history-' + crypto.randomUUID(), JSON.stringify(current));
-      localStorage.setItem(key + '-previous', JSON.stringify(current));
-    }
-    save({ ...emptyRun(), input: current.input, source, style, mode: 'running', phase: 'review', parts: prepared.text ? prepared.parts : reviewPartsFromScript(source) });
-    setFilter('all');
-  });
+  useEffect(() => {
+    if (!enabled || !ready || !sourceInfo.text) return;
+    change(current => {
+      if (current.source === sourceInfo.text || current.pending || !['idle', 'transferred', 'limited', 'error', 'stopped'].includes(current.mode)) return;
+      if (current.source && current.source !== sourceInfo.text) localStorage.setItem(key + '-previous', JSON.stringify(current));
+      const command = readManagerTranscript(); const pipeline = readManagerTranscriptState();
+      const managerReviewId = command?.sessionId === projectId && command.rewrite && command.id === pipeline?.id ? command.id : undefined;
+      save({ ...emptyRun(), runId: crypto.randomUUID(), revision: 1, needsSave: true, workEpoch,
+        source: sourceInfo.text, style: sourceInfo.style, parts: sourceInfo.parts, phase: 'review', mode: 'running', managerReviewId, pipelineId: managerReviewId });
+    });
+  }, [sourceInfo.text, sourceInfo.style, enabled, ready, projectId, workEpoch, run.mode]);
 
   useEffect(() => {
-    if (!managerReview || !connected || otherWork || run.managerReviewId === managerReview.id) return;
+    if (!enabled || !ready || !managerReview || run.managerReviewId === managerReview.id) return;
     change(current => {
-      if (current.managerReviewId === managerReview.id || current.mode === 'running' || current.pending) return;
+      if (current.managerReviewId === managerReview.id) return;
+      if (current.mode === 'running' || current.pending) { save({ ...current, managerReviewId: managerReview.id }); return; }
       const prepared = readSource();
       const workspace = loadTranscriptWorkspace(projectId);
       const source = managerReview.source === 'script' ? managerScript?.trim() : prepared.text || workspace.transcript?.text.trim();
       if (!source) return;
+      if (current.mode === 'transferred' && !current.needsSave && approvedRun(current) && (source === current.source || source === scriptOf(current))) {
+        save({ ...current, managerReviewId: managerReview.id }); return;
+      }
       const parts = managerReview.source === 'transcript' && prepared.text ? prepared.parts : reviewPartsFromScript(source);
       if (current.parts.length) localStorage.setItem(key + '-previous', JSON.stringify(current));
-      save({ ...emptyRun(), source, style: prepared.style, parts, phase: 'review', mode: 'running', managerReviewId: managerReview.id });
+      save({ ...emptyRun(), runId: crypto.randomUUID(), revision: 1, needsSave: true, workEpoch, source, style: prepared.style, parts, phase: 'review', mode: 'running', managerReviewId: managerReview.id });
     });
-  }, [managerReview, managerScript, connected, otherWork, run.mode, run.pending, projectId]);
+  }, [managerReview, managerScript, connected, otherWork, run.mode, run.pending, projectId, ready, enabled]);
 
   const resume = () => change(current => {
     if (!['paused', 'stopped', 'error'].includes(current.mode)) return;
-    if (!live.current.connected) { setError('Kết nối lại đúng hội thoại ChatGPT để tiếp tục.'); return; }
-    save({ ...current, mode: 'running', notice: '', pending: current.pending && { ...current.pending, deadline: Date.now() + 600_000 } });
+    save({ ...current, workEpoch, mode: 'running', notice: '', pending: current.pending && { ...current.pending, deadline: Date.now() + 600_000 } });
     if (current.pending) send('studio-capture-result', { jobId: current.pending.id });
   });
 
@@ -210,21 +231,17 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   const canResume = ['paused', 'stopped', 'error'].includes(run.mode);
   const hasCurrentReview = !working && ['missing', 'passed', 'limited', 'transferred'].includes(run.mode);
   const quality = reviewQuality(run.rows);
-  const scores = run.rows.flatMap(row => row.score === null ? [] : [row.score]);
-  const canTransfer = complete(run) && hasCurrentReview && quality.needsWork === 0 && ['missing', 'passed'].includes(run.mode);
   const repairCriterion = (id: number) => change(current => {
     if (current.pending || !['missing', 'passed', 'limited', 'transferred'].includes(current.mode)) return;
     const row = current.rows.find(item => item.id === id);
     if (!row || row.score === null || row.score >= threshold || row.part === null || !current.parts[row.part - 1]?.text) return;
-    if (!live.current.connected || live.current.otherWork) { setError('Kết nối ChatGPT và chờ tác vụ hiện tại hoàn tất.'); return; }
     save({ ...current, phase: 'repair', mode: 'running', index: row.part - 1, repairParts: [row.part - 1],
       manualCriterion: id, notice: 'Sửa phần ' + row.part + ' theo tiêu chí đã chọn.' });
   });
 
-  const canRepairAll = hasCurrentReview && quality.needsWork > 0;
+  const canRepairAll = run.rows.length > 0 && quality.needsWork > 0;
   const repairAll = () => change(current => {
-    if (current.pending || current.mode !== 'limited') return;
-    if (!live.current.connected || live.current.otherWork) { setError('Kết nối ChatGPT và chờ tác vụ hiện tại hoàn tất.'); return; }
+    if (current.pending || !['missing', 'passed', 'limited', 'transferred'].includes(current.mode)) return;
     const repairParts = [...new Set(current.rows.filter(row => row.score !== null && row.score < threshold && row.part !== null)
       .map(row => row.part! - 1))].sort((a, b) => a - b);
     if (!repairParts.length) return;
@@ -239,27 +256,22 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   return <section className="workspace auto-analysis">
     <section className="panel">
       <div className="panel-heading"><FileText/><div><h1>Công thức Aprilynne</h1><p>Dự án: {projectName}</p></div></div>
-      {(sourceInfo.text || managerScript?.trim() || complete(run) || working || canResume || canTransfer) && <div className="analysis-controls">
-        {(sourceInfo.text || managerScript?.trim() || complete(run) || working) && <button className="analyze-all split-button" disabled={working} onClick={start}><Play size={16}/> {complete(run) ? 'Chấm lại' : 'Đối chiếu theo Aprilynne'}</button>
-        }
+      {(working || canResume) && <div className="analysis-controls">
         {run.mode === 'running' && <button className="outline" onClick={() => change(current => {
           if (current.mode === 'running') save({ ...current, mode: 'paused', notice: 'Studio sẽ lưu phản hồi đang chờ rồi tạm dừng.' });
         })}>Tạm dừng</button>}
         {canResume && <button className="outline" onClick={resume}>Tiếp tục</button>}
         {(working || run.mode === 'paused') && <button className="danger" onClick={() => change(current => stop(current))}>Dừng</button>}
-        {canTransfer && <button className="outline" onClick={() => change(current => {
-          if (['missing', 'passed'].includes(current.mode) && reviewQuality(current.rows).needsWork === 0) transfer(current, false);
-        })}>Chuyển sang Phân tách</button>}
       </div>}
-      <p className="script-meta" role="status">{run.mode === 'idle' && !sourceInfo.text && !managerScript?.trim() ? 'Đang chờ bản viết lại từ Get Transcript' : progress(run)}{run.rounds > 0 && ` · Đã sửa ${run.rounds}/${run.limit} lượt`}{run.notice && ' · ' + run.notice}</p>
+      <p className="script-meta" role="status">{run.mode === 'running' && !run.pending ? run.needsSave ? 'Đang lưu kịch bản và kết quả vào dự án' : !connected ? 'Đang xếp hàng · chờ kết nối ChatGPT' : otherWork || bridgeJob ? 'Đang xếp hàng · chờ tác vụ ChatGPT hiện tại hoàn tất' : progress(run) : run.mode === 'idle' ? 'Đang chờ bản viết lại từ Get Transcript' : progress(run)}{run.rounds > 0 && ` · Đã sửa ${run.rounds}/${run.limit} lượt`}{run.notice && ' · ' + run.notice}</p>
       {error && <p role="alert">{error}</p>}
       {run.rows.length > 0 && <p>Điểm tham khảo dựa trên kịch bản. Các mục cần ảnh bìa hoặc video thực tế được đánh dấu riêng.</p>}
       {run.rows.length > 0 && (run.phase === 'repair' || run.phase === 'review') && ['running', 'paused', 'stopped', 'error'].includes(run.mode)
         && <p>Đang hiển thị báo cáo của lần chấm trước. Studio sẽ cập nhật sau khi chấm lại bản sửa.</p>}
 
       <section className="auto-quality" aria-label="Chất lượng kịch bản">
-        <strong>{scores.length > 0 && `Điểm thấp nhất ${Math.min(...scores).toFixed(1)}/10 · `}Ngưỡng đạt {threshold}/10 · {hasCurrentReview
-          ? quality.needsWork ? 'Chưa đạt' : quality.unscored ? 'Đạt các mục đã chấm · cần duyệt mục còn thiếu' : 'Đạt'
+        <strong>Ngưỡng đạt {threshold}/10 · {hasCurrentReview
+          ? quality.needsWork ? 'Chưa đạt' : quality.unscored ? 'Đạt tiêu chí kịch bản · mục hình ảnh chờ bước sau' : 'Đạt'
           : run.rows.length ? 'Kết quả lần chấm trước' : 'Chưa chấm'}</strong>
         <meter min={0} max={criteriaWithSource.length} value={quality.passed} aria-label="Số tiêu chí đạt từ 8 điểm"/>
         {run.rows.length > 0 && <small>{quality.passed}/{criteriaWithSource.length} đạt · {quality.needsWork} cần sửa · {quality.unscored} chưa đủ dữ liệu</small>}
@@ -282,14 +294,14 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
                 </details></th>
                 <td>{typeof score === 'number' ? <strong className={score >= threshold ? 'score-pass' : 'score-low'}>{score.toFixed(1)}</strong>
                   : <span title={criterion.visual || score === null ? 'Chưa đủ dữ liệu' : 'Chưa chấm'}>—</span>}
-                {hasCurrentReview && row && typeof score === 'number' && score < threshold && row.part !== null &&
-                  <button className="outline" aria-label={`Sửa phần ${row.part} theo tiêu chí ${criterion.name}`} onClick={() => repairCriterion(row.id)}>Sửa</button>}</td>
+                {row && typeof score === 'number' && score < threshold && row.part !== null &&
+                  <button className="outline" disabled={working} aria-label={`Viết lại tiêu chí ${criterion.name} · phần ${row.part}`} onClick={() => repairCriterion(row.id)}>Viết lại</button>}</td>
               </tr>;
             })}</tbody>
           </table></div>)}
       </div>
       {canRepairAll && <div className="analysis-controls">
-        <button className="analyze-all split-button" onClick={repairAll}>Viết lại tất cả phần chưa đạt</button>
+        <button className="analyze-all split-button" disabled={working} onClick={repairAll}>Viết lại tất cả phần chưa đạt</button>
       </div>}
     </section>
   </section>;

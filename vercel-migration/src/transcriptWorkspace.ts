@@ -10,7 +10,9 @@ export const defaultTranscriptWorkspace=():TranscriptWorkspaceState=>({url:'',la
 // the first project opened after this change, never to a second one, so projects do not overwrite each other.
 export function claimSharedWorkspace(projectId:string){try{if(projectId==='default'||localStorage.getItem(workspaceStorageKey(projectId))!==null||localStorage.getItem('vis-transcript-default-owner'))return;const shared=localStorage.getItem(workspaceStorageKey('default'));localStorage.setItem('vis-transcript-default-owner',projectId);if(shared)localStorage.setItem(workspaceStorageKey(projectId),shared)}catch{}}
 export function loadTranscriptWorkspace(projectId:string):TranscriptWorkspaceState{try{claimSharedWorkspace(projectId);const raw=localStorage.getItem(workspaceStorageKey(projectId));return raw?{...defaultTranscriptWorkspace(),...JSON.parse(raw)}:defaultTranscriptWorkspace()}catch{return defaultTranscriptWorkspace()}}
-export function saveTranscriptWorkspace(projectId:string,state:TranscriptWorkspaceState){localStorage.setItem(workspaceStorageKey(projectId),JSON.stringify({...state,updatedAt:Date.now()}));}
+export function saveTranscriptWorkspace(projectId:string,state:TranscriptWorkspaceState){localStorage.setItem(workspaceStorageKey(projectId),JSON.stringify({...state,updatedAt:Date.now()}));
+ if(typeof window!=='undefined')window.dispatchEvent(new CustomEvent('vis-transcript-workspace-updated',{detail:{projectId}}));
+}
 export function validateMindmapPayload(value:unknown):MindmapBranch[]{
  const root=value as {branches?:unknown}; if(!root||!Array.isArray(root.branches)||!root.branches.length)throw new Error('Mindmap JSON không hợp lệ.');
  const seen=new Set<string>(); return root.branches.map((raw:any)=>{const id=String(raw?.id||'').trim(),title=String(raw?.title||'').trim(),content=String(raw?.content||'').trim();if(!id||!title||!content||seen.has(id))throw new Error('Mindmap thiếu ID/nội dung hoặc bị trùng ID.');seen.add(id);return{id,title,summary:String(raw?.summary||''),content,children:Array.isArray(raw?.children)?raw.children.map((x:any)=>({id:String(x?.id||''),title:String(x?.title||'')})).filter((x:any)=>x.id&&x.title):[]};});

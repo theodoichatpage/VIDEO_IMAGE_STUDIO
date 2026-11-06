@@ -17,10 +17,11 @@ export type Row = { id: number; score: number | null; part: number | null; evide
 export type Phase = 'plan' | 'write' | 'review' | 'repair';
 export type Mode = 'idle' | 'running' | 'paused' | 'stopped' | 'error' | 'limited' | 'missing' | 'passed' | 'transferred';
 export type Run = {
+  runId?: string; revision?: number; restoreTransferred?: boolean; needsSave?: boolean; workEpoch?: number;
   input: string; source: string; style: string; limit: number; rounds: number; mode: Mode; phase: Phase;
   plan?: Plan; parts: Part[]; index: number; rows: Row[]; repairParts: number[];
   manualCriterion?: number;
-  managerReviewId?: string;
+  managerReviewId?: string; pipelineId?: string;
   manualBatch?: boolean;
   pending?: { id: string; deadline: number; sectionId?: string }; notice: string;
 };
@@ -144,7 +145,7 @@ export function acceptResponse(run: Run, text: unknown): Run {
   if (run.phase === 'review') {
     const rows = reviewed(value, run);
     const repairParts = [...new Set(rows.filter(row => row.score !== null && row.score < threshold).map(row => row.part! - 1))].sort((a, b) => a - b);
-    if (!repairParts.length) return { ...next, rows, manualCriterion: undefined, manualBatch: undefined, mode: !run.managerReviewId && rows.some(row => row.score === null) ? 'missing' : next.mode === 'running' ? 'passed' : 'paused' };
+    if (!repairParts.length) return { ...next, rows, manualCriterion: undefined, manualBatch: undefined, mode: next.mode === 'running' ? 'passed' : 'paused' };
     return { ...next, rows, repairParts, index: repairParts[0], phase: 'repair', manualCriterion: undefined, manualBatch: undefined,
       mode: run.manualCriterion !== undefined || run.manualBatch || run.rounds >= run.limit ? 'limited' : next.mode };
   }
@@ -153,4 +154,29 @@ export function acceptResponse(run: Run, text: unknown): Run {
   const following = run.phase === 'repair' ? run.repairParts.find(index => index > run.index) : run.index + 1;
   if (following !== undefined && following < parts.length) return { ...next, parts, index: following };
   return { ...next, parts, phase: 'review', rounds: run.rounds + Number(run.phase === 'repair' && run.manualCriterion === undefined && !run.manualBatch), repairParts: [] };
+}
+
+// One gate shared by handoff and Manager reporting: missing future visual assets are not script failures.
+export function approvedRun(run: Run | null | undefined) {
+  if (!run || !complete(run) || run.rows.length !== criteriaWithSource.length) return false;
+  return criteriaWithSource.every(({ id, visual }) => {
+    const rows = run.rows.filter(row => row.id === id);
+    if (rows.length !== 1) return false;
+    return visual || (id === 0 && !run.plan?.title) || (typeof rows[0].score === 'number' && rows[0].score >= threshold);
+  });
+}
+
+// Old browser checkpoints predate durable project acknowledgments. Never trust their success marker alone.
+export function restoreRun(saved: Run, projectId: string, workEpoch = 0): Run {
+  const legacy = !saved.runId || !saved.revision;
+  const run = { ...emptyRun(), ...saved, runId: saved.runId || 'legacy-' + projectId,
+    revision: saved.revision || 1, workEpoch: saved.workEpoch ?? workEpoch };
+  if (legacy && complete(run)) {
+    if (approvedRun(run) && ['missing', 'passed', 'transferred'].includes(run.mode)) return {
+      ...run, mode: 'passed', needsSave: true, restoreTransferred: run.mode === 'transferred',
+    };
+    if (['running', 'paused', 'error', 'limited'].includes(run.mode)) return { ...run, needsSave: true };
+  }
+  if (run.mode === 'missing' && approvedRun(run)) return { ...run, mode: 'passed', needsSave: true };
+  return run;
 }

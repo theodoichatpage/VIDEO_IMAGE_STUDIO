@@ -25,7 +25,7 @@ describe('the 14 Aprilynne criteria', () => {
   });
   it('approves a script when every gradable criterion reaches 8, noting the two that need assets', () => {
     const done = acceptResponse(run(), JSON.stringify(rows(() => 9)));
-    expect(done.mode).toBe('missing');
+    expect(done.mode).toBe('passed');
     expect(done.phase).toBe('review');
     expect(done.repairParts).toEqual([]);
   });

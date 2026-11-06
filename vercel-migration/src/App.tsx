@@ -1,12 +1,12 @@
 import SceneMaterialEditor from './SceneMaterialEditor';
 import {makeHandoff,saveHandoff,loadHandoff} from './analysisHandoff';
 import AnalysisTab from './AnalysisTab';
-import { readAnalysisRun, scriptOf } from './automaticAnalysis';
+import { approvedRun, readAnalysisRun, scriptOf, type Run } from './automaticAnalysis';
 import type { AnalysisState } from './analysisWorkspace';
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { resolveManagerLaunch } from './managerLaunch.mjs';
-import { acceptManagerTranscript, readManagerTranscriptState } from './managerTranscript';
+import { acceptManagerTranscript, readManagerTranscriptState, writeManagerTranscriptState } from './managerTranscript';
 import { BUILD_ID } from './buildId';
 import { Check, Clapperboard, Copy, Download, FileText, Folder, Image, Maximize2, Play, RotateCcw, Scissors, Settings, Square, Trash2, Video as VideoIcon, Youtube } from 'lucide-react';
 import './index.css';
@@ -329,7 +329,7 @@ function App() {
         const own = localStorage.getItem(workspaceStorageKey(sessionId)) !== null;
         const transcript = loadTranscriptWorkspace(sessionId).transcript;
         const review = readAnalysisRun(sessionId);
-        const approved = review?.mode === 'transferred' && Boolean(server) && scriptOf(review) === server;
+        const approved = review?.mode === 'transferred' && approvedRun(review) && !review.needsSave && Boolean(server) && scriptOf(review) === server && managerContent.current.session?.analysisReview?.stage === 'approved' && managerContent.current.session.analysisReview.runId === review.runId && managerContent.current.session.analysisReview.revision === review.revision;
         const digest = approved ? await crypto.subtle.digest('SHA-256', new TextEncoder().encode(server)) : null;
         const fingerprint = digest ? Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('') : undefined;
         projectState = { analysisReview: review?.managerReviewId ? {
@@ -351,7 +351,10 @@ function App() {
         if (command?.type === 'analysis_review' && !managerLaunch.lane && /^[A-Za-z0-9_-]{8,64}$/.test(command.id)) {
           setManagerReview(current => current?.id === command.id ? current : { id: command.id, source: command.source === 'transcript' ? 'transcript' : 'script' });
           if (readAnalysisRun(sessionId)?.managerReviewId !== command.id) setActiveMenu(1);
-        } else if (command && !managerLaunch.lane && acceptManagerTranscript(command, sessionId)) setActiveMenu(0);
+        } else if (command && !managerLaunch.lane && acceptManagerTranscript(command, sessionId)) {
+          const stage = readManagerTranscriptState()?.stage;
+          if (!['analysis', 'done', 'error'].includes(stage || '')) setActiveMenu(0);
+        }
         if (reply?.renames && typeof reply.renames === 'object') applyManagerRenames(reply.renames as Record<string, unknown>);
       }).catch(() => {});
     };
@@ -704,11 +707,24 @@ function App() {
     localStorage.removeItem(incomingKey);
     setIncoming(null);
   };
+  const saveAnalysisCheckpoint = async (run: Run) => {
+    if (!serverReady || stopGate.current) throw new Error('Máy chủ chưa sẵn sàng hoặc tác vụ đã dừng.');
+    const generation = workGeneration.current;
+    const stage = run.mode === 'passed' ? 'approved' : run.mode === 'limited' ? 'limited' : run.phase === 'repair' ? 'repairing' : 'reviewing';
+    const { data } = await api.post('/api/sessions/' + sessionId + '/analysis-review', {
+      runId: run.runId, revision: run.revision, script: scriptOf(run), stage, rows: run.rows, rounds: run.rounds,
+      hasTitle: Boolean(run.plan?.title), expectedWorkEpoch: run.workEpoch || 0,
+    }, AbortSignal.timeout(15000));
+    if (generation !== workGeneration.current || stopGate.current) throw new Error('Đã dừng tác vụ; không xác nhận bản lưu cũ.');
+    const saved = data.session as Session;
+    if (!saved?.analysisReview || saved.analysisReview.runId !== run.runId || saved.analysisReview.revision !== run.revision || saved.script !== scriptOf(run).trim()) throw new Error('Máy chủ chưa xác nhận đúng phiên bản kịch bản.');
+    setSession(saved); changeScript(saved.script);
+  };
   const transferAnalysis = (draft: AnalysisState, automatic: boolean, managed = false) => {
     const handoff = makeHandoff(draft, stylePrompt);
     const protectedWork = !serverReady || busy || stopping || session?.activeJob || session?.laneJobs?.some(Boolean)
       || storedParts.length || [script, session?.script].some(value => value?.trim() && value.trim() !== draft.script && (!managed || value.trim() !== draft.input));
-    if (managed && protectedWork) throw new Error('Dự án Phân tách đã thay đổi hoặc đang bận. Hãy kiểm tra trước khi chuyển.');
+    if (automatic && protectedWork) throw new Error('Dự án Phân tách đã thay đổi hoặc đang bận. Hãy kiểm tra trước khi chuyển.');
     const previousIncoming = localStorage.getItem(incomingKey);
     if (previousIncoming) localStorage.setItem(incomingKey + '-previous-' + makeId(), previousIncoming);
     localStorage.setItem(incomingKey, JSON.stringify(handoff));
@@ -721,6 +737,9 @@ function App() {
       return message;
     }
     applyHandoff(handoff);
+    const pipeline = readManagerTranscriptState();
+    const review = readAnalysisRun(sessionId);
+    if (pipeline?.stage === 'analysis' && (pipeline.id === review?.pipelineId || pipeline.id === review?.managerReviewId)) writeManagerTranscriptState({ ...pipeline, stage: 'done', at: Date.now() });
     setNotice('Đã đưa kịch bản vào tab Phân tách.');
     if (automatic && !managed) void analyzeStructure(false, draft.script);
     return 'Đã đưa kịch bản vào tab Phân tách.';
@@ -734,7 +753,7 @@ function App() {
     {showResultImport && <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Dán JSON kết quả"><section className="connection-dialog json-import-dialog"><button type="button" className="modal-close" disabled={importBusy} onClick={() => setShowResultImport(false)} aria-label="Đóng">×</button><h2>Dán JSON kết quả</h2><p className="modal-help">Sao chép toàn bộ câu trả lời JSON của ChatGPT và dán vào đây. Lưu thành công sẽ chuyển phần này sang Hoàn tất để tiếp tục phần kế tiếp.</p><label>Lưu vào phần<select value={importPartId} disabled={importBusy} onChange={event => selectImportPart(event.target.value)}>{session?.parts?.map(part => <option key={part.id} value={part.id} disabled={part.status === 'complete' && part.scenes.length > 0}>{part.title}{part.status === 'complete' ? ' — Đã có kết quả' : ''}</option>)}</select></label><div className="import-clipboard"><button type="button" className="outline" disabled={importBusy} onClick={pasteResult}>Dán từ clipboard</button><span>Hoặc nhấn Ctrl + V trong ô bên dưới</span></div><textarea aria-label="JSON kết quả phân cảnh" value={importText} disabled={importBusy} onChange={event => setImportText(event.target.value)} placeholder={'Dán toàn bộ JSON: {"scenes":[…]}'} spellCheck={false} />{importError && <p className="import-error" role="alert">{importError}</p>}<button type="button" className="analyze-all modal-copy" disabled={importBusy || !importPartId || !importText.trim()} onClick={saveImportedResult}>{importBusy ? 'Đang lưu kết quả…' : 'Lưu kết quả vào phần đã chọn'}</button></section></div>}
     <div hidden={activeMenu !== 1}><AnalysisTab projectId={sessionId} projectName={projectName}
       connected={bridgeConnected} otherWork={Boolean(busy || stopping || session?.activeJob || session?.laneJobs?.some(Boolean))}
-      bridgeJob={extensionFacts.activeJobId} active={activeMenu === 1} managerReview={managerReview} managerScript={session?.script || script} onTransfer={transferAnalysis} /></div>
+      bridgeJob={extensionFacts.activeJobId} active={activeMenu === 1} enabled={!managerLaunch.lane} ready={serverReady} workEpoch={session?.workEpoch || 0} onCheckpoint={saveAnalysisCheckpoint} managerReview={managerReview} managerScript={session?.script || script} onTransfer={transferAnalysis} /></div>
     {activeMenu === 1 ? null : activeMenu === 0 ? <TranscriptTab projectId={sessionId} onUseTranscript={useTranscript} /> : activeMenu === 2 ? <div className="workspace">
       <section className="left-column panel"><div className="panel-heading"><FileText /><div><h1>Dự án: {(() => { try { const items = JSON.parse(localStorage.getItem('vis-project-meta') || '[]') as Array<{id:string;name:string}>; return items.find(item => item.id === sessionId)?.name || 'Dự án VIDEO IMAGE STUDIO'; } catch { return 'Dự án VIDEO IMAGE STUDIO'; } })()}</h1></div><button type="button" className="outline result-import-launch" disabled={!session?.parts?.length} onClick={openResultImport}>Dán JSON kết quả</button></div>
         {incoming && <section className="script-box">

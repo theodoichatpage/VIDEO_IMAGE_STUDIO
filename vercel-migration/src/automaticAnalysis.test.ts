@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { acceptResponse, criteriaWithSource, emptyRun, promptFor, reviewQuality, scriptOf, type Run } from './automaticAnalysis';
+import { acceptResponse, approvedRun, criteriaWithSource, emptyRun, promptFor, reviewQuality, restoreRun, scriptOf, type Run } from './automaticAnalysis';
 
 const source = 'A'.repeat(3500) + 'B'.repeat(3500) + 'C'.repeat(3500);
 const plan = {
@@ -45,7 +45,7 @@ describe('one-button analysis', () => {
     expect(promptFor(fixed)).toContain('Đoạn cuối.');
     const reviewed = reply(fixed, score(fixed));
     // The two criteria that need the cover or footage do not block approval; they are noted for a manual check.
-    expect(reviewed.mode).toBe('missing');
+    expect(reviewed.mode).toBe('passed');
     expect(reviewed.phase).toBe('review');
     expect(reviewed.rows.filter(row => row.score === null)).toHaveLength(2);
   });
@@ -67,7 +67,7 @@ it('reviews already rewritten sections directly and leaves the missing target ti
  expect(() => reply(run, report)).toThrow();
  report.rows[0] = { id: 0, score: null, part: null, evidence: '', reason: 'Chưa có tiêu đề đích', fix: '' };
  const reviewed = reply(run, report);
- expect(reviewed.mode).toBe('missing');
+ expect(reviewed.mode).toBe('passed');
  expect(reviewed.rows.filter(row => row.score === null).map(row => row.id)).toEqual([0, 1, 8]);
 });
 
@@ -106,4 +106,47 @@ it('uses short excerpts for scoring and keeps full sections for the ordered manu
 it('lets a Manager run proceed after all gradable criteria pass', () => {
  const run = { ...written(), managerReviewId: 'manager-review' };
  expect(reply(run, score(run)).mode).toBe('passed');
+});
+
+it('automatically passes all script-applicable criteria without requiring a manual handoff for future visual assets', () => {
+ const run = written();
+ const reviewed = reply(run, score(run));
+ expect(reviewed.mode).toBe('passed');
+ expect(reviewed.rows.filter(row => row.score === null).map(row => row.id)).toEqual([1, 8]);
+});
+
+it('does not report success while any required criterion remains below eight', () => {
+ const run = written();
+ let current = reply(run, score(run, true));
+ for (let n = 0; n < 3; n++) {
+   expect(current.mode).toBe('running');
+   current = reply(current, { text: 'Bản sửa lần ' + (n + 1) });
+   current = reply(current, score(current, true));
+ }
+ expect(current.mode).toBe('limited');
+ expect(current.rounds).toBe(3);
+ expect(current.rows[0].score).toBe(7);
+});
+
+it('the Manager approval gate rejects missing or duplicate mandatory rows', () => {
+ const reviewed = reply(written(), score(written()));
+ expect(approvedRun(reviewed)).toBe(true);
+ expect(approvedRun({ ...reviewed, rows: reviewed.rows.slice(1) })).toBe(false);
+ expect(approvedRun({ ...reviewed, rows: reviewed.rows.map(r => r.id === 2 ? { ...r, score: null } : r) })).toBe(false);
+ expect(approvedRun({ ...reviewed, rows: reviewed.rows.map(r => r.id === 2 ? { ...r, score: 7 } : r) })).toBe(false);
+});
+
+it('migrates old running and successful checkpoints through a durable save before dispatch or handoff', () => {
+ const old = written();
+ const running = restoreRun(old, 'migration-project', 2);
+ expect(running.needsSave).toBe(true);
+ expect(running.workEpoch).toBe(2);
+ const successful = reply(old, score(old));
+ const passed = restoreRun(successful, 'migration-project');
+ expect(passed.mode).toBe('passed'); expect(passed.needsSave).toBe(true);
+ const transferred = restoreRun({ ...successful, mode: 'transferred' }, 'migration-project');
+ expect(transferred.mode).toBe('passed'); expect(transferred.needsSave).toBe(true);
+ expect(transferred.restoreTransferred).toBe(true);
+ const saved = { ...passed, needsSave: false };
+ expect(restoreRun(saved, 'migration-project')).toEqual(saved);
 });

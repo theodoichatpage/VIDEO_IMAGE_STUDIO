@@ -7,6 +7,7 @@ import { fetchTranscript } from './transcriptProvider';
 import { buildRewritePrompt } from './transcriptAi';
 import { statusLabel } from './rewriteQueue';
 import { api } from './api';
+import { readAnalysisRun } from './automaticAnalysis';
 import { readManagerTranscript, readManagerTranscriptState, writeManagerTranscriptState, type ManagerTranscript, type ManagerTranscriptState } from './managerTranscript';
 
 type Props={onUseTranscript:(text:string,title?:string)=>void;projectId?:string};
@@ -128,13 +129,13 @@ export default function TranscriptTab({onUseTranscript,projectId=localStorage.ge
  const [mgr,setMgr]=useState<ManagerTranscript|null>(null);
  useEffect(()=>{
   // Extra ChatGPT lanes only take rewrite jobs; the transcript pipeline runs in the main tab only.
-  const check=()=>{if(new URLSearchParams(location.search).get('managerLane')==='1')return;const cmd=readManagerTranscript();if(!cmd||cmd.sessionId!==localStorage.getItem('vis-session'))return;const st=readManagerTranscriptState();if(st?.id===cmd.id&&['done','error'].includes(st.stage))return;setMgr(current=>current?.id===cmd.id?current:cmd)};
+  const check=()=>{if(new URLSearchParams(location.search).get('managerLane')==='1')return;const cmd=readManagerTranscript();if(!cmd||cmd.sessionId!==localStorage.getItem('vis-session'))return;const st=readManagerTranscriptState();if(st?.id===cmd.id&&['analysis','done','error'].includes(st.stage))return;setMgr(current=>current?.id===cmd.id?current:cmd)};
   check();const t=window.setInterval(check,2000);return()=>window.clearInterval(t);
  },[]);
  useEffect(()=>{
   if(!mgr||busy||aiBusy||pending.current)return;
   const st=readManagerTranscriptState();const state=st?.id===mgr.id?st:{id:mgr.id,stage:'start',attempts:0};
-  if(['done','error'].includes(state.stage))return;
+  if(['analysis','done','error'].includes(state.stage))return;
   const save=(next:Partial<ManagerTranscriptState>)=>writeManagerTranscriptState({...state,...next,id:mgr.id,at:Date.now()});
   const fail=(message:string)=>{save({stage:'error',error:message});setMgr(null)};
   const attempt=(stage:string)=>{const n=state.stage===stage?(state.attempts||0)+1:1;if(n>3){fail(error||'Không hoàn tất bước '+stage+' sau 3 lần thử.');return false}save({stage,attempts:n,error:''});return true};
@@ -156,7 +157,7 @@ export default function TranscriptTab({onUseTranscript,projectId=localStorage.ge
   if(done<ws.sections.length){if(batchRunning){if(state.stage!=='rewrite'||state.done!==done)save({stage:'rewrite',done,total:ws.sections.length,attempts:state.stage==='rewrite'?state.attempts:0});return}
    const failed=ws.sections.filter(x=>x.status==='error'||x.status==='stopped').length;if(failed&&!attempt('rewrite'))return;save({stage:'rewrite',done,total:ws.sections.length});setBatch(true);return}
   const text=assembleRewrittenScript(ws.sections);if(!text.trim()){fail('Kịch bản viết lại trống.');return}
-  save({stage:'done',done,total:ws.sections.length});setMgr(null);void onUseTranscript(text,ws.transcript.title);
+  save({stage:'analysis',done,total:ws.sections.length});setMgr(null);void onUseTranscript(text,ws.transcript.title);
  },[mgr,busy,aiBusy,batchRunning,ws.transcript,ws.url,ws.sections,ws.stylePrompt,error]);
 
  // Parallel rewrite: read the results the tabs saved on the Studio server (small stamp first).
@@ -176,6 +177,18 @@ export default function TranscriptTab({onUseTranscript,projectId=localStorage.ge
   };
   void pull();const t=window.setInterval(()=>void pull(),8000);return()=>window.clearInterval(t);
  },[mgr?.id,mgr?.parallel,projectId]);
+ // Saving the final rewritten section wakes the always-mounted Aprilynne controller, without a button.
+ const notifiedRewrite = useRef('');
+ useEffect(()=>{
+  const prepared=preparedAnalysisSource(ws);
+  if(!prepared.text||pending.current||batchRunning||notifiedRewrite.current===prepared.text)return;
+  notifiedRewrite.current=prepared.text;
+  if(readAnalysisRun(projectId)?.source===prepared.text)return;
+  const command=readManagerTranscript(),state=readManagerTranscriptState();
+  if(command?.sessionId===projectId&&command.rewrite&&state?.id===command.id&&state.stage!=='done')
+   writeManagerTranscriptState({...state,stage:'analysis',at:Date.now()});
+  onUseTranscript(prepared.text,ws.transcript?.title);
+ },[ws.sections,ws.stylePrompt,aiBusy,batchRunning,projectId]);
  // A job lost in a browser restart (the extension no longer has it) is dropped at once, not after 10 minutes.
  const lostChecks=useRef(0);
  useEffect(()=>{

@@ -9,7 +9,7 @@ type RewriteSection = { id: string; title: string; prompt: string; status: strin
 type Rewrite = { sections: RewriteSection[]; updatedAt: number };
 type LaneResult = { jobId: string; type: string; status: string; partId?: string; sceneKey?: string; sectionId?: string; error?: string; at: number };
 // laneJobs: one job per ChatGPT tab ("lane") so AI MANAGER can run several tabs/browsers in parallel.
-type Session = { analysisContext?:Record<string,string>; id: string; script: string; status: string; activeJob: Job | null; lastJob?: Job; parts: Part[]; imageJobs: Job[]; imageCaptures?: Job[]; laneJobs?: Job[]; laneLast?: Record<string, LaneResult>; rewrite?: Rewrite; workEpoch?: number; updatedAt: number; bridgeLastSeen?: number; finishedJobIds?: string[]; lastError?: string; analysisQueue?: string[]; batchAnalysis?: boolean; stylePrompt?: string; separations?: Record<string, unknown>[]; analysisBackup?: { script: string; parts: Part[]; savedAt: number } };
+type Session = { analysisReview?: { runId: string; revision: number; stage: string; rows: unknown[]; rounds: number }; analysisContext?:Record<string,string>; id: string; script: string; status: string; activeJob: Job | null; lastJob?: Job; parts: Part[]; imageJobs: Job[]; imageCaptures?: Job[]; laneJobs?: Job[]; laneLast?: Record<string, LaneResult>; rewrite?: Rewrite; workEpoch?: number; updatedAt: number; bridgeLastSeen?: number; finishedJobIds?: string[]; lastError?: string; analysisQueue?: string[]; batchAnalysis?: boolean; stylePrompt?: string; separations?: Record<string, unknown>[]; analysisBackup?: { script: string; parts: Part[]; savedAt: number } };
 type Change = { fail?: [string, number]; skip?: boolean; [key: string]: unknown };
 const laneOk = (value: string) => /^[A-Za-z0-9_-]{6,64}$/.test(value);
 
@@ -625,6 +625,39 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         return send(res, 200, { session: await read(session.id) });
       }
       if(req.method==='POST'&&path[2]!=='stop'&&typeof body.expectedWorkEpoch==='number'&&body.expectedWorkEpoch!==(session.workEpoch||0))return fail(res,'Yêu cầu cũ đã bị Dừng.',409);
+      if (path[2] === 'analysis-review' && path.length === 3 && req.method === 'POST') {
+        const runId = String(body.runId || ''), script = String(body.script || '').trim(), stage = String(body.stage || '');
+        const revision = Number(body.revision), rounds = Number(body.rounds);
+        const rows = Array.isArray(body.rows) ? body.rows as Record<string, unknown>[] : [];
+        if (!/^[A-Za-z0-9_-]{8,80}$/.test(runId) || !script || script.length > 2000000
+            || !Number.isInteger(revision) || revision < 1 || !Number.isInteger(rounds) || rounds < 0
+            || !['reviewing', 'repairing', 'approved', 'limited'].includes(stage) || rows.length > 14
+            || JSON.stringify(rows).length > 200000) return fail(res, 'Checkpoint Aprilynne không hợp lệ.', 422);
+        if (stage === 'approved') {
+          const valid = rows.length === 14 && Array.from({ length: 14 }, (_, id) => {
+            const hits = rows.filter(row => row && row.id === id); if (hits.length !== 1) return false;
+            const score = hits[0].score;
+            return [1, 8].includes(id) ? score === null : id === 0 && body.hasTitle !== true && score === null
+              ? true : typeof score === 'number' && Number.isFinite(score) && score >= 8 && score <= 10;
+          }).every(Boolean);
+          if (!valid) return fail(res, 'Chưa đạt đủ tiêu chí bắt buộc từ 8/10. Không thể phê duyệt.', 422);
+        }
+        // Preserve the same epoch AND updatedAt: a late checkpoint cannot undo Stop or another job.
+        const previous = session.updatedAt;
+        if (session.activeJob || session.laneJobs?.length) return fail(res, 'Đang có tác vụ khác. Checkpoint chưa được lưu.', 409);
+        if (session.parts.length && session.script !== script) return fail(res, 'Phân tách đã có kết quả; không ghi đè bằng bản sửa mới.', 409);
+        if (session.analysisReview?.runId === runId && session.analysisReview.revision >= revision) {
+          if (session.analysisReview.revision === revision && session.script === script && session.analysisReview.stage === stage) return send(res, 200, { session });
+          return fail(res, 'Checkpoint cũ đã được thay bằng bản mới hơn.', 409);
+        }
+        session.script = script; session.status = 'analysis_' + stage;
+        session.analysisReview = { runId, revision, stage, rows, rounds };
+        session.updatedAt = Math.max(Date.now(), previous + 1);
+        const saved = await database('studio_sessions?id=eq.' + encodeURIComponent(session.id) + '&record->>updatedAt=eq.' + previous,
+          { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ record: stamp(session) }) }) as unknown[];
+        if (!saved?.length) return fail(res, 'Dự án vừa thay đổi hoặc đã dừng; checkpoint không được ghi đè.', 409);
+        return send(res, 200, { session });
+      }
       if (path[2] === 'rewrite' && path.length === 3 && req.method === 'POST') {
         const raw = Array.isArray(body.sections) ? body.sections : [];
         if (!raw.length || raw.length > 60) return fail(res, 'Cần từ 1 đến 60 phần để viết lại.', 422);
