@@ -28,3 +28,10 @@
 .auto-quality { display: grid; gap: 4px; padding: 8px 10px; background: #edf4ff; border-radius: 6px; }
 .auto-quality meter { width: 100%; height: 12px; }
 .auto-review td > button { margin-top: 6px; }
+.auto-analysis .analysis-controls button[aria-pressed="true"] { background: #e2edfc; color: #173d6d; }
+.auto-review-columns .auto-review th:first-child { width: auto; font-weight: normal; }
+.auto-review-columns .auto-review td:last-child,
+.auto-review-columns .auto-review th:last-child { width: 1%; white-space: nowrap; text-align: right; }
+.auto-review .score-pass { color: #067448; }
+.auto-review .score-low { color: #b12b3a; }
+.auto-review td > button { margin: 0 0 0 6px; }

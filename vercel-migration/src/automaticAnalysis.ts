@@ -20,11 +20,30 @@ export type Run = {
   input: string; source: string; style: string; limit: number; rounds: number; mode: Mode; phase: Phase;
   plan?: Plan; parts: Part[]; index: number; rows: Row[]; repairParts: number[];
   manualCriterion?: number;
-  pending?: { id: string; deadline: number }; notice: string;
+  managerReviewId?: string;
+  manualBatch?: boolean;
+  pending?: { id: string; deadline: number; sectionId?: string }; notice: string;
 };
 export const emptyRun = (): Run => ({
   input: '', source: '', style: '', limit: 3, rounds: 0, mode: 'idle', phase: 'plan', parts: [], index: 0, rows: [], repairParts: [], notice: '',
 });
+export function readAnalysisRun(projectId: string): Run | null {
+  try { return JSON.parse(localStorage.getItem('vis-automatic-analysis-v2-' + projectId) || 'null'); }
+  catch { return null; }
+}
+
+export function reviewPartsFromScript(script: string) {
+  const chunks = sourceUnits(script.trim());
+  return chunks.reduce<Run['parts']>((parts, chunk) => {
+    if (!chunk.trim() && !parts.length) return parts;
+    const last = parts[parts.length - 1];
+    if (last && (!chunk.trim() || last.text.length + chunk.length <= 4500)) {
+      last.text += chunk;
+      last.source += chunk;
+    } else parts.push({ title: 'Phần ' + (parts.length + 1), source: chunk, text: chunk });
+    return parts;
+  }, []);
+}
 export const complete = (run: Run) => run.parts.length > 0 && run.parts.every(part => !!part.text);
 export const scriptOf = (run: Run) => run.parts.map(part => part.text).filter(Boolean).join('\n\n');
 export function reviewQuality(rows: Row[]) {
@@ -55,9 +74,16 @@ Nguồn đã được chia và viết theo văn phong cá nhân. Đọc toàn b�
 NGUỒN: ${JSON.stringify(units.map((unit, index) => [index + 1, unit]))}`;
   }
   if (run.phase === 'review') {
+    const excerpts = run.parts.map((part, i) => {
+      const text = part.text;
+      const middle = Math.floor(text.length / 2);
+      return { part: i + 1, title: part.title, excerpts: text.length <= 1400 ? [text] : [
+        text.slice(0, 500), text.slice(middle - 200, middle + 200), text.slice(-500),
+      ] };
+    });
     return `${base}
-Đối chiếu toàn bộ video dưới dạng kịch bản. ${run.plan?.title ? 'Chấm độ khớp với tiêu đề đề xuất trong kế hoạch.' : 'Chưa có tiêu đề đích; mục 0 trả score:null, part:null và evidence rỗng.'} Chấm từng tiêu chí áp dụng 0–10 theo đúng ID (0–${criteria.length - 1}), ghi part là số phần bắt đầu từ 1 và evidence là đoạn trích NGUYÊN VĂN từ đúng phần đó. Nếu dưới 8, chọn phần cần sửa nhất và ghi cách sửa cụ thể. Mục 1 và 8 cần ảnh bìa/cảnh dựng thật nên trả score:null, part:null, evidence:"", kèm lý do thiếu dữ liệu. Các mục có đủ dữ liệu phải có điểm; nếu kịch bản thiếu yếu tố thì cho điểm thấp và trích đoạn liên quan. Điểm chỉ là đánh giá tham khảo. Trả {"rows":[{"id":0,"score":7,"part":1,"evidence":"trích nguyên văn","reason":"...","fix":"..."}]} với đủ ${criteria.length} dòng.
-${JSON.stringify({ plan: run.plan, parts: run.parts.map((part, i) => ({ part: i + 1, title: part.title, source: part.source, script: part.text })) })}`;
+Đối chiếu cấu trúc toàn video dựa trên các trích đoạn theo đúng thứ tự các phần. Chỉ trích dẫn văn bản có trong dữ liệu; không xem điểm là đánh giá chi tiết những đoạn đã lược. ${run.plan?.title ? 'Chấm độ khớp với tiêu đề đề xuất trong kế hoạch.' : 'Chưa có tiêu đề đích; mục 0 trả score:null, part:null và evidence rỗng.'} Chấm từng tiêu chí áp dụng 0–10 theo đúng ID (0–${criteria.length - 1}), ghi part là số phần bắt đầu từ 1 và evidence là đoạn trích NGUYÊN VĂN từ đúng phần đó. Nếu dưới 8, chọn phần cần sửa nhất và ghi cách sửa cụ thể. Mục 1 và 8 cần ảnh bìa/cảnh dựng thật nên trả score:null, part:null, evidence:"", kèm lý do thiếu dữ liệu. Các mục có đủ dữ liệu phải có điểm; nếu kịch bản thiếu yếu tố thì cho điểm thấp và trích đoạn liên quan. Điểm chỉ là đánh giá tham khảo. Trả {"rows":[{"id":0,"score":7,"part":1,"evidence":"trích nguyên văn","reason":"...","fix":"..."}]} với đủ ${criteria.length} dòng.
+${JSON.stringify({ plan: run.plan, parts: excerpts })}`;
   }
   const part = run.parts[run.index];
   const repair = run.phase === 'repair';
@@ -118,13 +144,13 @@ export function acceptResponse(run: Run, text: unknown): Run {
   if (run.phase === 'review') {
     const rows = reviewed(value, run);
     const repairParts = [...new Set(rows.filter(row => row.score !== null && row.score < threshold).map(row => row.part! - 1))].sort((a, b) => a - b);
-    if (!repairParts.length) return { ...next, rows, manualCriterion: undefined, mode: rows.some(row => row.score === null) ? 'missing' : next.mode === 'running' ? 'passed' : 'paused' };
-    return { ...next, rows, repairParts, index: repairParts[0], phase: 'repair', manualCriterion: undefined,
-      mode: run.manualCriterion !== undefined || run.rounds >= run.limit ? 'limited' : next.mode };
+    if (!repairParts.length) return { ...next, rows, manualCriterion: undefined, manualBatch: undefined, mode: !run.managerReviewId && rows.some(row => row.score === null) ? 'missing' : next.mode === 'running' ? 'passed' : 'paused' };
+    return { ...next, rows, repairParts, index: repairParts[0], phase: 'repair', manualCriterion: undefined, manualBatch: undefined,
+      mode: run.manualCriterion !== undefined || run.manualBatch || run.rounds >= run.limit ? 'limited' : next.mode };
   }
   if (!required(value?.text)) throw new Error('ChatGPT chưa trả kịch bản của phần này.');
   const parts = run.parts.map((part, i) => i === run.index ? { ...part, text: value.text.trim() } : part);
   const following = run.phase === 'repair' ? run.repairParts.find(index => index > run.index) : run.index + 1;
   if (following !== undefined && following < parts.length) return { ...next, parts, index: following };
-  return { ...next, parts, phase: 'review', rounds: run.rounds + Number(run.phase === 'repair' && run.manualCriterion === undefined), repairParts: [] };
+  return { ...next, parts, phase: 'review', rounds: run.rounds + Number(run.phase === 'repair' && run.manualCriterion === undefined && !run.manualBatch), repairParts: [] };
 }

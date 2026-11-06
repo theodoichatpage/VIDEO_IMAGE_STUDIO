@@ -1,6 +1,7 @@
 import SceneMaterialEditor from './SceneMaterialEditor';
 import {makeHandoff,saveHandoff,loadHandoff} from './analysisHandoff';
 import AnalysisTab from './AnalysisTab';
+import { readAnalysisRun, scriptOf } from './automaticAnalysis';
 import type { AnalysisState } from './analysisWorkspace';
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
@@ -302,13 +303,14 @@ function App() {
     laneDispatcher.current = true; return true;
   };
   // Latest content state for the Manager signal: counts only, never the script text itself.
+  const [managerReview, setManagerReview] = useState<{ id: string; source: 'transcript' | 'script' }>();
   const managerContent = useRef({ script, session });
   managerContent.current = { script, session };
   useEffect(() => {
     if (!managerWatch) return;
     const url = 'http://127.0.0.1:8765/api/studio-presence';
     let pageHidden = false;
-    const signal = () => {
+    const signal = async () => {
       if (pageHidden) return;
       let projectName: string | null = null;
       let projects: {id: string; name: string; updatedAt: number | null}[] | null = null;
@@ -326,17 +328,30 @@ function App() {
         const draft = managerContent.current.script.trim(), server = String(managerContent.current.session?.script || '').trim();
         const own = localStorage.getItem(workspaceStorageKey(sessionId)) !== null;
         const transcript = loadTranscriptWorkspace(sessionId).transcript;
-        projectState = { scriptDraftChars: draft.length, serverScriptChars: server.length, scriptSync: !draft ? 'empty' : draft === server ? 'synced' : localStorage.getItem('vis-script-draft-owner') === sessionId ? 'pending' : 'unconfirmed',
+        const review = readAnalysisRun(sessionId);
+        const approved = review?.mode === 'transferred' && Boolean(server) && scriptOf(review) === server;
+        const digest = approved ? await crypto.subtle.digest('SHA-256', new TextEncoder().encode(server)) : null;
+        const fingerprint = digest ? Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('') : undefined;
+        projectState = { analysisReview: review?.managerReviewId ? {
+          id: review.managerReviewId, stage: review.mode === 'transferred' ? (approved ? 'approved' : 'saving') : review.mode,
+          fingerprint,
+          progress: review.rounds * 10000 + review.index * 2 + Number(review.phase === 'review'), error: review.notice,
+        } : null, scriptDraftChars: draft.length, serverScriptChars: server.length, scriptSync: !draft ? 'empty' : draft === server ? 'synced' : localStorage.getItem('vis-script-draft-owner') === sessionId ? 'pending' : 'unconfirmed',
           transcript: { exists: Boolean(transcript?.text?.trim()), chars: transcript?.text?.length || 0, segments: transcript?.segments?.length || 0, videoId: transcript?.videoId || '', scope: own ? 'project' : 'shared' },
           pipeline: readManagerTranscriptState() };
       } catch { /* Content state is optional for presence. */ }
+      if (pageHidden) return;
       void fetch(url, {
         method: 'POST', headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({ managerRunId: managerLaunch.runId, origin: location.origin, sessionId, activeProjectId: sessionId, studioInstance, tabId: managerTabId.current, chatReady: bridgeConnected, projectName, projects, projectState,
           worker: { laneId, lane: Boolean(managerLaunch.lane), extensionVersion, account: extensionFacts.account || null, extensionJob: extensionFacts.activeJobId || '', chatTabs: extensionFacts.chatTabs || 0, dispatcher: laneDispatcher.current } }),
       }).then(response => response.json()).then(reply => {
         // AI MANAGER may ask this project's tab to get the transcript and rewrite it (Get Transcript tab).
-        if (reply?.command && !managerLaunch.lane && acceptManagerTranscript(reply.command, sessionId)) setActiveMenu(0);
+        const command = reply?.command;
+        if (command?.type === 'analysis_review' && !managerLaunch.lane && /^[A-Za-z0-9_-]{8,64}$/.test(command.id)) {
+          setManagerReview(current => current?.id === command.id ? current : { id: command.id, source: command.source === 'transcript' ? 'transcript' : 'script' });
+          if (readAnalysisRun(sessionId)?.managerReviewId !== command.id) setActiveMenu(1);
+        } else if (command && !managerLaunch.lane && acceptManagerTranscript(command, sessionId)) setActiveMenu(0);
         if (reply?.renames && typeof reply.renames === 'object') applyManagerRenames(reply.renames as Record<string, unknown>);
       }).catch(() => {});
     };
@@ -689,10 +704,11 @@ function App() {
     localStorage.removeItem(incomingKey);
     setIncoming(null);
   };
-  const transferAnalysis = (draft: AnalysisState, automatic: boolean) => {
+  const transferAnalysis = (draft: AnalysisState, automatic: boolean, managed = false) => {
     const handoff = makeHandoff(draft, stylePrompt);
     const protectedWork = !serverReady || busy || stopping || session?.activeJob || session?.laneJobs?.some(Boolean)
-      || storedParts.length || [script, session?.script].some(value => value?.trim() && value.trim() !== draft.script);
+      || storedParts.length || [script, session?.script].some(value => value?.trim() && value.trim() !== draft.script && (!managed || value.trim() !== draft.input));
+    if (managed && protectedWork) throw new Error('Dự án Phân tách đã thay đổi hoặc đang bận. Hãy kiểm tra trước khi chuyển.');
     const previousIncoming = localStorage.getItem(incomingKey);
     if (previousIncoming) localStorage.setItem(incomingKey + '-previous-' + makeId(), previousIncoming);
     localStorage.setItem(incomingKey, JSON.stringify(handoff));
@@ -706,7 +722,7 @@ function App() {
     }
     applyHandoff(handoff);
     setNotice('Đã đưa kịch bản vào tab Phân tách.');
-    if (automatic) void analyzeStructure(false, draft.script);
+    if (automatic && !managed) void analyzeStructure(false, draft.script);
     return 'Đã đưa kịch bản vào tab Phân tách.';
   };
 
@@ -718,7 +734,7 @@ function App() {
     {showResultImport && <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Dán JSON kết quả"><section className="connection-dialog json-import-dialog"><button type="button" className="modal-close" disabled={importBusy} onClick={() => setShowResultImport(false)} aria-label="Đóng">×</button><h2>Dán JSON kết quả</h2><p className="modal-help">Sao chép toàn bộ câu trả lời JSON của ChatGPT và dán vào đây. Lưu thành công sẽ chuyển phần này sang Hoàn tất để tiếp tục phần kế tiếp.</p><label>Lưu vào phần<select value={importPartId} disabled={importBusy} onChange={event => selectImportPart(event.target.value)}>{session?.parts?.map(part => <option key={part.id} value={part.id} disabled={part.status === 'complete' && part.scenes.length > 0}>{part.title}{part.status === 'complete' ? ' — Đã có kết quả' : ''}</option>)}</select></label><div className="import-clipboard"><button type="button" className="outline" disabled={importBusy} onClick={pasteResult}>Dán từ clipboard</button><span>Hoặc nhấn Ctrl + V trong ô bên dưới</span></div><textarea aria-label="JSON kết quả phân cảnh" value={importText} disabled={importBusy} onChange={event => setImportText(event.target.value)} placeholder={'Dán toàn bộ JSON: {"scenes":[…]}'} spellCheck={false} />{importError && <p className="import-error" role="alert">{importError}</p>}<button type="button" className="analyze-all modal-copy" disabled={importBusy || !importPartId || !importText.trim()} onClick={saveImportedResult}>{importBusy ? 'Đang lưu kết quả…' : 'Lưu kết quả vào phần đã chọn'}</button></section></div>}
     <div hidden={activeMenu !== 1}><AnalysisTab projectId={sessionId} projectName={projectName}
       connected={bridgeConnected} otherWork={Boolean(busy || stopping || session?.activeJob || session?.laneJobs?.some(Boolean))}
-      bridgeJob={extensionFacts.activeJobId} active={activeMenu === 1} onTransfer={transferAnalysis} /></div>
+      bridgeJob={extensionFacts.activeJobId} active={activeMenu === 1} managerReview={managerReview} managerScript={session?.script || script} onTransfer={transferAnalysis} /></div>
     {activeMenu === 1 ? null : activeMenu === 0 ? <TranscriptTab projectId={sessionId} onUseTranscript={useTranscript} /> : activeMenu === 2 ? <div className="workspace">
       <section className="left-column panel"><div className="panel-heading"><FileText /><div><h1>Dự án: {(() => { try { const items = JSON.parse(localStorage.getItem('vis-project-meta') || '[]') as Array<{id:string;name:string}>; return items.find(item => item.id === sessionId)?.name || 'Dự án VIDEO IMAGE STUDIO'; } catch { return 'Dự án VIDEO IMAGE STUDIO'; } })()}</h1></div><button type="button" className="outline result-import-launch" disabled={!session?.parts?.length} onClick={openResultImport}>Dán JSON kết quả</button></div>
         {incoming && <section className="script-box">

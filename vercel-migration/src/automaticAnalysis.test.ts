@@ -12,7 +12,7 @@ const start = (): Run => ({ ...emptyRun(), source, style: 'Phong cách của d�
 const reply = (run: Run, value: unknown) => acceptResponse(run, JSON.stringify(value));
 const written = () => reply(reply(reply(start(), plan), { text: 'Đoạn đầu.' }), { text: 'Đoạn cuối.' });
 const score = (run: Run, low = false) => ({ rows: criteriaWithSource.map(({ id, visual }) =>
-  visual ? { id, score: null, part: null, evidence: '', reason: 'Cần hình thật' }
+  visual ? { id, score: null, part: null, evidence: '', reason: 'Cần hình thật', fix: '' }
     : { id, score: low && id === 0 ? 7 : 8, part: 1, evidence: run.parts[0].text, reason: 'Lý do', fix: 'Sửa câu đầu' }) });
 
 describe('one-button analysis', () => {
@@ -65,7 +65,7 @@ it('reviews already rewritten sections directly and leaves the missing target ti
  expect(promptFor(run)).toContain('Chưa có tiêu đề đích');
  const report = score(run);
  expect(() => reply(run, report)).toThrow();
- report.rows[0] = { id: 0, score: null, part: null, evidence: '', reason: 'Chưa có tiêu đề đích' };
+ report.rows[0] = { id: 0, score: null, part: null, evidence: '', reason: 'Chưa có tiêu đề đích', fix: '' };
  const reviewed = reply(run, report);
  expect(reviewed.mode).toBe('missing');
  expect(reviewed.rows.filter(row => row.score === null).map(row => row.id)).toEqual([0, 1, 8]);
@@ -84,4 +84,26 @@ it('repairs only the selected criterion, then reviews the whole script without s
  expect(fixed.rounds).toBe(0);
  expect(fixed.phase).toBe('review');
  expect(reply(fixed, score(fixed, true)).mode).toBe('limited');
+});
+
+it('uses short excerpts for scoring and keeps full sections for the ordered manual repair batch', () => {
+ const run = written();
+ const text = 'A'.repeat(600) + 'HIDDEN-OMITTED-DETAIL' + 'B'.repeat(3200) + 'Cuối phần.';
+ const long = { ...run, parts: [{ ...run.parts[0], text }, run.parts[1]] };
+ expect(promptFor(long)).not.toContain('HIDDEN-OMITTED-DETAIL');
+ expect(promptFor(long)).toContain('Cuối phần.');
+ const rows = score(long, true).rows;
+ const batch: Run = { ...long, rows, phase: 'repair', index: 0, repairParts: [0, 1], manualBatch: true };
+ expect(promptFor(batch)).toContain('HIDDEN-OMITTED-DETAIL');
+ const first = reply(batch, { text: 'Sửa phần đầu.' });
+ expect(first.index).toBe(1);
+ expect(first.parts[1]).toEqual(run.parts[1]);
+ const second = reply(first, { text: 'Sửa phần hai.' });
+ expect(second.phase).toBe('review');
+ expect(second.rounds).toBe(0);
+});
+
+it('lets a Manager run proceed after all gradable criteria pass', () => {
+ const run = { ...written(), managerReviewId: 'manager-review' };
+ expect(reply(run, score(run)).mode).toBe('passed');
 });
