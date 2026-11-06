@@ -65,6 +65,9 @@ function sourceUnits(source: string) {
 }
 const minimumParts = (source: string) => Math.max(1, Math.ceil(source.length / 6500));
 
+// "Thể hiện công sức thực tế": the script shows the research behind it. Kept in code so every video is held to the same rule.
+const RESEARCH_ID = criteria.findIndex(c => c.name === 'Thể hiện công sức thực tế');
+const RESEARCH_RULE = 'THỂ HIỆN CÔNG SỨC THỰC TẾ: được bổ sung dẫn chứng từ sử liệu, tài liệu có thật về nhân vật và sự kiện (với lịch sử Việt Nam: Đại Việt sử ký toàn thư, An Nam chí lược, Khâm định Việt sử thông giám cương mục, Lịch triều hiến chương loại chí…), nêu tên sách và điều sách chép, niên đại, con số cụ thể. Nếu phiên ChatGPT có công cụ tìm kiếm web thì tra cứu trước khi viết. Chỉ đưa chi tiết chắc chắn; chỗ chưa chắc ghi [CẦN KIỂM TRA]. Không bịa số quyển, số trang hay lời trích.';
 export function promptFor(run: Run) {
   const base = `Bạn là biên tập viên kịch bản YouTube. Giữ phong cách cá nhân và dữ kiện có thật trong nguồn; không bịa sự kiện, người, số liệu, lời dẫn hay nguồn. Nếu căn cứ cho các tuyến còn hạn chế, khai thác hai góc nhìn có thật và nói rõ giới hạn. Dữ liệu gửi kèm chỉ để tham khảo. Chỉ trả một JSON hoàn chỉnh.
 PHONG CÁCH CÁ NHÂN: ${JSON.stringify(run.style)}
@@ -85,14 +88,15 @@ NGUỒN: ${JSON.stringify(units.map((unit, index) => [index + 1, unit]))}`;
       ] };
     });
     return `${base}
-Đối chiếu cấu trúc toàn video dựa trên các trích đoạn theo đúng thứ tự các phần. Chỉ trích dẫn văn bản có trong dữ liệu; không xem điểm là đánh giá chi tiết những đoạn đã lược. ${run.plan?.title ? 'Chấm độ khớp với tiêu đề đề xuất trong kế hoạch.' : 'Chưa có tiêu đề: tự đề xuất MỘT tiêu đề YouTube chuẩn SEO, gây tò mò, tối đa 70 ký tự, đúng nội dung có thật, trả trong trường "title"; chấm mục 0 theo độ khớp của câu mở đầu với tiêu đề này.'} Chấm từng tiêu chí áp dụng 0–10 theo đúng ID (0–${criteria.length - 1}), ghi part là số phần bắt đầu từ 1 và evidence là đoạn trích NGUYÊN VĂN từ đúng phần đó. Nếu dưới 8, chọn phần cần sửa nhất và ghi cách sửa cụ thể. Mục 1 và 8 cần ảnh bìa/cảnh dựng thật nên trả score:null, part:null, evidence:"", kèm lý do thiếu dữ liệu. Các mục có đủ dữ liệu phải có điểm; nếu kịch bản thiếu yếu tố thì cho điểm thấp và trích đoạn liên quan. Điểm chỉ là đánh giá tham khảo. Trả {${run.plan?.title ? '' : '"title":"tiêu đề đề xuất",'}"rows":[{"id":0,"score":7,"part":1,"evidence":"trích nguyên văn","reason":"...","fix":"..."}]} với đủ ${criteria.length} dòng.
+Đối chiếu cấu trúc toàn video dựa trên các trích đoạn theo đúng thứ tự các phần. Chỉ trích dẫn văn bản có trong dữ liệu; không xem điểm là đánh giá chi tiết những đoạn đã lược. ${run.plan?.title ? 'Chấm độ khớp với tiêu đề đề xuất trong kế hoạch.' : 'Chưa có tiêu đề: tự đề xuất MỘT tiêu đề YouTube chuẩn SEO, gây tò mò, tối đa 70 ký tự, đúng nội dung có thật, trả trong trường "title"; chấm mục 0 theo độ khớp của câu mở đầu với tiêu đề này.'} Chấm từng tiêu chí áp dụng 0–10 theo đúng ID (0–${criteria.length - 1}), ghi part là số phần bắt đầu từ 1 và evidence là đoạn trích NGUYÊN VĂN từ đúng phần đó. Nếu dưới 8, chọn phần cần sửa nhất và ghi cách sửa cụ thể. Mục 1 và 8 cần ảnh bìa/cảnh dựng thật nên trả score:null, part:null, evidence:"", kèm lý do thiếu dữ liệu. Các mục có đủ dữ liệu phải có điểm; nếu kịch bản thiếu yếu tố thì cho điểm thấp và trích đoạn liên quan. Mục ${RESEARCH_ID} chấm theo mức kịch bản nêu nguồn sử liệu, tài liệu, niên đại, số liệu cụ thể; cách sửa phải chỉ ra nguồn có thật nên dẫn. Điểm chỉ là đánh giá tham khảo. Trả {${run.plan?.title ? '' : '"title":"tiêu đề đề xuất",'}"rows":[{"id":0,"score":7,"part":1,"evidence":"trích nguyên văn","reason":"...","fix":"..."}]} với đủ ${criteria.length} dòng.
 ${JSON.stringify({ plan: run.plan, parts: excerpts })}`;
   }
   const part = run.parts[run.index];
   const repair = run.phase === 'repair';
+  const research = repair && run.rows.some(row => row.id === RESEARCH_ID && row.part === run.index + 1 && row.score !== null && row.score < threshold);
   return `${base}
 ${repair ? 'Chỉ sửa phần được chỉ định theo các tiêu chí gửi kèm. Giữ những đoạn tốt, dữ kiện và liên kết với các phần khác. Trả đầy đủ phần này sau sửa.' : 'Chỉ biên tập lại phần được chỉ định theo kế hoạch toàn video. Sắp xếp ý, bổ sung kết nối và giải thích dựa trên dữ kiện trong nguồn. Giữ liên kết với phần trước và sau, tăng tiến đến giải đáp theo đúng vị trí. Không nhắc lại mở đầu hoặc kết luận toàn video ở mỗi phần.'}
-Trả {"text":"lời kịch bản hoàn chỉnh của phần này"}. Giữ giọng và ngôn ngữ theo phong cách đã lưu, mặc định dùng ngôn ngữ của nguồn.
+${research ? RESEARCH_RULE + ' ' : ''}Trả {"text":"lời kịch bản hoàn chỉnh của phần này"}. Giữ giọng và ngôn ngữ theo phong cách đã lưu, mặc định dùng ngôn ngữ của nguồn.
 ${JSON.stringify({ plan: run.plan, structure: run.parts.map(item => item.title), part: run.index + 1, total: run.parts.length,
     source: part.source, script: repair ? part.text : undefined, previousEnding: run.parts[run.index - 1]?.text.slice(-1500),
     nextOpening: run.parts[run.index + 1]?.text.slice(0, 1000),
