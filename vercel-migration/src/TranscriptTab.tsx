@@ -23,7 +23,8 @@ export default function TranscriptTab({onUseTranscript,projectId=localStorage.ge
  useEffect(()=>{const sync=()=>setProjectName(readProjectName(projectId));window.addEventListener('vis-project-meta',sync);return()=>window.removeEventListener('vis-project-meta',sync)},[projectId]);
  const nameDefault=!projectName.trim()||projectName.trim()==='Dự án VIDEO IMAGE STUDIO';
  const [ws,setWs]=useState<TranscriptWorkspaceState>(()=>loadTranscriptWorkspace(projectId));
- const pairCode=localStorage.getItem('vis-session')||projectId;
+ // Each Studio tab works for its own project: two tabs in one browser share localStorage, so never use the last opened project here.
+ const pairCode=projectId;
  const pendingKey='vis-transcript-pending-'+pairCode;
  const pending=useRef<PendingAi|null>(readPending(pendingKey));
  const batch=useRef(false);
@@ -129,9 +130,9 @@ export default function TranscriptTab({onUseTranscript,projectId=localStorage.ge
  const [mgr,setMgr]=useState<ManagerTranscript|null>(null);
  useEffect(()=>{
   // Extra ChatGPT lanes only take rewrite jobs; the transcript pipeline runs in the main tab only.
-  const check=()=>{if(new URLSearchParams(location.search).get('managerLane')==='1')return;const cmd=readManagerTranscript();if(!cmd||cmd.sessionId!==localStorage.getItem('vis-session'))return;const st=readManagerTranscriptState();if(st?.id===cmd.id&&['analysis','done','error'].includes(st.stage))return;setMgr(current=>current?.id===cmd.id?current:cmd)};
+  const check=()=>{if(new URLSearchParams(location.search).get('managerLane')==='1')return;const cmd=readManagerTranscript();if(!cmd||cmd.sessionId!==projectId)return;const st=readManagerTranscriptState();if(st?.id===cmd.id&&['analysis','done','error'].includes(st.stage))return;setMgr(current=>current?.id===cmd.id?current:cmd)};
   check();const t=window.setInterval(check,2000);return()=>window.clearInterval(t);
- },[]);
+ },[projectId]);
  useEffect(()=>{
   if(!mgr||busy||aiBusy||pending.current)return;
   const st=readManagerTranscriptState();const state=st?.id===mgr.id?st:{id:mgr.id,stage:'start',attempts:0};
