@@ -260,13 +260,7 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   return <section className="workspace auto-analysis">
     <section className="panel">
       <div className="panel-heading"><FileText/><div><h1>Công thức Aprilynne</h1><p>Dự án: {projectName}</p></div></div>
-      {(working || canResume) && <div className="analysis-controls">
-        {run.mode === 'running' && <button className="outline" onClick={() => change(current => {
-          if (current.mode === 'running') save({ ...current, mode: 'paused', notice: 'Studio sẽ lưu phản hồi đang chờ rồi tạm dừng.' });
-        })}>Tạm dừng</button>}
-        {canResume && <button className="outline" onClick={resume}>Tiếp tục</button>}
-        {(working || run.mode === 'paused') && <button className="danger" onClick={() => change(current => stop(current))}>Dừng</button>}
-      </div>}
+      {canResume && <div className="analysis-controls"><button className="outline" onClick={resume}>Tiếp tục</button></div>}
       <p className="script-meta" role="status">{run.mode === 'running' && !run.pending ? run.needsSave ? 'Đang lưu kịch bản và kết quả vào dự án' : !connected ? 'Đang xếp hàng · chờ kết nối ChatGPT' : otherWork || bridgeJob ? 'Đang xếp hàng · chờ tác vụ ChatGPT hiện tại hoàn tất' : progress(run) : run.mode === 'idle' ? 'Đang chờ bản viết lại từ Get Transcript' : progress(run)}{run.rounds > 0 && ` · Đã sửa ${run.rounds}/${run.limit} lượt`}{run.notice && ' · ' + run.notice}</p>
       {error && <p role="alert">{error}</p>}
       {run.rows.length > 0 && <p>Điểm tham khảo dựa trên kịch bản. Các mục cần ảnh bìa hoặc video thực tế được đánh dấu riêng.</p>}
