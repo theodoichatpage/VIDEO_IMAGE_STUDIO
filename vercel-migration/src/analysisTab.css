@@ -11,11 +11,13 @@
 .auto-analysis .flow-actions, .auto-analysis .analysis-controls { flex-wrap: wrap; }
 .auto-analysis .flow-actions label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .auto-analysis [role=alert] { color: #a12621; }
-.auto-review-scroll { overflow: auto; min-height: 105px; flex: 1; border: 1px solid #dce4ee; border-radius: 6px; }
+.auto-review-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; flex: 1; min-height: 150px; }
+.auto-review-scroll { overflow: auto; min-height: 0; border: 1px solid #dce4ee; border-radius: 6px; }
 .auto-review { width: 100%; border-collapse: collapse; text-align: left; }
 .auto-review th, .auto-review td { padding: 8px 9px; border-bottom: 1px solid #e0e7f0; vertical-align: top; }
 .auto-review thead th { position: sticky; top: 0; background: #edf4ff; }
-.auto-review th:first-child { width: 40%; }
+.auto-review-columns > :first-child th:first-child { width: 60%; }
+.auto-review-columns > :last-child th:first-child { width: 30%; }
 .auto-review small { display: block; color: #596b82; }
 .auto-review .auto-group { margin-bottom: 4px; color: #135ab0; }
 .auto-review blockquote { margin: 4px 0; white-space: pre-line; font-weight: normal; }

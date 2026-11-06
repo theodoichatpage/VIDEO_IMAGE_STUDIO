@@ -199,7 +199,7 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   const repairCriterion = (id: number) => change(current => {
     if (current.pending || !['missing', 'passed', 'limited', 'transferred'].includes(current.mode)) return;
     const row = current.rows.find(item => item.id === id);
-    if (!row || row.score === null || row.part === null || !current.parts[row.part - 1]?.text) return;
+    if (!row || row.score === null || row.score >= threshold || row.part === null || !current.parts[row.part - 1]?.text) return;
     if (!live.current.connected || live.current.otherWork) { setError('Kết nối ChatGPT và chờ tác vụ hiện tại hoàn tất.'); return; }
     save({ ...current, phase: 'repair', mode: 'running', index: row.part - 1, repairParts: [row.part - 1],
       manualCriterion: id, notice: 'Sửa phần ' + row.part + ' theo tiêu chí đã chọn.' });
@@ -233,23 +233,38 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
         <meter min={0} max={criteriaWithSource.length} value={quality.passed} aria-label="Số tiêu chí đạt từ 8 điểm"/>
         {run.rows.length > 0 && <small>{quality.passed}/{criteriaWithSource.length} đạt · {quality.needsWork} cần sửa · {quality.unscored} chưa đủ dữ liệu</small>}
       </section>
-      <div className="auto-review-scroll"><table className="auto-review">
-        <thead><tr><th scope="col">Công thức Aprilynne</th><th scope="col">Điểm, dẫn chứng và cách sửa</th></tr></thead>
-        <tbody>{criteriaWithSource.map((criterion, index) => {
-          const row = run.rows.find(item => item.id === criterion.id);
-          return <tr key={criterion.id}>
-            <th scope="row">
-              {(index === 0 || criteriaWithSource[index - 1].group !== criterion.group) && <small className="auto-group">{criterion.group}</small>}
-              {criterion.name}{criterion.timing && ' (' + criterion.timing + ')'} <small>{criterion.visual ? 'Cần hình ảnh/video' : 'Kiểm tra từ kịch bản'}</small>
-              <details><summary>Trích đoạn gốc</summary><blockquote>{criterion.excerpt.replace(/^\[\d+:\d+\]\s*/gm, '')}</blockquote></details>
-            </th>
-            <td>{criterion.visual || (row && row.score === null) ? <><b>Chưa đủ dữ liệu</b><div>{row?.reason || 'Cần tài sản thực tế để đối chiếu.'}</div></>
-              : row ? <><b>{row.score}/10 · {(row.score ?? 0) >= threshold ? 'Đạt' : 'Cần sửa'}</b> · Phần {row.part}
-                <blockquote>{row.evidence}</blockquote><div>{row.reason}</div>{row.fix && <div><strong>Cách sửa </strong>{row.fix}</div>}{hasCurrentReview && <button className="outline" onClick={() => repairCriterion(row.id)}>Nhờ ChatGPT sửa phần {row.part}</button>}</>
-              : <span>—</span>}</td>
-          </tr>;
-        })}</tbody>
-      </table></div>
+      <div className="auto-review-columns">
+        <div className="auto-review-scroll"><table className="auto-review" aria-label="Đối chiếu Aprilynne">
+          <thead><tr><th scope="col">Tiêu chí đối chiếu</th><th scope="col">Điểm</th><th scope="col">Thao tác</th></tr></thead>
+          <tbody>{criteriaWithSource.map((criterion, index) => {
+            const row = run.rows.find(item => item.id === criterion.id);
+            const score = row?.score;
+            return <tr key={criterion.id}>
+              <th scope="row">
+                {(index === 0 || criteriaWithSource[index - 1].group !== criterion.group) && <small className="auto-group">{criterion.group}</small>}
+                {criterion.name}{criterion.timing && ' (' + criterion.timing + ')'}
+                {criterion.visual && <small>Cần hình ảnh/video</small>}
+                <details><summary>Trích đoạn gốc</summary><blockquote>{criterion.excerpt.replace(/^\[\d+:\d+\]\s*/gm, '')}</blockquote></details>
+              </th>
+              <td>{typeof score === 'number' ? <strong>{score}/10 · {score >= threshold ? 'Đạt' : 'Cần sửa'}</strong>
+                : criterion.visual || score === null ? 'Chưa đủ dữ liệu' : '—'}</td>
+              <td>{hasCurrentReview && row && typeof score === 'number' && score < threshold && row.part !== null &&
+                <button className="outline" aria-label={`Sửa lại phần ${row.part} theo tiêu chí ${criterion.name}`} onClick={() => repairCriterion(row.id)}>Sửa lại</button>}</td>
+            </tr>;
+          })}</tbody>
+        </table></div>
+        <div className="auto-review-scroll"><table className="auto-review" aria-label="Dẫn chứng và cách sửa">
+          <thead><tr><th scope="col">Tiêu chí</th><th scope="col">Dẫn chứng và cách sửa</th></tr></thead>
+          <tbody>{run.rows.length ? run.rows.map(row => <tr key={row.id}>
+            <th scope="row">{criteriaWithSource[row.id]?.name}</th>
+            <td>{row.part !== null && <strong>Phần {row.part}</strong>}
+              {row.evidence && <blockquote>{row.evidence}</blockquote>}
+              <div>{row.reason}</div>
+              {row.fix && <div><strong>Cách sửa: </strong>{row.fix}</div>}
+            </td>
+          </tr>) : <tr><td colSpan={2}>Dẫn chứng và cách sửa sẽ xuất hiện sau khi đối chiếu.</td></tr>}</tbody>
+        </table></div>
+      </div>
       {all && <details className="auto-script"><summary>{scope === null ? 'Kịch bản hoàn chỉnh' : 'Kịch bản phần ' + (scope + 1)}</summary>
         {run.parts.length > 1 && <label>Phần kịch bản <select value={scope ?? 'all'} onChange={event => { setScope(event.target.value === 'all' ? null : Number(event.target.value)); setEdited(null); }}>
           <option value="all">Toàn video</option>{run.parts.map((part, i) => <option key={i} value={i}>Phần {i + 1} · {part.title}</option>)}</select></label>}
