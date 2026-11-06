@@ -85,7 +85,7 @@ NGUỒN: ${JSON.stringify(units.map((unit, index) => [index + 1, unit]))}`;
       ] };
     });
     return `${base}
-Đối chiếu cấu trúc toàn video dựa trên các trích đoạn theo đúng thứ tự các phần. Chỉ trích dẫn văn bản có trong dữ liệu; không xem điểm là đánh giá chi tiết những đoạn đã lược. ${run.plan?.title ? 'Chấm độ khớp với tiêu đề đề xuất trong kế hoạch.' : 'Chưa có tiêu đề đích; mục 0 trả score:null, part:null và evidence rỗng.'} Chấm từng tiêu chí áp dụng 0–10 theo đúng ID (0–${criteria.length - 1}), ghi part là số phần bắt đầu từ 1 và evidence là đoạn trích NGUYÊN VĂN từ đúng phần đó. Nếu dưới 8, chọn phần cần sửa nhất và ghi cách sửa cụ thể. Mục 1 và 8 cần ảnh bìa/cảnh dựng thật nên trả score:null, part:null, evidence:"", kèm lý do thiếu dữ liệu. Các mục có đủ dữ liệu phải có điểm; nếu kịch bản thiếu yếu tố thì cho điểm thấp và trích đoạn liên quan. Điểm chỉ là đánh giá tham khảo. Trả {"rows":[{"id":0,"score":7,"part":1,"evidence":"trích nguyên văn","reason":"...","fix":"..."}]} với đủ ${criteria.length} dòng.
+Đối chiếu cấu trúc toàn video dựa trên các trích đoạn theo đúng thứ tự các phần. Chỉ trích dẫn văn bản có trong dữ liệu; không xem điểm là đánh giá chi tiết những đoạn đã lược. ${run.plan?.title ? 'Chấm độ khớp với tiêu đề đề xuất trong kế hoạch.' : 'Chưa có tiêu đề: tự đề xuất MỘT tiêu đề YouTube chuẩn SEO, gây tò mò, tối đa 70 ký tự, đúng nội dung có thật, trả trong trường "title"; chấm mục 0 theo độ khớp của câu mở đầu với tiêu đề này.'} Chấm từng tiêu chí áp dụng 0–10 theo đúng ID (0–${criteria.length - 1}), ghi part là số phần bắt đầu từ 1 và evidence là đoạn trích NGUYÊN VĂN từ đúng phần đó. Nếu dưới 8, chọn phần cần sửa nhất và ghi cách sửa cụ thể. Mục 1 và 8 cần ảnh bìa/cảnh dựng thật nên trả score:null, part:null, evidence:"", kèm lý do thiếu dữ liệu. Các mục có đủ dữ liệu phải có điểm; nếu kịch bản thiếu yếu tố thì cho điểm thấp và trích đoạn liên quan. Điểm chỉ là đánh giá tham khảo. Trả {${run.plan?.title ? '' : '"title":"tiêu đề đề xuất",'}"rows":[{"id":0,"score":7,"part":1,"evidence":"trích nguyên văn","reason":"...","fix":"..."}]} với đủ ${criteria.length} dòng.
 ${JSON.stringify({ plan: run.plan, parts: excerpts })}`;
   }
   const part = run.parts[run.index];
@@ -145,6 +145,12 @@ export function acceptResponse(run: Run, text: unknown): Run {
   const next: Run = { ...run, pending: undefined, notice: '', mode: run.mode === 'running' ? 'running' : 'paused' };
   if (run.phase === 'plan') return { ...next, ...planned(value, run) };
   if (run.phase === 'review') {
+    // No target title yet: ChatGPT proposes one with the first review; the opening is graded and repaired against it.
+    const proposed = !run.plan?.title && typeof value?.title === 'string' ? value.title.trim().slice(0, 120) : '';
+    if (proposed) {
+      const plan = { ...(run.plan || { title: '', question: '', promise: '', tracks: [], opening: '', transitions: '', payoff: '', ending: '', sourceNote: '', cover: '' }), title: proposed };
+      run = { ...run, plan }; next.plan = plan;
+    }
     const rows = reviewed(value, run);
     const repairParts = [...new Set(rows.filter(row => row.score !== null && row.score < threshold).map(row => row.part! - 1))].sort((a, b) => a - b);
     if (!repairParts.length) return { ...next, rows, manualCriterion: undefined, manualBatch: undefined, mode: next.mode === 'running' ? 'passed' : 'paused' };

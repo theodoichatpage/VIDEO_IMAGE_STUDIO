@@ -405,7 +405,7 @@ function laneCommand(fresh: Session, lane: string, path: string[], body: Record<
     if (part.status === 'complete' && part.scenes.length) return { fail: ['Phần này đã có kết quả.', 409] };
     if (laneJobs.some(item => item.partId === part.id && item.type === 'part_analysis') || (fresh.activeJob?.type === 'part_analysis' && fresh.activeJob.partId === part.id)) return { fail: ['Phần này đang được tab khác phân cảnh.', 409] };
     part.status = 'processing'; part.scenes = []; part.analysisText = ''; delete part.receivedAt;
-    const command: Job = { id: newId(), type: 'part_analysis', status: 'queued', prompt: partPrompt(part, fresh.analysisContext), partId: part.id, protocol: 2, lane };
+    const command: Job = { id: newId(), type: 'part_analysis', status: 'queued', prompt: partPrompt(part, fresh.analysisContext, fresh.parts[0]?.id === part.id), partId: part.id, protocol: 2, lane };
     laneJobs.push(command); fresh.lastError = ''; return { command };
   }
   if (path[4] === 'rewrite' && path[5] && path.length === 6) {
@@ -485,17 +485,20 @@ async function commitImageCapture(id: string, job: Job, image: Awaited<ReturnTyp
 function structurePrompt(script: string) {
   return 'Bạn là biên tập viên kịch bản. Hãy đọc TOÀN BỘ kịch bản và chia thành số phần HỢP LÝ theo mạch nội dung, không cố định 5 phần. Mục tiêu là mỗi phần đủ ngắn để bước sau phân tích thành phân cảnh chi tiết, nhưng tuyệt đối không cắt giữa một ý, sự kiện hoặc đoạn kể đang liền mạch. Chỉ trả MỘT JSON hợp lệ, không markdown, đúng dạng: {"parts":[{"title":"Phần 1 - tên ngắn","range":"mô tả phạm vi nội dung","content":"nguyên văn đầy đủ nội dung thuộc phần này"}]}. Phải bao phủ toàn bộ kịch bản theo đúng thứ tự, không bỏ sót, không viết lại nội dung. KỊCH BẢN:\n' + script;
 }
-function partPrompt(part: Part, context?:Record<string,string>) {
-  return 'CHẾ ĐỘ PHÂN TÍCH VĂN BẢN. KHÔNG TẠO ẢNH, không gọi công cụ tạo ảnh. Chỉ viết JSON, các prompt là dữ liệu văn bản để dùng ở bước sau.\n' + sceneAnalysisPrompt(part) + (context ? '\nTHÔNG TIN NGƯỜI DÙNG ĐÃ CHỌN (dữ liệu tham khảo, không tự xác nhận nguồn):\n' + JSON.stringify(context) : '');
+function partPrompt(part: Part, context?:Record<string,string>, opening = false) {
+  return 'CHẾ ĐỘ PHÂN TÍCH VĂN BẢN. KHÔNG TẠO ẢNH, không gọi công cụ tạo ảnh. Chỉ viết JSON, các prompt là dữ liệu văn bản để dùng ở bước sau.\n' + sceneAnalysisPrompt(part, opening) + (context ? '\nTHÔNG TIN NGƯỜI DÙNG ĐÃ CHỌN (dữ liệu tham khảo, không tự xác nhận nguồn):\n' + JSON.stringify(context) : '');
 }
-function sceneAnalysisPrompt(part: Part) {
-  return 'Bạn là đạo diễn hình ảnh. Chỉ trả MỘT JSON hợp lệ, không markdown: {"scenes":[{"title":"Cảnh 1 - tên rất ngắn","backdrop":"bối cảnh riêng của cảnh","content":"hành động/sự kiện riêng của cảnh","character":"nhân vật xuất hiện, tư thế hoặc biểu cảm riêng","emotion":"cảm xúc riêng","shot":"góc máy, cỡ cảnh, hướng nhìn riêng","image":"mô tả hình ảnh ngắn bằng tiếng Việt","narration":"lời đọc nguyên văn","storyLine":"A/B/chung","assetType":"ảnh AI hoặc ảnh tư liệu hoặc bản đồ hoặc biểu đồ hoặc tài liệu","source":"nguồn cụ thể nếu biết","sourceUrl":"đường dẫn thực tế nếu biết","motion":"gợi ý dựng","prompt":"English scene prompt only: subject/action + character details for this scene + setting + camera framing"}]}. Phân biệt ảnh AI với tư liệu thật; không bịa nguồn hoặc URL. Quyền sử dụng là chưa rõ cho đến khi người dùng tự kiểm tra. Từ nội dung Phần này, tách thành các cảnh dùng tạo ảnh YouTube. Mỗi cảnh có góc máy điện ảnh khác nhau. PROMPT CẢNH chỉ chứa nội dung riêng của cảnh, nhân vật/bối cảnh và góc máy; không chứa phong cách chung, ánh sáng, chất liệu hoặc tỷ lệ. PHẦN: ' + part.title + '\nNỘI DUNG:\n' + part.content;
+// Fixed production rules kept here, not in an editable prompt, so many videos come out the same way.
+const VARIETY_RULE = ' ĐA DẠNG HÌNH ẢNH: luân phiên cỡ cảnh toàn – trung – cận (wide / medium / close-up), không để hai cảnh liền nhau cùng cỡ; một sự việc quan trọng tách 2–3 cảnh với cỡ khác nhau; ghi cỡ cảnh trong trường shot và trong prompt.';
+const OPENING_RULE = ' CẢNH MỞ ĐẦU: Cảnh 1 là cảnh mở video, dùng làm ảnh bìa, đặt trước nội dung chính: motif của video, nhân vật chính ở giữa khung hình, hai bên là hai kết quả đối lập nhau theo câu hỏi chính của video; lời đọc là câu đầu tiên của phần này.';
+function sceneAnalysisPrompt(part: Part, opening = false) {
+  return 'Bạn là đạo diễn hình ảnh. Chỉ trả MỘT JSON hợp lệ, không markdown: {"scenes":[{"title":"Cảnh 1 - tên rất ngắn","backdrop":"bối cảnh riêng của cảnh","content":"hành động/sự kiện riêng của cảnh","character":"nhân vật xuất hiện, tư thế hoặc biểu cảm riêng","emotion":"cảm xúc riêng","shot":"góc máy, cỡ cảnh, hướng nhìn riêng","image":"mô tả hình ảnh ngắn bằng tiếng Việt","narration":"lời đọc nguyên văn","storyLine":"A/B/chung","assetType":"ảnh AI hoặc ảnh tư liệu hoặc bản đồ hoặc biểu đồ hoặc tài liệu","source":"nguồn cụ thể nếu biết","sourceUrl":"đường dẫn thực tế nếu biết","motion":"gợi ý dựng","prompt":"English scene prompt only: subject/action + character details for this scene + setting + camera framing"}]}. Phân biệt ảnh AI với tư liệu thật; không bịa nguồn hoặc URL. Quyền sử dụng là chưa rõ cho đến khi người dùng tự kiểm tra. Từ nội dung Phần này, tách thành các cảnh dùng tạo ảnh YouTube. Mỗi cảnh có góc máy điện ảnh khác nhau.' + VARIETY_RULE + (opening ? OPENING_RULE : '') + ' PROMPT CẢNH chỉ chứa nội dung riêng của cảnh, nhân vật/bối cảnh và góc máy; không chứa phong cách chung, ánh sáng, chất liệu hoặc tỷ lệ. PHẦN: ' + part.title + '\nNỘI DUNG:\n' + part.content;
 }
 function current(job: Job | null | undefined) { return Boolean(job && ((job.protocol === 2 && job.type !== 'image_generation') || (job.protocol === 3 && job.type === 'image_generation'))); }
 function beginPart(session: Session, part: Part) {
   part.status = 'processing'; part.scenes = []; part.analysisText = ''; delete part.receivedAt;
   session.lastError = ''; session.status = 'part_processing';
-  session.activeJob = { id: newId(), type: 'part_analysis', status: 'queued', prompt: partPrompt(part, session.analysisContext), partId: part.id, protocol: 2 };
+  session.activeJob = { id: newId(), type: 'part_analysis', status: 'queued', prompt: partPrompt(part, session.analysisContext, session.parts[0]?.id === part.id), partId: part.id, protocol: 2 };
 }
 function nextAnalysis(session: Session) {
   if (!session.batchAnalysis || session.activeJob) return;
@@ -720,7 +723,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         if (part.status === 'complete' && part.scenes.length) return send(res, 200, { session });
         part.status = 'processing'; session.status = 'part_processing'; session.lastError = '';
         // Waiting means receive an existing response only; never dispatch another ChatGPT prompt.
-        session.activeJob = { id: newId(), type: 'part_analysis', status: 'waiting', prompt: partPrompt(part, session.analysisContext), partId: part.id, protocol: 2 };
+        session.activeJob = { id: newId(), type: 'part_analysis', status: 'waiting', prompt: partPrompt(part, session.analysisContext, session.parts[0]?.id === part.id), partId: part.id, protocol: 2 };
         return send(res, 200, { session: await write(session) });
       }
       if (path[2] === 'parts' && path[3] && path[4] === 'result' && req.method === 'POST') {

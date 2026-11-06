@@ -62,13 +62,22 @@ describe('one-button analysis', () => {
 
 it('reviews already rewritten sections directly and leaves the missing target title unscored', () => {
  const run: Run = { ...written(), plan: undefined };
- expect(promptFor(run)).toContain('Chưa có tiêu đề đích');
+ expect(promptFor(run)).toContain('tự đề xuất MỘT tiêu đề YouTube chuẩn SEO');
  const report = score(run);
  expect(() => reply(run, report)).toThrow();
  report.rows[0] = { id: 0, score: null, part: null, evidence: '', reason: 'Chưa có tiêu đề đích', fix: '' };
  const reviewed = reply(run, report);
  expect(reviewed.mode).toBe('passed');
  expect(reviewed.rows.filter(row => row.score === null).map(row => row.id)).toEqual([0, 1, 8]);
+});
+
+it('takes the title ChatGPT proposes with the first review and grades the opening against it', () => {
+ const run: Run = { ...written(), plan: undefined };
+ const report = { ...score(run), title: 'Trần Thủ Độ: công thần hay kẻ cướp ngôi?' };
+ const reviewed = reply(run, report);
+ expect(reviewed.plan?.title).toBe('Trần Thủ Độ: công thần hay kẻ cướp ngôi?');
+ expect(typeof reviewed.rows[0].score).toBe('number');
+ expect(promptFor({ ...reviewed, phase: 'review' })).toContain('Chấm độ khớp với tiêu đề');
 });
 
 it('repairs only the selected criterion, then reviews the whole script without starting another auto repair', () => {
