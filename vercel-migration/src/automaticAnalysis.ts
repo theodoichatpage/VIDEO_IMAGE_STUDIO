@@ -34,7 +34,7 @@ export function reviewQuality(rows: Row[]) {
 }
 const required = (value: unknown): value is string => typeof value === 'string' && Boolean(value.trim());
 const tidy = (value: string) => value.replace(/\s+/gu, ' ').trim();
-const reference = criteriaWithSource.map(c => `${c.id}. ${c.name} (${c.start}–${c.end})\n${c.excerpt}`).join('\n');
+const reference = criteriaWithSource.map(c => `${c.id}. ${c.name}${c.timing ? ` (${c.timing})` : ''}\n${c.excerpt}`).join('\n');
 const planFields = ['title', 'question', 'promise', 'opening', 'transitions', 'payoff', 'ending', 'sourceNote', 'cover'] as const;
 const planShape = JSON.stringify({ ...Object.fromEntries(planFields.map(key => [key, '...'])), tracks: ['...', '...'], branches: [{ title: '...', end: 1 }] });
 

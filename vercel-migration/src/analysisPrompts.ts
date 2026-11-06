@@ -2,17 +2,17 @@ import original from './aprilynne-transcript.txt?raw';
 import type {AnalysisState} from './analysisWorkspace';
 export const originalTranscript=original;
 export const criteria=[
- {name:'Câu đầu khớp tiêu đề',start:'0:52',end:'0:57'},
- {name:'Cảnh đầu khớp ảnh bìa',start:'0:54',end:'0:57'},
- {name:'Bối cảnh mở đầu',start:'2:33',end:'2:48'},
- {name:'Phần thưởng hoặc cái giá phải trả',start:'2:40',end:'2:48'},
- {name:'Khoảng trống tò mò',start:'2:45',end:'2:48'},
+ {name:'Câu đầu khớp tiêu đề',start:'0:52',end:'0:57',timing:'trong 5 giây đầu'},
+ {name:'Cảnh đầu khớp ảnh bìa',start:'0:54',end:'0:57',timing:'trong 5 giây đầu'},
+ {name:'Bối cảnh mở đầu',start:'2:33',end:'2:48',timing:'trong 20 giây đầu'},
+ {name:'Phần thưởng hoặc cái giá phải trả',start:'2:40',end:'2:48',timing:'trong 20 giây đầu'},
+ {name:'Khoảng trống tò mò',start:'2:45',end:'2:48',timing:'trong 20 giây đầu'},
  {name:'Đáp ứng rồi vượt kỳ vọng',start:'3:34',end:'3:56'},
  {name:'Thể hiện công sức thực tế',start:'5:05',end:'5:37'},
- {name:'Bắt đầu nội dung chính sớm',start:'6:18',end:'7:03'},
- {name:'Đa dạng hình ảnh',start:'7:16',end:'7:35'},
+ {name:'Bắt đầu nội dung chính sớm',start:'6:18',end:'7:03',timing:'chậm nhất ở giây 20'},
+ {name:'Đa dạng hình ảnh',start:'7:16',end:'7:35',timing:'đổi cảnh mỗi 3–5 giây theo ví dụ'},
  {name:'Tương phản',start:'8:47',end:'9:32'},
- {name:'Luân phiên nhịp độ và năng lượng',start:'10:20',end:'11:19'},
+ {name:'Luân phiên nhịp độ và năng lượng',start:'10:20',end:'11:19',timing:'chu kỳ thường 2–4 phút, tùy video'},
  {name:'Phần thưởng lớn và kết thúc cao trào',start:'11:57',end:'12:06'},
  {name:'Kiểm tra và cắt đoạn gây chán',start:'13:36',end:'14:04'},
 ];

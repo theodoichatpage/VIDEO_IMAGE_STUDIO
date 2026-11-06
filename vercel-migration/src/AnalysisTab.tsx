@@ -240,8 +240,8 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
           return <tr key={criterion.id}>
             <th scope="row">
               {(index === 0 || criteriaWithSource[index - 1].group !== criterion.group) && <small className="auto-group">{criterion.group}</small>}
-              {criterion.name} <small>{criterion.start}–{criterion.end} · {criterion.visual ? 'Cần hình ảnh/video' : 'Kiểm tra từ kịch bản'}</small>
-              <details><summary>Trích đoạn gốc</summary><blockquote>{criterion.excerpt}</blockquote></details>
+              {criterion.name}{criterion.timing && ' (' + criterion.timing + ')'} <small>{criterion.visual ? 'Cần hình ảnh/video' : 'Kiểm tra từ kịch bản'}</small>
+              <details><summary>Trích đoạn gốc</summary><blockquote>{criterion.excerpt.replace(/^\[\d+:\d+\]\s*/gm, '')}</blockquote></details>
             </th>
             <td>{criterion.visual || (row && row.score === null) ? <><b>Chưa đủ dữ liệu</b><div>{row?.reason || 'Cần tài sản thực tế để đối chiếu.'}</div></>
               : row ? <><b>{row.score}/10 · {(row.score ?? 0) >= threshold ? 'Đạt' : 'Cần sửa'}</b> · Phần {row.part}
