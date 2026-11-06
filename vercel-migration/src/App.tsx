@@ -715,7 +715,8 @@ function App() {
     };
     check(); const timer = window.setInterval(check, 15_000); return () => clearInterval(timer);
   }, [bridgeJobId, session?.activeJob?.id, session?.laneJobs, sessionId]);
-  const liveBridgeJob = staleJob && staleJob === bridgeJobId ? undefined : bridgeJobId || undefined;
+  // Only a job the server or this tab still waits for holds the analysis back; the extension itself refuses a second command while a real one runs.
+  const liveBridgeJob = bridgeJobId && knownJob(bridgeJobId) && staleJob !== bridgeJobId ? bridgeJobId : undefined;
   const projectName = (() => {
     try {
       const projects = JSON.parse(localStorage.getItem('vis-project-meta') || '[]') as { id: string; name: string }[];
