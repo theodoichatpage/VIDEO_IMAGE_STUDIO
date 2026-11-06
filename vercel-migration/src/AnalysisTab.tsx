@@ -16,7 +16,7 @@ const labels: Record<Mode, string> = {
   idle: 'Sẵn sàng', running: 'Đang xử lý', paused: 'Đã tạm dừng', stopped: 'Đã dừng', error: 'Gặp lỗi',
   limited: 'Chưa đạt · vẫn còn tiêu chuẩn dưới 8/10',
   missing: 'Các tiêu chuẩn chấm được đã đạt · còn tiêu chuẩn chưa đủ dữ liệu',
-  passed: 'Tất cả tiêu chuẩn đã đạt', transferred: 'Đã chuyển bản thảo sang Phân tách',
+  passed: 'Mọi tiêu chuẩn chấm được từ kịch bản đã đạt', transferred: 'Đã chuyển bản thảo sang Phân tách',
 };
 
 function progress(run: Run) {

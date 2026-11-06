@@ -13,7 +13,8 @@ export const criteria=[
  {name:'Đa dạng hình ảnh',start:'7:16',end:'7:35',timing:'đổi cảnh mỗi 3–5 giây theo ví dụ'},
  {name:'Tương phản',start:'8:47',end:'9:32'},
  {name:'Luân phiên nhịp độ và năng lượng',start:'10:20',end:'11:19',timing:'chu kỳ thường 2–4 phút, tùy video'},
- {name:'Phần thưởng lớn và kết thúc cao trào',start:'11:57',end:'12:06'},
+ {name:'Hé lộ phần thưởng lớn',start:'11:57',end:'12:02'},
+ {name:'Kết thúc ở cao trào',start:'12:02',end:'12:06'},
  {name:'Kiểm tra và cắt đoạn gây chán',start:'13:36',end:'14:04'},
 ];
 const sec=(value:string)=>{const [m,s]=value.split(':').map(Number);return m*60+s};

@@ -4,7 +4,7 @@ import {parseReviewRows} from './reviewRows';
 import {getScopeReview} from './reviewScope';
 import type {AnalysisState} from './analysisWorkspace';
 type Props={state:AnalysisState;scope:string;setScope:(scope:string)=>void;onScript:(text:string)=>void;onReview:()=>void;busy:boolean};
-const groups=[{title:'5 giây đầu',ids:[0,1]},{title:'20 giây đầu',ids:[2,3,4,7]},{title:'Vượt kỳ vọng và công sức',ids:[5,6]},{title:'Phần thân',ids:[8,9,10]},{title:'Kết thúc',ids:[11]},{title:'Kiểm tra lần cuối',ids:[12]}];
+const groups=[{title:'5 giây đầu',ids:[0,1]},{title:'20 giây đầu',ids:[2,3,4,7]},{title:'Vượt kỳ vọng và công sức',ids:[5,6]},{title:'Phần thân',ids:[8,9,10]},{title:'Kết thúc',ids:[11,12]},{title:'Kiểm tra lần cuối',ids:[13]}];
 export default function ReviewComparison({state,scope,setScope,onScript,onReview,busy}:Props){
  const [selected,setSelected]=useState(0),[showFull,setShowFull]=useState(false);const left=useRef<HTMLDivElement>(null),right=useRef<HTMLDivElement>(null),syncing=useRef(false);const review=getScopeReview(state,scope);const rows=review.raw?parseReviewRows(review.raw,review.text):null;
  const sync=(side:'left'|'right')=>{if(syncing.current)return;const from=side==='left'?left.current:right.current,to=side==='left'?right.current:left.current;if(from&&to){syncing.current=true;to.scrollTop=from.scrollTop;requestAnimationFrame(()=>{syncing.current=false})}};

@@ -44,7 +44,9 @@ describe('one-button analysis', () => {
     expect(fixed.phase).toBe('review');
     expect(promptFor(fixed)).toContain('Đoạn cuối.');
     const reviewed = reply(fixed, score(fixed));
-    expect(reviewed.mode).toBe('missing');
+    // The two criteria that need the cover or footage do not block approval; they are noted for a manual check.
+    expect(reviewed.mode).toBe('passed');
+    expect(reviewed.notice).toContain('2 mục');
     expect(reviewed.rows.filter(row => row.score === null)).toHaveLength(2);
   });
 
