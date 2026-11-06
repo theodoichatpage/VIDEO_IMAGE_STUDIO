@@ -23,7 +23,7 @@ Deno.serve(async (request) => {
     status: (code: number) => ({ json: (value: unknown) => { result.status = code; result.payload = value; } }),
   };
   const worker = url.searchParams.get('worker') || undefined;
-  await handler({ method: request.method, query: { path, worker }, body, headers: {} }, response);
+  await handler({ method: request.method, query: { path, worker, reply: url.searchParams.get('reply') }, body, headers: {} }, response);
   // reply=minimal (the extension delivering results): drop the whole project from the reply, keep ok/error fields.
   if (url.searchParams.get('reply') === 'minimal' && result.payload && typeof result.payload === 'object' && 'session' in (result.payload as Record<string, unknown>)) {
     const { session: _session, ...rest } = result.payload as Record<string, unknown>; result.payload = { ...rest, ok: true };

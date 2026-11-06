@@ -76,6 +76,7 @@ const textsCache = { map: new Map<string, { fp: string; texts: Loose }>(),
 // Egress: the whole record (~300 KB once pictures exist) is the bulk of what is left. A read first asks for the tiny
 // `summary` (its updatedAt) and answers from this copy when nobody wrote since; any write bumps updatedAt.
 const recordCache = new Map<string, { updatedAt: number; record: Loose }>();
+export function forgetCaches() { recordCache.clear(); textsCache.map.clear(); knownTexts.clear(); }
 function stable(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
   if (Array.isArray(value)) return '[' + value.map(stable).join(',') + ']';
@@ -94,6 +95,19 @@ function promptRef(text: unknown, scenePrompt: string, styles: Loose, candidates
 function promptFrom(ref: Loose | undefined, scenePrompt: unknown, styles: Loose | undefined) {
   const style = ref && styles?.[ref.styleFp];
   return typeof style === 'string' && fingerprint(String(scenePrompt ?? '')) === ref!.sceneFp ? imagePrompt(style, { prompt: String(scenePrompt ?? '') } as Scene, '') : undefined;
+}
+// Egress: every finished scene stores two identical signed addresses (picture and its preview) plus repeated paths.
+// The row keeps one copy and a marker; reads put the second copy back, so callers see the same record as before.
+function sameThumb(r: Loose) { return r && r.thumbPath && r.thumbPath === r.storagePath && r.thumbUrl === r.url && r.thumbExpiresAt === r.expiresAt; }
+function mapResults(record: Loose, change: (r: Loose) => Loose) {
+  if (!Array.isArray(record?.parts)) return record;
+  return { ...record, parts: record.parts.map((p: Loose) => !Array.isArray(p?.scenes) ? p : { ...p, scenes: p.scenes.map((s: Loose) => !Array.isArray(s?.imageResults) ? s : { ...s, imageResults: s.imageResults.map((r: Loose) => (r && typeof r === 'object' ? change(r) : r)) }) }) };
+}
+export function compactResults(record: Loose) { return mapResults(record, r => { if (!sameThumb(r)) return r; const { thumbPath: _a, thumbUrl: _b, thumbExpiresAt: _c, ...rest } = r; return { ...rest, sameThumb: 1 }; }); }
+export function expandResults(record: Loose | null | undefined) {
+  if (!record || !Array.isArray(record.parts)) return record;
+  for (const p of record.parts) for (const s of p?.scenes || []) for (const r of s?.imageResults || []) if (r?.sameThumb) { r.thumbPath = r.storagePath; r.thumbUrl = r.url; r.thumbExpiresAt = r.expiresAt; delete r.sameThumb; }
+  return record;
 }
 export function splitTexts(record: Loose) {
   const lean: Loose = { ...record }; const texts: Loose = { parts: {} }; const styles: Loose = {};
@@ -137,11 +151,12 @@ export function mergeTexts(record: Loose | null | undefined, texts: Loose | null
 export function replyShape(payload: unknown, mode: string | null) {
   if ((mode !== 'lean' && mode !== 'fp') || !payload || typeof payload !== 'object') return payload;
   const body = payload as Loose; if (!body.session || typeof body.session !== 'object') return payload;
+  if (body.leanReady) { const { leanReady: _l, ...rest } = body; return mode === 'lean' ? rest : payload; }
   const { lean, texts } = splitTexts(body.session); const textsFp = fingerprint(stable(texts));
   return mode === 'lean' ? { ...body, session: lean, textsFp, lean: true } : { ...body, textsFp };
 }
 const sessionOf = (path: string) => { const m = /[?&]id=eq\.([^&]+)/.exec(path); return m ? decodeURIComponent(m[1]) : ''; };
-async function database(path: string, init?: RequestInit): Promise<any> {
+async function database(path: string, init?: RequestInit, opts?: { skipTexts?: boolean }): Promise<any> {
   // A write never needs the multi-MB record sent back: ask only for the id (enough to know a row was updated).
   if (init?.method === 'PATCH' && /return=representation/.test(String((init.headers as Record<string, string> | undefined)?.Prefer || '')) && !/[?&]select=/.test(path)) path += '&select=id';
   const sessions = /^studio_sessions\?/.test(path);
@@ -169,10 +184,14 @@ async function database(path: string, init?: RequestInit): Promise<any> {
       // Egress: the row's text is ~1 MB and rarely changes. The record carries its fingerprint (`textsFp`), so when this
       // instance already holds that text only the small record is read from the database.
       const rows = id ? await rest(path) as Loose[] | null : null;
+      for (const r of rows || []) expandResults(r?.record);
       if (rows) {
         const row = rows[0]; const fp = row?.record?.textsFp; const held = id && textsCache.get(id);
         if (!row) { knownTexts.delete(id); textsCache.delete(id); recordCache.delete(id); return rows; }  // no row (new or removed project): its next write carries the text
         if (fp && held && held.fp === fp) { delete row.record.textsFp; mergeTexts(row.record, held.texts); knownTexts.set(id, fp); return keep(rows); }
+        // A lean reader (Manager, Studio) holds the text already and only needs its fingerprint, which the record carries:
+        // do not read the ~1 MB text column for it.
+        if (opts?.skipTexts && fp) return rows;
         const only = await rest('studio_sessions?id=eq.' + encodeURIComponent(id) + '&select=texts') as Loose[] | null;
         const texts = only?.[0]?.texts;
         if (!texts) { knownTexts.delete(id); textsCache.delete(id); delete row.record?.textsFp; return keep(rows); }
@@ -182,6 +201,7 @@ async function database(path: string, init?: RequestInit): Promise<any> {
       }
       const rows2 = await rest(path.replace('select=' + select[1], 'select=' + select[1] + ',texts')) as Loose[] | null;
       for (const row of rows2 || []) {
+        expandResults(row.record);
         if (row.texts) { mergeTexts(row.record, row.texts); if (id) { const f = fingerprint(stable(row.texts)); knownTexts.set(id, f); textsCache.set(id, { fp: f, texts: row.texts }); } }
         else if (id) { knownTexts.delete(id); textsCache.delete(id); }
         delete row.texts; if (row.record) delete row.record.textsFp;
@@ -199,7 +219,7 @@ async function database(path: string, init?: RequestInit): Promise<any> {
     let sentTexts = '', fp = ''; let writtenTexts: Loose | null = null;
     if (textsReady && row.record && typeof row.record === 'object') {
       const { lean, texts } = splitTexts(row.record); fp = fingerprint(stable(texts));
-      body.record = { ...lean, textsFp: fp }; if (!id || knownTexts.get(id) !== fp) { body.texts = texts; sentTexts = fp; }
+      body.record = { ...compactResults(lean), textsFp: fp }; if (!id || knownTexts.get(id) !== fp) { body.texts = texts; sentTexts = fp; }
       writtenTexts = texts;
     }
     try {
@@ -268,9 +288,9 @@ async function storeImage(session: Session, name: string, value: unknown) {
   return { ...await signImage(path), storagePath: path };
 }
 
-async function read(id: string): Promise<Session | null> {
+async function read(id: string, lean = false): Promise<Session | null> {
   let rows: { record: Session; bridge_last_seen?: number }[];
-  try { rows = await database('studio_sessions?id=eq.' + encodeURIComponent(id) + '&select=record' + (columnsReady ? ',bridge_last_seen' : '')); }
+  try { rows = await database('studio_sessions?id=eq.' + encodeURIComponent(id) + '&select=record' + (columnsReady ? ',bridge_last_seen' : ''), undefined, { skipTexts: lean }); }
   catch (error) { if (!columnsReady || !missingColumn(String((error as Error).message))) throw error; columnsReady = false; rows = await database('studio_sessions?id=eq.' + encodeURIComponent(id) + '&select=record'); }
   const value = rows?.[0]?.record;
   if (!value) return null;
@@ -587,7 +607,13 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       }
     }
     if (path[0] === 'sessions' && path[1]) {
-      const session = await read(path[1]);
+      const lean = path.length === 2 && req.method === 'GET' && (req.query as Record<string, unknown>).reply === 'lean';
+      const session = await read(path[1], lean);
+      if (lean && session && typeof (session as Loose).textsFp === 'string' && (session as Loose).script === undefined) {
+        const { textsFp, ...rest } = session as Loose;
+        return send(res, 200, { session: rest, textsFp, lean: true, leanReady: true });
+      }
+      if (session) delete (session as Loose).textsFp;
       if (path.length === 2 && req.method === 'GET') return send(res, 200, { session: session });
       if (!session) return fail(res, 'Không tìm thấy phiên làm việc.', 404);
       if (path[2] === 'separations' && path.length === 3 && req.method === 'POST') {

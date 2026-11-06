@@ -7,7 +7,7 @@ import ts from 'typescript';
 
 const source = readFileSync(new URL('../supabase/functions/studio-api/handler.ts', import.meta.url), 'utf8');
 const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText;
-const { default: handler, splitTexts, mergeTexts, replyShape } = await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'));
+const { default: handler, splitTexts, mergeTexts, replyShape, compactResults, expandResults, forgetCaches } = await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'));
 const id = 'texts-column-20261101';
 
 // One studio_sessions row as Postgres keeps it: columns are written only when the request sends them.
@@ -35,9 +35,9 @@ function database({ hasTexts = true } = {}) {
     const out = {}; for (const k of select) if (k in db.row || k === 'texts') out[k] = structuredClone(db.row[k] ?? null);
     return Response.json([out]);
   };
-  db.call = async (method, path, body) => {
+  db.call = async (method, path, body, reply) => {
     let status, data;
-    await handler({ method, query: { path: path.split('/') }, body, headers: {} }, { setHeader() {}, status(code) { status = code; return { json(value) { data = value; } }; } });
+    await handler({ method, query: { path: path.split('/'), reply }, body, headers: {} }, { setHeader() {}, status(code) { status = code; return { json(value) { data = value; } }; } });
     assert.equal(status, 200, path + ' ' + JSON.stringify(data));
     return data;
   };
@@ -91,6 +91,35 @@ test('a read does not fetch the ~1 MB text again while its fingerprint is unchan
   db.row.record.updatedAt += 1; db.row.summary = { ...db.row.summary, updatedAt: db.row.record.updatedAt }; // any real writer bumps updatedAt
   const changed = await db.call('GET', `sessions/${sid}`);
   assert.equal(changed.session.script, 'Đổi ở nơi khác', 'a changed fingerprint reads the text again');
+});
+
+test('a finished scene keeps one copy of its preview address in the row and gets the second one back on read', () => {
+  const result = { url: 'https://x/a?token=T', jobId: 'j', local: true, thumbUrl: 'https://x/a?token=T', createdAt: 1, expiresAt: 5, thumbPath: 'p/a.webp', storagePath: 'p/a.webp', thumbExpiresAt: 5 };
+  const other = { url: 'https://x/b', thumbUrl: 'https://x/b-small', storagePath: 'p/b', thumbPath: 'p/b-small' };
+  const record = { parts: [{ id: 'p', scenes: [{ imageResults: [result, other] }] }] };
+  const kept = JSON.parse(JSON.stringify(record));
+  const row = compactResults(record);
+  assert.equal(row.parts[0].scenes[0].imageResults[0].thumbUrl, undefined); assert.equal(row.parts[0].scenes[0].imageResults[0].sameThumb, 1);
+  assert.deepEqual(row.parts[0].scenes[0].imageResults[1], other, 'a different preview is kept as it is');
+  assert.deepEqual(record, kept, "the caller's record is not changed");
+  assert.ok(JSON.stringify(row).length < JSON.stringify(record).length - 40);
+  assert.deepEqual(expandResults(JSON.parse(JSON.stringify(row))), record);
+});
+
+test('a lean read needs no text column: the fingerprint comes from the record', async () => {
+  const db = database(); const seen = []; const inner = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { seen.push(decodeURIComponent(String(url))); return inner(url, init); };
+  const sid = id + '-lean';
+  await db.call('POST', 'sessions', { id: sid });
+  await db.call('POST', `sessions/${sid}/script`, { script: 'Văn bản dài. '.repeat(400) });
+  const full = await db.call('GET', `sessions/${sid}`, undefined, 'fp');
+  forgetCaches(); seen.length = 0; // another instance of the function: nothing held in memory
+  const lean = await db.call('GET', `sessions/${sid}`, undefined, 'lean');
+  assert.equal(seen.filter(u => /select=[^&]*texts/.test(u)).length, 0, 'the text column was not read');
+  assert.equal(lean.lean, true); assert.equal(lean.session.script, undefined); assert.equal(lean.session.textsFp, undefined);
+  assert.equal(typeof lean.textsFp, 'string'); assert.ok(JSON.stringify(lean).length < 2000);
+  assert.equal(replyShape({ session: full.session }, 'lean').textsFp, lean.textsFp, 'the same fingerprint a full read gives');
+  assert.equal(replyShape(lean, 'lean').session.script, undefined, 'a ready lean reply is passed through unchanged');
 });
 
 test('without the texts column everything stays in record, as before', async () => {
