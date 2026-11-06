@@ -24,6 +24,8 @@ export type Run = {
   managerReviewId?: string; pipelineId?: string;
   manualBatch?: boolean;
   pending?: { id: string; deadline: number; sectionId?: string }; notice: string;
+  // ChatGPT replies rejected by the strict check in a row, and why the last one was rejected (told to ChatGPT on the next try).
+  invalid?: number; lastInvalid?: string;
 };
 export const emptyRun = (): Run => ({
   input: '', source: '', style: '', limit: 3, rounds: 0, mode: 'idle', phase: 'plan', parts: [], index: 0, rows: [], repairParts: [], notice: '',

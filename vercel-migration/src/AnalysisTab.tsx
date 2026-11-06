@@ -107,9 +107,14 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
             }
             throw new Error(message);
           }
-          next = { ...acceptResponse(current, data.text), needsSave: true, revision: (current.revision || 0) + 1 };
+          next = { ...acceptResponse(current, data.text), needsSave: true, revision: (current.revision || 0) + 1, invalid: 0, lastInvalid: undefined };
         } catch (caught) {
-          next = { ...current, pending: undefined, mode: 'error', notice: caught instanceof Error ? caught.message : 'Phản hồi không hợp lệ.' };
+          const reason = caught instanceof Error ? caught.message : 'Phản hồi không hợp lệ.';
+          // A reply that fails the strict check (a quote not word for word, a missing fix) is asked again twice, with the reason, before stopping.
+          const tries = (current.invalid || 0) + 1;
+          next = data.state !== 'error' && tries <= 2 && current.mode === 'running'
+            ? { ...current, pending: undefined, invalid: tries, lastInvalid: reason, notice: 'ChatGPT trả kết quả chưa hợp lệ (' + reason + ') · gửi lại lần ' + tries + '/2' }
+            : { ...current, pending: undefined, mode: 'error', notice: reason };
         }
         save(next);
         send('studio-transcript-ack', { jobId: data.jobId });
@@ -187,7 +192,7 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
       const id = 'transcript-' + crypto.randomUUID();
       const sectionId = `automatic-analysis:${current.phase}:${current.index + 1}`;
       save({ ...current, pending: { id, sectionId, deadline: Date.now() + 25_000 }, notice: '' });
-      send('studio-transcript-ai', { pairCode: projectId, command: { id, type: 'transcript_rewrite', kind: 'rewrite', sectionId, prompt: promptFor(current) } });
+      send('studio-transcript-ai', { pairCode: projectId, command: { id, type: 'transcript_rewrite', kind: 'rewrite', sectionId, prompt: promptFor(current) + (current.lastInvalid ? ' LƯU Ý: lần trả lời trước bị từ chối vì: ' + current.lastInvalid + ' Trả đúng JSON, evidence trích NGUYÊN VĂN từ đoạn script đã gửi của đúng phần đó, và có fix khi điểm dưới 8.' : '') } });
     }), 400);
     return () => clearTimeout(timer);
   }, [run, connected, otherWork, bridgeJob, projectId, enabled, ready, tick]);
