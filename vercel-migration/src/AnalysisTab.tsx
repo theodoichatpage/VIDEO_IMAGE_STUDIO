@@ -33,10 +33,15 @@ function progress(run: Run) {
 
 export default function AnalysisTab({ projectId, projectName, connected, otherWork, bridgeJob, active, ready, enabled = true, workEpoch = 0, managerReview, managerScript, onCheckpoint, onTransfer }: Props) {
   const key = 'vis-automatic-analysis-v2-' + projectId;
+  // The browser keeps about 5 MB per site. A long script is stored once (the original text of a prepared part equals its text) and the latest state also lives in memory.
+  const latest = useRef<Run | null>(null);
+  const slim = (value: Run): Run => ({ ...value, parts: value.parts.map(part => part.source === part.text ? { ...part, source: '' } : part) });
+  const full = (value: Run): Run => ({ ...value, parts: value.parts.map(part => part.source ? part : { ...part, source: part.text }) });
   const read = (): Run => {
+    if (latest.current) return latest.current;
     try {
       const raw = localStorage.getItem(key);
-      if (raw) return restoreRun(JSON.parse(raw), projectId, workEpoch);
+      if (raw) return full(restoreRun(JSON.parse(raw), projectId, workEpoch));
       const legacy = loadAnalysis(projectId);
       return { ...emptyRun(), input: legacy.input || legacy.script || '' };
     } catch { return emptyRun(); }
@@ -51,9 +56,16 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   useEffect(() => { const timer = setInterval(() => setTick(value => value + 1), 2000); return () => clearInterval(timer); }, []);
 
   const save = (next: Run) => {
-    localStorage.setItem(key, JSON.stringify(next));
+    latest.current = next;
+    const text = JSON.stringify(slim(next));
+    try { localStorage.setItem(key, text); setError(''); } catch {
+      // Out of room: drop the old copies of this analysis, then try once more.
+      try {
+        for (let i = localStorage.length - 1; i >= 0; i--) { const name = localStorage.key(i) || ''; if (name.startsWith(key + '-')) localStorage.removeItem(name); }
+        localStorage.setItem(key, text); setError('');
+      } catch { setError('Bộ nhớ trình duyệt đầy: kết quả chỉ giữ trong tab này, đừng tải lại trang.'); }
+    }
     setRun(next);
-    setError('');
   };
   const change = (action: (current: Run) => void | Promise<void>) => {
     if (!navigator.locks) { setError('Hãy dùng Chrome hoặc Edge qua HTTPS để chạy một tác vụ tại một thời điểm.'); return; }
@@ -71,7 +83,7 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   };
 
   useEffect(() => {
-    const sync = (event: StorageEvent) => { if (event.key === key) setRun(read()); };
+    const sync = (event: StorageEvent) => { if (event.key === key) { latest.current = null; setRun(read()); } };
     const receive = (event: MessageEvent) => {
       if (event.source !== window) return;
       const data = event.data;
@@ -231,14 +243,6 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   const canResume = ['paused', 'stopped', 'error'].includes(run.mode);
   const hasCurrentReview = !working && ['missing', 'passed', 'limited', 'transferred'].includes(run.mode);
   const quality = reviewQuality(run.rows);
-  const repairCriterion = (id: number) => change(current => {
-    if (current.pending || !['missing', 'passed', 'limited', 'transferred'].includes(current.mode)) return;
-    const row = current.rows.find(item => item.id === id);
-    if (!row || row.score === null || row.score >= threshold || row.part === null || !current.parts[row.part - 1]?.text) return;
-    save({ ...current, phase: 'repair', mode: 'running', index: row.part - 1, repairParts: [row.part - 1],
-      manualCriterion: id, notice: 'Sửa phần ' + row.part + ' theo tiêu chí đã chọn.' });
-  });
-
   const canRepairAll = run.rows.length > 0 && quality.needsWork > 0;
   const repairAll = () => change(current => {
     if (current.pending || !['missing', 'passed', 'limited', 'transferred'].includes(current.mode)) return;
@@ -270,7 +274,7 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
         && <p>Đang hiển thị báo cáo của lần chấm trước. Studio sẽ cập nhật sau khi chấm lại bản sửa.</p>}
 
       <section className="auto-quality" aria-label="Chất lượng kịch bản">
-        <strong>Ngưỡng đạt {threshold}/10 · {hasCurrentReview
+        <strong>Ngưỡng đạt {threshold}/10 · Đang đạt {quality.passed}/{criteriaWithSource.length} · {hasCurrentReview
           ? quality.needsWork ? 'Chưa đạt' : quality.unscored ? 'Đạt tiêu chí kịch bản · mục hình ảnh chờ bước sau' : 'Đạt'
           : run.rows.length ? 'Kết quả lần chấm trước' : 'Chưa chấm'}</strong>
         <meter min={0} max={criteriaWithSource.length} value={quality.passed} aria-label="Số tiêu chí đạt từ 8 điểm"/>
@@ -293,9 +297,7 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
                     : <blockquote>{criterion.excerpt.replace(/^\[\d+:\d+\]\s*/gm, '')}</blockquote>}
                 </details></th>
                 <td>{typeof score === 'number' ? <strong className={score >= threshold ? 'score-pass' : 'score-low'}>{score.toFixed(1)}</strong>
-                  : <span title={criterion.visual || score === null ? 'Chưa đủ dữ liệu' : 'Chưa chấm'}>—</span>}
-                {row && typeof score === 'number' && score < threshold && row.part !== null &&
-                  <button className="outline" disabled={working} aria-label={`Viết lại tiêu chí ${criterion.name} · phần ${row.part}`} onClick={() => repairCriterion(row.id)}>Viết lại</button>}</td>
+                  : <span title={criterion.visual || score === null ? 'Chưa đủ dữ liệu' : 'Chưa chấm'}>—</span>}</td>
               </tr>;
             })}</tbody>
           </table></div>)}
