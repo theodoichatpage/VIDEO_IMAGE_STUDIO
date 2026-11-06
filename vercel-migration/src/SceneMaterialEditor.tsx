@@ -1,0 +1,7 @@
+import {useState} from 'react';import {loadSceneMaterial,saveSceneMaterial,type Material} from './sceneMaterials';import type {Scene} from './types';
+type Props={projectId:string;partId:string;index:number;scene:Scene};
+export default function SceneMaterialEditor({projectId,partId,index,scene}:Props){
+ const [value,setValue]=useState<Material>(()=>loadSceneMaterial(projectId,partId,index,scene.content)||{assetType:scene.assetType||'',source:[scene.source,scene.sourceUrl].filter(Boolean).join(' · '),rights:'Chưa rõ'});const [error,setError]=useState('');
+ const change=(next:Material)=>{try{saveSceneMaterial(projectId,partId,index,scene.content,next);setValue(next);setError('')}catch{setError('Không lưu được thông tin tư liệu trên trình duyệt.')}};
+ return <details><summary>Kiểm tra tư liệu và quyền sử dụng</summary><p>Nguồn gợi ý cần được kiểm tra. Ghi nguồn không đồng nghĩa có quyền sử dụng.</p><label>Loại tư liệu<input value={value.assetType} onChange={e=>change({...value,assetType:e.target.value})}/></label><label>Nguồn và đường dẫn<input value={value.source} onChange={e=>change({...value,source:e.target.value})}/></label><label>Trạng thái quyền sử dụng<select value={value.rights} onChange={e=>change({...value,rights:e.target.value as Material['rights']})}><option>Chưa rõ</option><option>Cần kiểm tra</option><option>Đã kiểm tra</option></select></label>{error&&<p role="alert">{error}</p>}</details>
+}

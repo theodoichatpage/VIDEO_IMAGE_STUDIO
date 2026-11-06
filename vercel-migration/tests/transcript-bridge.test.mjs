@@ -5,11 +5,11 @@ import {readFileSync} from 'node:fs';
 
 function worker(){
  let listener;const stored={pairCode:'project-a'},out=[],requests=[],sent=[];
- const context=vm.createContext({URL,AbortSignal,chrome:{
+ const chrome={
   storage:{local:{get:async()=>structuredClone(stored),set:async x=>Object.assign(stored,structuredClone(x)),remove:async keys=>keys.forEach(k=>delete stored[k])}},
   runtime:{onMessage:{addListener:fn=>listener=fn}},
-  tabs:{query:async()=>[{id:2,url:'https://chatgpt.com/c/test'},{id:3,url:'https://video-image-studio.vercel.app/'}],sendMessage:async(id,msg)=>{if(msg.type==='vis-ping')return{ready:true,version:'0.4.21'};if(msg.type==='vis-command'){sent.push(msg.command);return{ok:true}}out.push(msg);return{ok:true}}}
- },fetch:async(url,opts)=>{requests.push(url);return{ok:true,json:async()=>({session:{}})}}});
+  tabs:{onUpdated:{addListener(){},removeListener(){}},query:async()=>[{id:2,url:'https://chatgpt.com/c/test'},{id:3,url:'https://video-image-studio.vercel.app/'}],sendMessage:async(id,msg)=>{if(msg.type==='vis-ping')return{ready:true,version:JSON.parse(readFileSync('extension/manifest.json','utf8')).version};if(msg.type==='vis-command'){sent.push(msg.command);return{ok:true}}out.push(msg);return{ok:true}}}
+ };chrome.alarms={create:async()=>{},onAlarm:{addListener(){}}};const context=vm.createContext({URL,AbortSignal,chrome,fetch:async(url,opts)=>{requests.push(url);return{ok:true,json:async()=>({session:{}})}}});
  vm.runInContext(readFileSync(new URL('../extension/background.js',import.meta.url),'utf8'),context);
  return{stored,out,requests,sent,message:(m,sender={})=>new Promise(r=>listener(m,sender,r))};
 }

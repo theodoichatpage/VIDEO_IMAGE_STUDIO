@@ -3,18 +3,19 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 
-function worker(tabs = [], activeJob = null, version = '0.4.21') {
+function worker(tabs = [], activeJob = null, version = JSON.parse(readFileSync('extension/manifest.json','utf8')).version) {
   let listener, offline = false, rejection = '';
   let stored = { pairCode: 'session-three', studioOrigin: 'https://video-image-studio.vercel.app' };
   const received = [];
   const chrome = {
     storage: { local: { async get() { return structuredClone(stored); }, async set(value) { Object.assign(stored, structuredClone(value)); } } },
-    tabs: { async query() { return tabs; }, async sendMessage(id, message) {
+    tabs: { onUpdated:{addListener(){},removeListener(){}}, async query() { return tabs; }, async sendMessage(id, message) {
       if (message.type === 'vis-ping') return { ready: true, version };
       if (message.type === 'vis-capture-result') return id === 2 ? { ok: true, payload: { jobId: message.jobId, state: 'completed', text: '{"scenes":[{"prompt":"Correct part 3"}]}' } } : { ok: false, error: 'Wrong conversation' };
     } },
     runtime: { onMessage: { addListener(fn) { listener = fn; } } },
   };
+  chrome.alarms={create:async()=>{},onAlarm:{addListener(){}}};
   const context = vm.createContext({ chrome, URL, AbortSignal, fetch: async (url, options) => {
     if (offline) throw Error('Offline');
     if (!options?.body) return { ok: true, async json() { return { session: { activeJob } }; } };

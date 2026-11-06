@@ -1,0 +1,3 @@
+import {it,expect,vi} from 'vitest';
+import {saveSceneMaterial,loadSceneMaterial} from './sceneMaterials';
+it('stores edits per project and scene without changing another scene',()=>{const m=new Map<string,string>();vi.stubGlobal('localStorage',{getItem:(k:string)=>m.get(k)??null,setItem:(k:string,v:string)=>m.set(k,v)});saveSceneMaterial('a','part',0,'content',{assetType:'Bản đồ',source:'Lưu trữ',rights:'Cần kiểm tra'});expect(loadSceneMaterial('a','part',0,'content')?.source).toBe('Lưu trữ');expect(loadSceneMaterial('b','part',0,'content')).toBeNull();expect(loadSceneMaterial('a','part',0,'khác')).toBeNull()});

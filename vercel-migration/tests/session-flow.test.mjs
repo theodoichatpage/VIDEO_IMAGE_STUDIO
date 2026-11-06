@@ -35,7 +35,7 @@ test('analysis results, repeated delivery, late error, stop and next part remain
   };
   try {
     await call('POST', 'sessions', { id });
-    let response = await call('POST', `sessions/${id}/analysis`, { script: 'Một câu chuyện gồm hai sự kiện.' });
+    let response = await call('POST', `sessions/${id}/analysis`, { script: 'Một câu chuyện gồm hai sự kiện.', analysisContext: {title:'Tựa thử', cover:'Bìa thử',routes:'Tuyến thử',research:'Nguồn thử'} });
     let job = response.session.activeJob.id;
     await call('POST', `bridge/${id}/event`, { jobId: job, state: 'completed', text: JSON.stringify({ parts: [{ title: 'Phần 1', content: 'Sự kiện một.' }, { title: 'Phần 2', content: 'Sự kiện hai.' }] }) });
     const first = stored.parts[0].id, second = stored.parts[1].id;
@@ -44,7 +44,8 @@ test('analysis results, repeated delivery, late error, stop and next part remain
     assert.equal(JSON.stringify(stored), beforeAccidentalReset);
     response = await call('POST', `sessions/${id}/parts/${first}/analysis`);
     job = response.session.activeJob.id;
-    const completed = { jobId: job, state: 'completed', text: JSON.stringify({ scenes: [{ title: 'Cảnh 1', content: 'Nội dung', prompt: 'Scene one' }] }) };
+    assert.match(response.session.activeJob.prompt,/Tựa thử/); assert.match(response.session.activeJob.prompt,/Nguồn thử/);
+    const completed = { jobId: job, state: 'completed', text: JSON.stringify({ scenes: [{ title: 'Cảnh 1', content: 'Nội dung', prompt: 'Scene one', assetType:'Ảnh tư liệu', source:'Nguồn A', rights:'Chưa rõ' }] }) };
     await call('POST', `bridge/${id}/event`, { ...completed, state: 'progress' });
     assert.equal(stored.parts[0].scenes.length, 1);
     assert.equal(stored.parts[0].status, 'processing');
@@ -53,6 +54,8 @@ test('analysis results, repeated delivery, late error, stop and next part remain
     assert.equal(stored.parts[0].scenes.length, 1);
     await call('POST', `bridge/${id}/event`, completed);
     assert.equal(stored.parts[0].status, 'complete');
+    assert.equal(stored.parts[0].scenes[0].source, 'Nguồn A');
+    assert.equal(stored.parts[0].scenes[0].rights, 'Chưa rõ');
     await call('POST', `bridge/${id}/event`, completed);
     await call('POST', `bridge/${id}/event`, { jobId: job, state: 'error', text: 'Late error' });
     assert.equal(stored.parts[0].status, 'complete');

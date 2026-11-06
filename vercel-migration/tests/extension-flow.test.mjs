@@ -16,7 +16,7 @@ function bridge() {
   Object.defineProperty(TextArea.prototype, 'value', { get() { return this.text || ''; }, set(value) { this.text = value; } });
   const root = { querySelectorAll: () => mode ? [mode] : [] };
   const box = new TextArea();
-  const context = vm.createContext({
+  const context = vm.createContext({MutationObserver:class{observe(){} disconnect(){}},
     window: { getComputedStyle: () => ({ display: 'block', visibility: 'visible' }) },
     document: {
       querySelector: selector => selector === '#prompt-textarea' ? box : null,

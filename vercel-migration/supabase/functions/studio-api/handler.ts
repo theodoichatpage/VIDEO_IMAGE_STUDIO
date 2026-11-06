@@ -1,7 +1,7 @@
 type RequestLike = { method?: string; query: { path?: string | string[] }; body?: unknown; headers: Record<string, string | string[] | undefined> };
 type ResponseLike = { setHeader(name: string, value: string): void; status(code: number): { json(value: unknown): void } };
 
-type Scene = { title: string; backdrop: string; content: string; character: string; emotion: string; shot: string; image: string; prompt: string; imageStatus?: string; imageResults?: { url: string; prompt: string; createdAt: number; storagePath?: string; expiresAt?: number; jobId?: string }[]; imagePrompt?: string; imageError?: string };
+type Scene = { assetType?:string; source?:string; sourceUrl?:string; rights?:string; narration?:string; storyLine?:string; motion?:string; title: string; backdrop: string; content: string; character: string; emotion: string; shot: string; image: string; prompt: string; imageStatus?: string; imageResults?: { url: string; prompt: string; createdAt: number; storagePath?: string; expiresAt?: number; jobId?: string }[]; imagePrompt?: string; imageError?: string };
 type Part = { id: string; title: string; range: string; content: string; status: string; scenes: Scene[]; analysisText: string; receivedAt?: number };
 type Job = { id: string; type: 'script_structure' | 'part_analysis' | 'image_generation' | 'transcript_rewrite'; status: string; prompt: string; partId?: string; sceneKey?: string; sectionId?: string; protocol: 2 | 3; expiresAt?: number; lane?: string };
 // Rewrite sections handed out to ChatGPT lanes by AI MANAGER (Get Transcript run in parallel).
@@ -9,7 +9,7 @@ type RewriteSection = { id: string; title: string; prompt: string; status: strin
 type Rewrite = { sections: RewriteSection[]; updatedAt: number };
 type LaneResult = { jobId: string; type: string; status: string; partId?: string; sceneKey?: string; sectionId?: string; error?: string; at: number };
 // laneJobs: one job per ChatGPT tab ("lane") so AI MANAGER can run several tabs/browsers in parallel.
-type Session = { id: string; script: string; status: string; activeJob: Job | null; lastJob?: Job; parts: Part[]; imageJobs: Job[]; imageCaptures?: Job[]; laneJobs?: Job[]; laneLast?: Record<string, LaneResult>; rewrite?: Rewrite; workEpoch?: number; updatedAt: number; bridgeLastSeen?: number; finishedJobIds?: string[]; lastError?: string; analysisQueue?: string[]; batchAnalysis?: boolean; stylePrompt?: string; separations?: Record<string, unknown>[]; analysisBackup?: { script: string; parts: Part[]; savedAt: number } };
+type Session = { analysisContext?:Record<string,string>; id: string; script: string; status: string; activeJob: Job | null; lastJob?: Job; parts: Part[]; imageJobs: Job[]; imageCaptures?: Job[]; laneJobs?: Job[]; laneLast?: Record<string, LaneResult>; rewrite?: Rewrite; workEpoch?: number; updatedAt: number; bridgeLastSeen?: number; finishedJobIds?: string[]; lastError?: string; analysisQueue?: string[]; batchAnalysis?: boolean; stylePrompt?: string; separations?: Record<string, unknown>[]; analysisBackup?: { script: string; parts: Part[]; savedAt: number } };
 type Change = { fail?: [string, number]; skip?: boolean; [key: string]: unknown };
 const laneOk = (value: string) => /^[A-Za-z0-9_-]{6,64}$/.test(value);
 
@@ -385,7 +385,7 @@ function laneCommand(fresh: Session, lane: string, path: string[], body: Record<
     if (part.status === 'complete' && part.scenes.length) return { fail: ['Phần này đã có kết quả.', 409] };
     if (laneJobs.some(item => item.partId === part.id && item.type === 'part_analysis') || (fresh.activeJob?.type === 'part_analysis' && fresh.activeJob.partId === part.id)) return { fail: ['Phần này đang được tab khác phân cảnh.', 409] };
     part.status = 'processing'; part.scenes = []; part.analysisText = ''; delete part.receivedAt;
-    const command: Job = { id: newId(), type: 'part_analysis', status: 'queued', prompt: partPrompt(part), partId: part.id, protocol: 2, lane };
+    const command: Job = { id: newId(), type: 'part_analysis', status: 'queued', prompt: partPrompt(part, fresh.analysisContext), partId: part.id, protocol: 2, lane };
     laneJobs.push(command); fresh.lastError = ''; return { command };
   }
   if (path[4] === 'rewrite' && path[5] && path.length === 6) {
@@ -465,17 +465,17 @@ async function commitImageCapture(id: string, job: Job, image: Awaited<ReturnTyp
 function structurePrompt(script: string) {
   return 'Bạn là biên tập viên kịch bản. Hãy đọc TOÀN BỘ kịch bản và chia thành số phần HỢP LÝ theo mạch nội dung, không cố định 5 phần. Mục tiêu là mỗi phần đủ ngắn để bước sau phân tích thành phân cảnh chi tiết, nhưng tuyệt đối không cắt giữa một ý, sự kiện hoặc đoạn kể đang liền mạch. Chỉ trả MỘT JSON hợp lệ, không markdown, đúng dạng: {"parts":[{"title":"Phần 1 - tên ngắn","range":"mô tả phạm vi nội dung","content":"nguyên văn đầy đủ nội dung thuộc phần này"}]}. Phải bao phủ toàn bộ kịch bản theo đúng thứ tự, không bỏ sót, không viết lại nội dung. KỊCH BẢN:\n' + script;
 }
-function partPrompt(part: Part) {
-  return 'CHẾ ĐỘ PHÂN TÍCH VĂN BẢN. KHÔNG TẠO ẢNH, không gọi công cụ tạo ảnh. Chỉ viết JSON, các prompt là dữ liệu văn bản để dùng ở bước sau.\n' + sceneAnalysisPrompt(part);
+function partPrompt(part: Part, context?:Record<string,string>) {
+  return 'CHẾ ĐỘ PHÂN TÍCH VĂN BẢN. KHÔNG TẠO ẢNH, không gọi công cụ tạo ảnh. Chỉ viết JSON, các prompt là dữ liệu văn bản để dùng ở bước sau.\n' + sceneAnalysisPrompt(part) + (context ? '\nTHÔNG TIN NGƯỜI DÙNG ĐÃ CHỌN (dữ liệu tham khảo, không tự xác nhận nguồn):\n' + JSON.stringify(context) : '');
 }
 function sceneAnalysisPrompt(part: Part) {
-  return 'Bạn là đạo diễn hình ảnh. Chỉ trả MỘT JSON hợp lệ, không markdown: {"scenes":[{"title":"Cảnh 1 - tên rất ngắn","backdrop":"bối cảnh riêng của cảnh","content":"hành động/sự kiện riêng của cảnh","character":"nhân vật xuất hiện, tư thế hoặc biểu cảm riêng","emotion":"cảm xúc riêng","shot":"góc máy, cỡ cảnh, hướng nhìn riêng","image":"mô tả hình ảnh ngắn bằng tiếng Việt","prompt":"English scene prompt only: subject/action + character details for this scene + setting + camera framing"}]}. Từ nội dung Phần này, tách thành các cảnh dùng tạo ảnh YouTube. Mỗi cảnh có góc máy điện ảnh khác nhau. PROMPT CẢNH chỉ chứa nội dung riêng của cảnh, nhân vật/bối cảnh và góc máy; không chứa phong cách chung, ánh sáng, chất liệu hoặc tỷ lệ. PHẦN: ' + part.title + '\nNỘI DUNG:\n' + part.content;
+  return 'Bạn là đạo diễn hình ảnh. Chỉ trả MỘT JSON hợp lệ, không markdown: {"scenes":[{"title":"Cảnh 1 - tên rất ngắn","backdrop":"bối cảnh riêng của cảnh","content":"hành động/sự kiện riêng của cảnh","character":"nhân vật xuất hiện, tư thế hoặc biểu cảm riêng","emotion":"cảm xúc riêng","shot":"góc máy, cỡ cảnh, hướng nhìn riêng","image":"mô tả hình ảnh ngắn bằng tiếng Việt","narration":"lời đọc nguyên văn","storyLine":"A/B/chung","assetType":"ảnh AI hoặc ảnh tư liệu hoặc bản đồ hoặc biểu đồ hoặc tài liệu","source":"nguồn cụ thể nếu biết","sourceUrl":"đường dẫn thực tế nếu biết","motion":"gợi ý dựng","prompt":"English scene prompt only: subject/action + character details for this scene + setting + camera framing"}]}. Phân biệt ảnh AI với tư liệu thật; không bịa nguồn hoặc URL. Quyền sử dụng là chưa rõ cho đến khi người dùng tự kiểm tra. Từ nội dung Phần này, tách thành các cảnh dùng tạo ảnh YouTube. Mỗi cảnh có góc máy điện ảnh khác nhau. PROMPT CẢNH chỉ chứa nội dung riêng của cảnh, nhân vật/bối cảnh và góc máy; không chứa phong cách chung, ánh sáng, chất liệu hoặc tỷ lệ. PHẦN: ' + part.title + '\nNỘI DUNG:\n' + part.content;
 }
 function current(job: Job | null | undefined) { return Boolean(job && ((job.protocol === 2 && job.type !== 'image_generation') || (job.protocol === 3 && job.type === 'image_generation'))); }
 function beginPart(session: Session, part: Part) {
   part.status = 'processing'; part.scenes = []; part.analysisText = ''; delete part.receivedAt;
   session.lastError = ''; session.status = 'part_processing';
-  session.activeJob = { id: newId(), type: 'part_analysis', status: 'queued', prompt: partPrompt(part), partId: part.id, protocol: 2 };
+  session.activeJob = { id: newId(), type: 'part_analysis', status: 'queued', prompt: partPrompt(part, session.analysisContext), partId: part.id, protocol: 2 };
 }
 function nextAnalysis(session: Session) {
   if (!session.batchAnalysis || session.activeJob) return;
@@ -529,7 +529,7 @@ function normalizeParts(value: unknown): Part[] {
 }
 function normalizeScenes(value: unknown): Scene[] {
   if (!Array.isArray(value) || !value.length) throw new Error('ChatGPT chưa trả về scenes.');
-  return value.slice(0, 30).map((item, index) => { const row = item && typeof item === 'object' ? item as Record<string, unknown> : {}; return { title: String(row.title || 'Cảnh ' + (index + 1)), backdrop: String(row.backdrop || 'Theo kịch bản'), content: String(row.content || ''), character: String(row.character || 'Theo kịch bản'), emotion: String(row.emotion || 'Theo ngữ cảnh'), shot: String(row.shot || 'Góc máy điện ảnh'), image: String(row.image || 'Theo nội dung cảnh'), prompt: String(row.prompt || ''), imageStatus: 'waiting', imageResults: [] }; });
+  return value.slice(0, 30).map((item, index) => { const row = item && typeof item === 'object' ? item as Record<string, unknown> : {}; return { title: String(row.title || 'Cảnh ' + (index + 1)), backdrop: String(row.backdrop || 'Theo kịch bản'), content: String(row.content || ''), character: String(row.character || 'Theo kịch bản'), emotion: String(row.emotion || 'Theo ngữ cảnh'), shot: String(row.shot || 'Góc máy điện ảnh'), image: String(row.image || 'Theo nội dung cảnh'), prompt: String(row.prompt || ''), assetType:String(row.assetType||'Chưa xác định'), source:String(row.source||''), sourceUrl:String(row.sourceUrl||''), rights:'Chưa rõ', narration:String(row.narration||''), storyLine:String(row.storyLine||''), motion:String(row.motion||''), imageStatus: 'waiting', imageResults: [] }; });
 }
 // The scene goes where the style template asks for it: {{SCENE_PROMPT}} or an empty {{ }} slot.
 const SCENE_SLOT = /\{\{\s*(?:SCENE_PROMPT)?\s*\}\}/;
@@ -626,6 +626,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         if (session.parts.length && body.confirmReset !== true) return fail(res, 'Kịch bản đã được phân tích. Muốn làm lại, hãy dùng Phân tích lại toàn bộ và xác nhận.', 409);
         if (session.parts.length) session.analysisBackup = { script: session.script, parts: structuredClone(session.parts), savedAt: Date.now() };
         pauseAnalysis(session);
+        if(body.analysisContext && typeof body.analysisContext==='object' && !Array.isArray(body.analysisContext)){const raw=body.analysisContext as Record<string,unknown>;session.analysisContext=Object.fromEntries(['title','cover','openingScene','direction','routes','research','outline','imageStyle'].map(k=>[k,String(raw[k]||'').slice(0,12000)]));} else delete session.analysisContext;
         session.script = script; session.parts = []; session.lastError = ''; session.status = 'structure_processing'; session.activeJob = { id: newId(), type: 'script_structure', status: 'queued', prompt: structurePrompt(script), protocol: 2 };
         return send(res, 200, { session: await write(session) });
       }
@@ -660,7 +661,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         if (part.status === 'complete' && part.scenes.length) return send(res, 200, { session });
         part.status = 'processing'; session.status = 'part_processing'; session.lastError = '';
         // Waiting means receive an existing response only; never dispatch another ChatGPT prompt.
-        session.activeJob = { id: newId(), type: 'part_analysis', status: 'waiting', prompt: partPrompt(part), partId: part.id, protocol: 2 };
+        session.activeJob = { id: newId(), type: 'part_analysis', status: 'waiting', prompt: partPrompt(part, session.analysisContext), partId: part.id, protocol: 2 };
         return send(res, 200, { session: await write(session) });
       }
       if (path[2] === 'parts' && path[3] && path[4] === 'result' && req.method === 'POST') {
