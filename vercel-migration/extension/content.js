@@ -53,7 +53,8 @@
     const last = turns[turns.length - 1];
     if (!last) return false;
     const turn = last.closest('article') || last;
-    return /creating image|generating image|đang tạo (hình )?ảnh/i.test((turn.innerText || '').slice(0, 400));
+    if (!/creating image|generating image|đang tạo (hình )?ảnh/i.test((turn.innerText || '').slice(0, 400))) return false;
+    return !Array.from(turn.querySelectorAll?.('img') || []).some(image => image.complete && image.naturalWidth >= 256 && image.naturalHeight >= 256);
   };
 
   const activeImageMode = () => {
@@ -159,7 +160,6 @@
   // to this scene. At most two nudges; then the normal timeout reports the error.
   const NUDGE_AFTER_MS = 45000, MAX_NUDGES = 2;
   const nudgeText = id => '[VIS_JOB_ID:' + id + '] Tạo ảnh theo đúng mô tả ở tin nhắn trên ngay bây giờ bằng công cụ tạo ảnh. Chỉ trả về một ảnh, không giải thích.';
-  const creatingImage = () => /creating image|đang tạo (hình )?ảnh/i.test(document.querySelector('main')?.textContent?.slice(-4000) || '');
   async function waitForImage(_before, token) {
     const deadline = Date.now() + 10 * 60 * 1000;
     let lastSentAt = Date.now(), nudges = 0, busyAt = Date.now();
@@ -167,7 +167,7 @@
       if (cancelled || token !== generation) throw new Error('Đã dừng tác vụ tạo ảnh.');
       await expandImagePrompts(replyContext);
       if (cancelled || token !== generation) throw new Error('Đã dừng tác vụ tạo ảnh.');
-      const busy = isGenerating() || creatingImage();
+      const busy = isGenerating();
       if (busy) busyAt = Date.now();
       if (!busy && await resolveComparison()) continue;
       if (imageUrls().length && !busy) return imagePayload(replyContext);
@@ -417,8 +417,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const marker=st.activeJobId && ((last && (last.innerText||'').includes('[VIS_JOB_ID:'+st.activeJobId+']')) || (document.querySelector('main')?.textContent||'').includes('[VIS_JOB_ID:'+st.activeJobId+']'));
         const imagePrompt=st.activeCommand?.type==='image_generation' && st.activeCommand?.id===st.activeJobId && typeof st.activeCommand.prompt==='string' && st.activeCommand.prompt.length>0 && last && (last.innerText||'').includes(st.activeCommand.prompt);
         const verified=currentJobId===st.activeJobId && !!currentJobId || Boolean((marker||imagePrompt) && st.identityJobId===st.activeJobId && st.conversationUrl===url);
-        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.5.18',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now(),account});
-      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.5.18',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
+        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.5.19',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now(),account});
+      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.5.19',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
       return true;
     }
     if (message?.type === 'vis-restore-draft') {
@@ -454,8 +454,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (String(message.jobType || currentJobType || '') === 'image_generation') {
         if (isGenerating()) { sendResponse({ ok: false, error: 'ChatGPT vẫn đang tạo ảnh.' }); return; }
         imagePayload(context).then(payload => {
-          if (currentJobId && (currentJobId === context.id || replyContext.prompt === context.prompt)) {finished.add(currentJobId);generation += 1;currentJobId='';currentJobType='';cancelled=false;}
-          finished.add(context.id);sendResponse({ ok: true, payload });
+          if (!message.watchdog && currentJobId && (currentJobId === context.id || replyContext.prompt === context.prompt)) {finished.add(currentJobId);generation += 1;currentJobId='';currentJobType='';cancelled=false;}
+          if(!message.watchdog)finished.add(context.id);sendResponse({ ok: true, payload });
         }).catch(error => sendResponse({ ok: false, error: error.message }));
         return true;
       }

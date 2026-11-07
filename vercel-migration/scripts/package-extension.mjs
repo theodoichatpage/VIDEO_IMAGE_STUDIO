@@ -2,12 +2,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {deflateRawSync} from 'node:zlib';
 import {fileURLToPath} from 'node:url';
+import {Script} from 'node:vm';
 export const extensionFiles=['manifest.json','background.js','content.js','web_bridge.js','reply-reader.js','popup.js','popup.html','HUONG_DAN_CAI_DAT.txt'];
 export function crc32(bytes){let crc=0xffffffff;for(const byte of bytes){crc^=byte;for(let i=0;i<8;i++)crc=(crc>>>1)^((crc&1)?0xedb88320:0);}return (crc^0xffffffff)>>>0;}
 export function packageExtension(root=process.cwd()){
  const dir=path.join(root,'extension'),manifest=JSON.parse(fs.readFileSync(path.join(dir,'manifest.json'),'utf8')),version=manifest.version;
  if(!/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(version))throw Error('Invalid extension version');
  for(const file of ['background.js','content.js','popup.js']){const source=fs.readFileSync(path.join(dir,file),'utf8');for(const match of source.matchAll(/(?<![\d.])0\.\d+\.\d+\b/g))if(match[0]!==version)throw Error('Runtime version mismatch in '+file+': '+match[0]+' != '+version);}
+ // Chrome loads these as classic scripts; a syntax error can leave an enabled but dead bridge.
+ for(const file of extensionFiles.filter(file=>file.endsWith('.js')))new Script(fs.readFileSync(path.join(dir,file),'utf8'),{filename:file});
  const name='VIDEO_IMAGE_STUDIO_ChatGPT_Extension_v'+version;
  const locals=[],central=[];let offset=0;
  for(const file of extensionFiles){
