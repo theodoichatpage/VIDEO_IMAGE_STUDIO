@@ -354,7 +354,7 @@ function App() {
         } else if (command && !managerLaunch.lane && acceptManagerTranscript(command, sessionId)) {
           // The Get Transcript tab runs the pipeline only while it is open: open it for a command not finished yet (a new command, not the last one's state).
           const state = readManagerTranscriptState();
-          if (state?.id !== command.id || !['analysis', 'done', 'error'].includes(state.stage)) setActiveMenu(0);
+          if (!state || state.id !== command.id || !['analysis', 'done', 'error'].includes(state.stage)) setActiveMenu(0);
         }
         if (reply?.renames && typeof reply.renames === 'object') applyManagerRenames(reply.renames as Record<string, unknown>);
       }).catch(() => {});
