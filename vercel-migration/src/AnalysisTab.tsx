@@ -245,6 +245,20 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
     save({ ...current, workEpoch, mode: 'running', notice: '', pending: current.pending && { ...current.pending, deadline: Date.now() + 600_000 } });
     if (current.pending) send('studio-capture-result', { jobId: current.pending.id });
   });
+  // A run AI MANAGER asked for carries on by itself after an error (a lost or slow ChatGPT reply): one minute later the step is sent again, up to 5 times.
+  const autoResumes = useRef<Record<string, number>>({});
+  useEffect(() => {
+    if (!enabled || run.mode !== 'error' || !managerReview || run.managerReviewId !== managerReview.id || !connected) return;
+    const used = autoResumes.current[managerReview.id] || 0;
+    if (used >= 5) return;
+    const timer = window.setTimeout(() => change(current => {
+      if (current.mode !== 'error' || current.managerReviewId !== managerReview.id) return;
+      autoResumes.current[managerReview.id] = used + 1;
+      if (current.pending) send('studio-transcript-ack', { jobId: current.pending.id });
+      save({ ...current, workEpoch, mode: 'running', pending: undefined, notice: 'Tự chạy tiếp sau lỗi (' + (used + 1) + '/5)' });
+    }), 60_000);
+    return () => clearTimeout(timer);
+  }, [run.mode, run.managerReviewId, managerReview, connected, enabled]);
 
   const working = run.mode === 'running' || !!run.pending;
   const canResume = ['paused', 'stopped', 'error'].includes(run.mode);
