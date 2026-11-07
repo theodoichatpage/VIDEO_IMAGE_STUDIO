@@ -199,6 +199,12 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
     return () => clearTimeout(timer);
   }, [run, connected, otherWork, bridgeJob, projectId, enabled, ready, tick]);
 
+  // The Aprilynne outline made before the rewrite (Get Transcript): the review checks the script against it.
+  const outlinePlan = () => {
+    const plan = loadTranscriptWorkspace(projectId).plan;
+    return plan ? { title: plan.title, question: plan.question, promise: plan.promise, tracks: plan.tracks, opening: plan.hook,
+      transitions: plan.turns, payoff: plan.payoff, ending: plan.ending, sourceNote: plan.sources, cover: plan.cover } : undefined;
+  };
   const readSource = () => preparedAnalysisSource(loadTranscriptWorkspace(projectId));
   const [sourceInfo, setSourceInfo] = useState(readSource);
   useEffect(() => {
@@ -218,7 +224,7 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
       const command = readManagerTranscript(); const pipeline = readManagerTranscriptState();
       const managerReviewId = command?.sessionId === projectId && command.rewrite && command.id === pipeline?.id ? command.id : undefined;
       save({ ...emptyRun(), runId: crypto.randomUUID(), revision: 1, needsSave: true, workEpoch,
-        source: sourceInfo.text, style: sourceInfo.style, parts: sourceInfo.parts, phase: 'review', mode: 'running', managerReviewId, pipelineId: managerReviewId });
+        source: sourceInfo.text, style: sourceInfo.style, parts: sourceInfo.parts, plan: outlinePlan(), phase: 'review', mode: 'running', managerReviewId, pipelineId: managerReviewId });
     });
   }, [sourceInfo.text, sourceInfo.style, enabled, ready, projectId, workEpoch, run.mode]);
 
@@ -236,7 +242,7 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
       }
       const parts = managerReview.source === 'transcript' && prepared.text ? prepared.parts : reviewPartsFromScript(source);
       if (current.parts.length) localStorage.setItem(key + '-previous', JSON.stringify(current));
-      save({ ...emptyRun(), runId: crypto.randomUUID(), revision: 1, needsSave: true, workEpoch, source, style: prepared.style, parts, phase: 'review', mode: 'running', managerReviewId: managerReview.id });
+      save({ ...emptyRun(), runId: crypto.randomUUID(), revision: 1, needsSave: true, workEpoch, source, style: prepared.style, parts, plan: outlinePlan(), phase: 'review', mode: 'running', managerReviewId: managerReview.id });
     });
   }, [managerReview, managerScript, connected, otherWork, run.mode, run.pending, projectId, ready, enabled]);
 

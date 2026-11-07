@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Clipboard, Download, ExternalLink, LoaderCircle, ListOrdered, RotateCcw, Save, Square, Youtube } from 'lucide-react';
 import './transcriptTab.css';
-import {buildPartitionPrompt,partitionBranches} from './transcriptPartition';
+import {buildPartitionPrompt,parsePlan,partitionBranches} from './transcriptPartition';
 import { assembleRewrittenScript, preparedAnalysisSource, loadTranscriptWorkspace, saveTranscriptWorkspace, sectionsFromBranches, type ScriptSection, type TranscriptWorkspaceState } from './transcriptWorkspace';
 import { fetchTranscript } from './transcriptProvider';
 import { buildRewritePrompt } from './transcriptAi';
@@ -79,7 +79,7 @@ export default function TranscriptTab({onUseTranscript,projectId=localStorage.ge
     if(job.kind==='mindmap'){
      const parsed=typeof data.text==='string'?JSON.parse(data.text):data.text;
      const branches=partitionBranches(parsed,ws.transcript?.text||'');
-     setWs(s=>({...s,branches,sections:sectionsFromBranches(branches),selectedBranchId:branches[0]?.id||''}));
+     setWs(s=>({...s,branches,sections:sectionsFromBranches(branches),selectedBranchId:branches[0]?.id||'',plan:parsePlan(parsed)}));
     }else if(job.sectionId){
      const text=String(data.text||'').trim();if(!text)throw new Error('ChatGPT trả về kịch bản trống.');
      setWs(s=>({...s,sections:s.sections.map(x=>x.id===job.sectionId?{...x,status:'done',rewrittenText:text}:x)}));
@@ -103,7 +103,7 @@ export default function TranscriptTab({onUseTranscript,projectId=localStorage.ge
  const patch=(p:Partial<TranscriptWorkspaceState>)=>setWs(s=>({...s,...p}));
  const load=async(override?:{url:string;language?:string})=>{const url=(override?.url||ws.url).trim(),language=override?.language||ws.language;if(!url)return false;const generation=stopGeneration.current;setBusy(true);setError('');try{const transcript=await fetchTranscript({url,language});if(generation!==stopGeneration.current)return false;patch({url,language,transcript,branches:[],sections:[],selectedBranchId:''});return true;}catch(e){if(generation===stopGeneration.current)setError(e instanceof Error?e.message:'Không lấy được transcript.');return e instanceof Error?e.message:'Không lấy được transcript.'}finally{if(generation===stopGeneration.current)setBusy(false)}};
  const createParts=()=>{if(!ws.transcript||pending.current)return;if(ws.sections.length&&!window.confirm('Chia lại sẽ thay thế danh sách phần và nội dung đã viết lại. Bạn có chắc muốn tiếp tục?'))return;sendChat(buildPartitionPrompt(ws.transcript.text,ws.language),'mindmap')};
- const rewrite=(section:ScriptSection)=>{if(pending.current)return;setWs(s=>({...s,sections:s.sections.map(x=>x.id===section.id?{...x,status:'processing'}:x)}));const idx=ws.sections.findIndex(x=>x.id===section.id);const context=[ws.sections[idx-1]?.summary,ws.sections[idx+1]?.summary].filter(Boolean).join(' | ');sendChat(buildRewritePrompt(section,ws.stylePrompt,context),'rewrite',section.id)};
+ const rewrite=(section:ScriptSection)=>{if(pending.current)return;setWs(s=>({...s,sections:s.sections.map(x=>x.id===section.id?{...x,status:'processing'}:x)}));const idx=ws.sections.findIndex(x=>x.id===section.id);const context=[ws.sections[idx-1]?.summary,ws.sections[idx+1]?.summary].filter(Boolean).join(' | ');sendChat(buildRewritePrompt(section,ws.stylePrompt,context,ws.plan,idx,ws.sections.length),'rewrite',section.id)};
  const stop=()=>{setBatch(false);const wasPending=!!pending.current;clearPending();setWs(s=>({...s,sections:s.sections.map(x=>x.status==='processing'||x.status==='waiting'?{...x,status:'stopped'}:x)}));if(wasPending)window.postMessage({source:'vis-web',type:'studio-stop'},'*')};
  const rewriteAll=()=>{if(!pending.current&&ws.sections.some(x=>x.status!=='done'))setBatch(true)};
  useEffect(()=>{
@@ -144,12 +144,13 @@ export default function TranscriptTab({onUseTranscript,projectId=localStorage.ge
   if(!mgr.rewrite){save({stage:'done',done:1,total:1});setMgr(null);return}
   if(mgr.style&&ws.stylePrompt!==mgr.style){patch({stylePrompt:mgr.style});return}
   if(!ws.stylePrompt.trim()){fail('Chưa có prompt phong cách viết lại. Nhập trong AI MANAGER hoặc tab Get Transcript.');return}
-  if(!ws.sections.length){if(!attempt('partition'))return;sendChat(buildPartitionPrompt(ws.transcript.text,ws.language),'mindmap');return}
+  // A Manager run writes from an Aprilynne outline: a split made before outlines existed is made again (with its outline).
+  if(!ws.sections.length||(mgr.outline&&!ws.plan)){if(!attempt('partition'))return;sendChat(buildPartitionPrompt(ws.transcript.text,ws.language),'mindmap');return}
   const done=ws.sections.filter(x=>x.status==='done').length;
   // Several ChatGPT tabs: hand the sections to the Studio server; AI MANAGER gives each tab its share.
   if(mgr.parallel&&done<ws.sections.length){
    if(!state.uploaded){
-    const sections=ws.sections.map((s,i)=>({id:s.id,title:s.title,prompt:buildRewritePrompt(s,ws.stylePrompt,[ws.sections[i-1]?.summary,ws.sections[i+1]?.summary].filter(Boolean).join(' | '))}));
+    const sections=ws.sections.map((s,i)=>({id:s.id,title:s.title,prompt:buildRewritePrompt(s,ws.stylePrompt,[ws.sections[i-1]?.summary,ws.sections[i+1]?.summary].filter(Boolean).join(' | '),ws.plan,i,ws.sections.length)}));
     save({stage:'rewrite',done,total:ws.sections.length,uploaded:false});
     void api.post('/api/sessions/'+projectId+'/rewrite',{sections}).then(()=>save({stage:'rewrite',done,total:ws.sections.length,uploaded:true})).catch(err=>{if(attempt('upload'))setError(err instanceof Error?err.message:'Không gửi được danh sách phần.')});
    }

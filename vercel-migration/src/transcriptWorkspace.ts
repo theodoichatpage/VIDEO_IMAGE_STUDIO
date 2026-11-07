@@ -2,7 +2,9 @@ export type RewriteStatus = 'waiting'|'processing'|'done'|'error'|'stopped';
 export type MindmapBranch = { id:string; title:string; summary:string; content:string; children?: {id:string;title:string}[] };
 export type ScriptSection = { id:string; branchId:string; title:string; summary:string; sourceText:string; status:RewriteStatus; rewrittenText:string; error?:string };
 export type WorkspaceTranscript = { videoId:string; title?:string; thumbnail?:string; language?:string; captionType?:string; duration?:number; segments:{start:number;duration?:number;text:string}[]; text:string };
-export type TranscriptWorkspaceState = { url:string; language:string; transcript:WorkspaceTranscript|null; branches:MindmapBranch[]; sections:ScriptSection[]; stylePrompt:string; selectedBranchId:string; updatedAt:number };
+// Aprilynne outline made with the split, before any rewriting: every section is written to fill its role in it.
+export type StoryPlan = { title:string; hook:string; question:string; promise:string; tracks:string[]; turns:string; payoff:string; ending:string; sources:string; cover:string; roles:string[] };
+export type TranscriptWorkspaceState = { url:string; language:string; transcript:WorkspaceTranscript|null; branches:MindmapBranch[]; sections:ScriptSection[]; stylePrompt:string; selectedBranchId:string; updatedAt:number; plan?:StoryPlan };
 
 export const workspaceStorageKey=(projectId:string)=>`vis-transcript-workspace-${projectId}`;
 export const defaultTranscriptWorkspace=():TranscriptWorkspaceState=>({url:'',language:'vi',transcript:null,branches:[],sections:[],stylePrompt:localStorage.getItem('vis-transcript-style')||'',selectedBranchId:'',updatedAt:Date.now()});
