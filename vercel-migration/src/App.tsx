@@ -6,7 +6,7 @@ import type { AnalysisState } from './analysisWorkspace';
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { resolveManagerLaunch } from './managerLaunch.mjs';
-import { acceptManagerTranscript, readManagerTranscriptState, writeManagerTranscriptState } from './managerTranscript';
+import { acceptManagerTranscript, readManagerTranscript, readManagerTranscriptState, writeManagerTranscriptState } from './managerTranscript';
 import { BUILD_ID } from './buildId';
 import { Check, Clapperboard, Copy, Download, FileText, Folder, Image, Maximize2, Play, RotateCcw, Scissors, Settings, Square, Trash2, Video as VideoIcon, Youtube } from 'lucide-react';
 import './index.css';
@@ -386,8 +386,14 @@ function App() {
   }, [managerWatch, sessionId, bridgeConnected, extensionFacts, extensionVersion]);
   // A Manager-launched tab saves the script typed in this project to the Studio server, so Manager
   // reads the same script after REFRESH. Only before analysis, never over a running job or existing parts.
+  const managerRewriting = () => {
+    const command = readManagerTranscript(); const state = readManagerTranscriptState();
+    return command?.sessionId === sessionId && (state?.id !== command.id || !['analysis', 'done', 'error'].includes(state.stage));
+  };
   const managerScriptPending = !managerLaunch.error && managerLaunch.projectId === sessionId && Boolean(managerLaunch.runId) && serverReady && Boolean(session) && session?.id === sessionId
-    && Boolean(script.trim()) && script.trim() !== String(session?.script || '').trim() && !session?.activeJob && !session?.parts?.length;
+    && Boolean(script.trim()) && script.trim() !== String(session?.script || '').trim() && !session?.activeJob && !session?.parts?.length
+    // Only fills an empty server script, and never while Manager has this project's transcript rewritten again (an old draft would come back).
+    && !String(session?.script || '').trim() && !managerRewriting();
   const saveScriptForManager = async () => {
     const clean = script.trim(); if (!clean || stopGate.current) return;
     try {
