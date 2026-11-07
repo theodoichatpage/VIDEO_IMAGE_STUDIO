@@ -48,7 +48,6 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   };
   const [run, setRun] = useState(read);
   const [error, setError] = useState('');
-  const [filter, setFilter] = useState<'all' | 'low' | 'pass'>('all');
   const live = useRef({ connected, otherWork, bridgeJob, onTransfer, onCheckpoint });
   live.current = { connected, otherWork, bridgeJob, onTransfer, onCheckpoint };
   const checkpointing = useRef(false);
@@ -257,10 +256,7 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
     save({ ...current, phase: 'repair', mode: 'running', index: repairParts[0], repairParts,
       manualCriterion: undefined, manualBatch: true, notice: '' });
   });
-  const visibleCriteria = criteriaWithSource.filter(criterion => {
-    const score = run.rows.find(row => row.id === criterion.id)?.score;
-    return filter === 'all' || (typeof score === 'number' && (filter === 'pass' ? score >= threshold : score < threshold));
-  });
+  const visibleCriteria = criteriaWithSource;
   const middle = Math.ceil(visibleCriteria.length / 2);
   return <section className="workspace auto-analysis">
     <section className="panel">
@@ -279,10 +275,6 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
         <meter min={0} max={criteriaWithSource.length} value={quality.passed} aria-label="Số tiêu chí đạt từ 8 điểm"/>
         {run.rows.length > 0 && <small>{quality.passed}/{criteriaWithSource.length} đạt · {quality.needsWork} cần sửa · {quality.unscored} chưa đủ dữ liệu</small>}
       </section>
-      <div className="analysis-controls" aria-label="Lọc tiêu chí">
-        {([['all', 'Tất cả'], ['low', 'Chưa đạt'], ['pass', 'Đạt']] as const).map(([value, title]) =>
-          <button key={value} className="outline" aria-pressed={filter === value} onClick={() => setFilter(value)}>{title}</button>)}
-      </div>
       <div className="auto-review-columns">
         {[visibleCriteria.slice(0, middle), visibleCriteria.slice(middle)].map((column, index) =>
           <div className="auto-review-scroll" key={index}><table className="auto-review" aria-label={`Tiêu chí Aprilynne, bảng ${index + 1}`}>
