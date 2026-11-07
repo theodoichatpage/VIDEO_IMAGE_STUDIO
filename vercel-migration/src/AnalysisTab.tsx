@@ -87,6 +87,8 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
       if (event.source !== window) return;
       const data = event.data;
       if (data?.source === 'vis-web' && data.type === 'studio-stop-all-local') { change(current => stop(current, true)); return; }
+      // Get Transcript needs ChatGPT for a new Manager rewrite: this review stops and cancels its ChatGPT job.
+      if (data?.source === 'vis-web' && data.type === 'studio-stop-analysis') { change(current => stop(current)); return; }
       if (data?.source !== 'vis-extension' || data.type !== 'studio-transcript-ai-result' || data.kind !== 'rewrite') return;
       change(current => {
         const pending = current.pending;

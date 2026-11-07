@@ -128,6 +128,8 @@ export default function TranscriptTab({onUseTranscript,projectId=localStorage.ge
  // AI MANAGER pipeline: Get transcript -> split -> rewrite in the saved style -> hand the script to analysis.
  // Runs only for a command addressed to the open project; each step reuses the buttons above.
  const [mgr,setMgr]=useState<ManagerTranscript|null>(null);
+ const [pipelineTick,setPipelineTick]=useState(0);
+ useEffect(()=>{const t=window.setInterval(()=>setPipelineTick(x=>x+1),3000);return()=>window.clearInterval(t)},[]);
  useEffect(()=>{
   // Extra ChatGPT lanes only take rewrite jobs; the transcript pipeline runs in the main tab only.
   const check=()=>{if(new URLSearchParams(location.search).get('managerLane')==='1')return;const cmd=readManagerTranscript();if(!cmd||cmd.sessionId!==projectId)return;const st=readManagerTranscriptState();if(st?.id===cmd.id&&['analysis','done','error'].includes(st.stage))return;setMgr(current=>current?.id===cmd.id?current:cmd)};
@@ -135,6 +137,8 @@ export default function TranscriptTab({onUseTranscript,projectId=localStorage.ge
  },[projectId]);
  useEffect(()=>{
   if(!mgr||busy||aiBusy||pending.current)return;
+  // One ChatGPT conversation: an Aprilynne review of an older script still running is stopped first; waiting for it is not a failed attempt.
+  {const review=readAnalysisRun(projectId);if(review&&(review.mode==='running'||review.pending)&&review.pipelineId!==mgr.id){window.postMessage({source:'vis-web',type:'studio-stop-analysis'},location.origin);return}}
   const st=readManagerTranscriptState();const state=st?.id===mgr.id?st:{id:mgr.id,stage:'start',attempts:0};
   if(['analysis','done','error'].includes(state.stage))return;
   const save=(next:Partial<ManagerTranscriptState>)=>writeManagerTranscriptState({...state,...next,id:mgr.id,at:Date.now()});
@@ -160,7 +164,7 @@ export default function TranscriptTab({onUseTranscript,projectId=localStorage.ge
    const failed=ws.sections.filter(x=>x.status==='error'||x.status==='stopped').length;if(failed&&!attempt('rewrite'))return;save({stage:'rewrite',done,total:ws.sections.length});setBatch(true);return}
   const text=assembleRewrittenScript(ws.sections);if(!text.trim()){fail('Kịch bản viết lại trống.');return}
   save({stage:'analysis',done,total:ws.sections.length});setMgr(null);void onUseTranscript(text,ws.transcript.title);
- },[mgr,busy,aiBusy,batchRunning,ws.transcript,ws.url,ws.sections,ws.stylePrompt,error]);
+ },[mgr,busy,aiBusy,batchRunning,ws.transcript,ws.url,ws.sections,ws.stylePrompt,error,pipelineTick]);
 
  // Parallel rewrite: read the results the tabs saved on the Studio server (small stamp first).
  useEffect(()=>{
