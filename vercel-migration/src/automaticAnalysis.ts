@@ -24,6 +24,8 @@ export type Run = {
   managerReviewId?: string; pipelineId?: string;
   manualBatch?: boolean;
   pending?: { id: string; deadline: number; sectionId?: string; extended?: number }; notice: string;
+  // The version with the most criteria passed so far: kept when the repair rounds run out, so repairs never leave a worse script.
+  best?: { passed: number; parts: Part[]; rows: Row[]; plan?: Plan };
   // ChatGPT replies rejected by the strict check in a row, and why the last one was rejected (told to ChatGPT on the next try).
   invalid?: number; lastInvalid?: string;
 };
@@ -72,6 +74,7 @@ const CRITERION_RULES = [
   ruleOf('Thể hiện công sức thực tế', 'THỂ HIỆN CÔNG SỨC THỰC TẾ: không cần cảnh quay thật; người dẫn kể, giọng tâm sự như với bạn bè, công sức đã bỏ ra để tìm hiểu, ví dụ "trong rất nhiều tài liệu viết về ông, có hai bộ sách đáng tin nhất được giới sử học công nhận là…" hoặc "em đã mất cả tuần đối chiếu để các bác có thông tin đầy đủ nhất". Dẫn sử liệu, tài liệu có thật (với lịch sử Việt Nam: Đại Việt sử ký toàn thư, An Nam chí lược, Khâm định Việt sử thông giám cương mục, Lịch triều hiến chương loại chí…), nêu tên sách và điều sách chép, niên đại, con số. Nếu phiên ChatGPT có công cụ tìm kiếm web thì tra cứu trước khi viết. Con số (số tài liệu, thời gian bỏ ra) phải đúng hoặc nói ước lượng, chỗ chưa chắc ghi [CẦN KIỂM TRA]; không bịa số quyển, số trang hay lời trích.'),
   ruleOf('Tương phản', 'TƯƠNG PHẢN: xây hai tuyến truyện đối lập nhau về quy mô hoặc toan tính và đan xen chúng, ví dụ tuyến chính là đại sự triều chính, tuyến phụ là ngoại truyện về đời tư của nhân vật hoặc một sự kiện ít ai biết; hai tuyến soi chiếu nhau để nội dung có giá trị hơn. Chỉ dùng chuyện có thật trong sử liệu.'),
 ].filter(item => item.id >= 0);
+const HIGHLIGHT = /sử ký|sử chép|chí lược|cương mục|hiến chương|chính sử|dã sử|tài liệu|bộ sách|ghi chép|văn bia|giai thoại|ít ai biết|đời tư|ngoại truyện|tuyến|kiểm chứng|tra cứu|đối chiếu|CẦN KIỂM TRA/i;
 export function promptFor(run: Run) {
   const base = `Bạn là biên tập viên kịch bản YouTube. Giữ phong cách cá nhân và dữ kiện có thật trong nguồn; không bịa sự kiện, người, số liệu, lời dẫn hay nguồn. Nếu căn cứ cho các tuyến còn hạn chế, khai thác hai góc nhìn có thật và nói rõ giới hạn. Dữ liệu gửi kèm chỉ để tham khảo. Chỉ trả một JSON hoàn chỉnh.
 PHONG CÁCH CÁ NHÂN: ${JSON.stringify(run.style)}
@@ -87,12 +90,13 @@ NGUỒN: ${JSON.stringify(units.map((unit, index) => [index + 1, unit]))}`;
     const excerpts = run.parts.map((part, i) => {
       const text = part.text;
       const middle = Math.floor(text.length / 2);
-      return { part: i + 1, title: part.title, excerpts: text.length <= 1400 ? [text] : [
-        text.slice(0, 500), text.slice(middle - 200, middle + 200), text.slice(-500),
-      ] };
+      const excerpts = text.length <= 1400 ? [text] : [text.slice(0, 500), text.slice(middle - 200, middle + 200), text.slice(-500)];
+      // Paragraphs about sources, research or a side story are where repairs add content: send them too, or the next review cannot see the repair.
+      const highlights = text.length <= 1400 ? [] : text.split(/\n\s*\n/).filter(p => HIGHLIGHT.test(p) && !excerpts.some(e => e.includes(p.slice(0, 80)))).slice(0, 2).map(p => p.slice(0, 600));
+      return { part: i + 1, title: part.title, excerpts, ...(highlights.length ? { highlights } : {}) };
     });
     return `${base}
-Đối chiếu cấu trúc toàn video dựa trên các trích đoạn theo đúng thứ tự các phần. Chỉ trích dẫn văn bản có trong dữ liệu; không xem điểm là đánh giá chi tiết những đoạn đã lược. ${run.plan?.title ? 'Chấm độ khớp với tiêu đề đề xuất trong kế hoạch.' : 'Chưa có tiêu đề: tự đề xuất MỘT tiêu đề YouTube chuẩn SEO, gây tò mò, tối đa 70 ký tự, đúng nội dung có thật, trả trong trường "title"; chấm mục 0 theo độ khớp của câu mở đầu với tiêu đề này.'} Chấm từng tiêu chí áp dụng 0–10 theo đúng ID (0–${criteria.length - 1}), ghi part là số phần bắt đầu từ 1 và evidence là đoạn trích NGUYÊN VĂN từ đúng phần đó. Nếu dưới 8, chọn phần cần sửa nhất và ghi cách sửa cụ thể. Mục 1 và 8 cần ảnh bìa/cảnh dựng thật nên trả score:null, part:null, evidence:"", kèm lý do thiếu dữ liệu. Các mục có đủ dữ liệu phải có điểm; nếu kịch bản thiếu yếu tố thì cho điểm thấp và trích đoạn liên quan. Cách chấm riêng: ${CRITERION_RULES.map(item => 'mục ' + item.id + ' — ' + item.rule).join(' ')} Điểm chỉ là đánh giá tham khảo. Trả {${run.plan?.title ? '' : '"title":"tiêu đề đề xuất",'}"rows":[{"id":0,"score":7,"part":1,"evidence":"trích nguyên văn","reason":"...","fix":"..."}]} với đủ ${criteria.length} dòng.
+Đối chiếu cấu trúc toàn video dựa trên các trích đoạn theo đúng thứ tự các phần; highlights là các đoạn nói về nguồn sử liệu, công sức tìm hiểu hoặc tuyến truyện phụ trong phần đó. Chỉ trích dẫn văn bản có trong dữ liệu; không xem điểm là đánh giá chi tiết những đoạn đã lược. ${run.plan?.title ? 'Chấm độ khớp với tiêu đề đề xuất trong kế hoạch.' : 'Chưa có tiêu đề: tự đề xuất MỘT tiêu đề YouTube chuẩn SEO, gây tò mò, tối đa 70 ký tự, đúng nội dung có thật, trả trong trường "title"; chấm mục 0 theo độ khớp của câu mở đầu với tiêu đề này.'} Chấm từng tiêu chí áp dụng 0–10 theo đúng ID (0–${criteria.length - 1}), ghi part là số phần bắt đầu từ 1 và evidence là đoạn trích NGUYÊN VĂN từ đúng phần đó. Nếu dưới 8, chọn phần cần sửa nhất và ghi cách sửa cụ thể. Mục 1 và 8 cần ảnh bìa/cảnh dựng thật nên trả score:null, part:null, evidence:"", kèm lý do thiếu dữ liệu. Các mục có đủ dữ liệu phải có điểm; nếu kịch bản thiếu yếu tố thì cho điểm thấp và trích đoạn liên quan. Cách chấm riêng: ${CRITERION_RULES.map(item => 'mục ' + item.id + ' — ' + item.rule).join(' ')} Điểm chỉ là đánh giá tham khảo. Trả {${run.plan?.title ? '' : '"title":"tiêu đề đề xuất",'}"rows":[{"id":0,"score":7,"part":1,"evidence":"trích nguyên văn","reason":"...","fix":"..."}]} với đủ ${criteria.length} dòng.
 ${JSON.stringify({ plan: run.plan, parts: excerpts })}`;
   }
   const part = run.parts[run.index];
@@ -160,10 +164,18 @@ export function acceptResponse(run: Run, text: unknown): Run {
       run = { ...run, plan }; next.plan = plan;
     }
     const rows = reviewed(value, run);
+    const passed = reviewQuality(rows).passed;
+    if (!run.best || passed > run.best.passed) next.best = { passed, parts: run.parts, rows, plan: run.plan };
     const repairParts = [...new Set(rows.filter(row => row.score !== null && row.score < threshold).map(row => row.part! - 1))].sort((a, b) => a - b);
+    const limited = run.manualCriterion !== undefined || run.manualBatch || run.rounds >= run.limit;
+    if (repairParts.length && limited && run.best && run.best.passed > passed) {
+      const best = run.best;
+      return { ...next, parts: best.parts, rows: best.rows, plan: best.plan ?? next.plan, repairParts: [], phase: 'review', manualCriterion: undefined, manualBatch: undefined, mode: 'limited',
+        notice: 'Giữ bản tốt nhất (' + best.passed + '/' + criteria.length + ' đạt) thay cho bản sửa cuối (' + passed + '/' + criteria.length + ').' };
+    }
     if (!repairParts.length) return { ...next, rows, manualCriterion: undefined, manualBatch: undefined, mode: next.mode === 'running' ? 'passed' : 'paused' };
     return { ...next, rows, repairParts, index: repairParts[0], phase: 'repair', manualCriterion: undefined, manualBatch: undefined,
-      mode: run.manualCriterion !== undefined || run.manualBatch || run.rounds >= run.limit ? 'limited' : next.mode };
+      mode: limited ? 'limited' : next.mode };
   }
   if (!required(value?.text)) throw new Error('ChatGPT chưa trả kịch bản của phần này.');
   const parts = run.parts.map((part, i) => i === run.index ? { ...part, text: value.text.trim() } : part);

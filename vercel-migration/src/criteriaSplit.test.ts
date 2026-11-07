@@ -36,3 +36,21 @@ describe('the 14 Aprilynne criteria', () => {
     expect(done.repairParts).toEqual([0]);
   });
 });
+
+describe('repairs never leave a worse script', () => {
+  it('keeps the best version when the rounds run out', () => {
+    const first = acceptResponse(run(), JSON.stringify(rows(id => id === 12 ? 6 : 9)));
+    expect(first.best?.passed).toBe(11);
+    const repaired: Run = { ...first, phase: 'review', rounds: first.limit, parts: [{ title: 'Phần 1', source: 'nguồn', text: 'Đây là kịch bản thử có chữ dẫn chứng. Bản sửa kém hơn.' }] };
+    const worse = acceptResponse(repaired, JSON.stringify(rows(id => id === 12 || id === 6 ? 5 : 9)));
+    expect(worse.mode).toBe('limited');
+    expect(worse.parts[0].text).toBe('Đây là kịch bản thử có chữ dẫn chứng.');
+    expect(worse.notice).toContain('Giữ bản tốt nhất');
+  });
+  it('sends paragraphs about sources to the review', () => {
+    const text = 'a'.repeat(2000) + '\n\nTheo Đại Việt sử ký toàn thư, ông mất năm 1264.\n\n' + 'b'.repeat(2000);
+    const prompt = promptFor({ ...run(), parts: [{ title: 'Phần 1', source: text, text }] });
+    expect(prompt).toContain('highlights');
+    expect(prompt).toContain('Theo Đại Việt sử ký toàn thư');
+  });
+});
