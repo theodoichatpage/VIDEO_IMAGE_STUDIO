@@ -352,8 +352,9 @@ function App() {
           setManagerReview(current => current?.id === command.id ? current : { id: command.id, source: command.source === 'transcript' ? 'transcript' : 'script' });
           if (readAnalysisRun(sessionId)?.managerReviewId !== command.id) setActiveMenu(1);
         } else if (command && !managerLaunch.lane && acceptManagerTranscript(command, sessionId)) {
-          const stage = readManagerTranscriptState()?.stage;
-          if (!['analysis', 'done', 'error'].includes(stage || '')) setActiveMenu(0);
+          // The Get Transcript tab runs the pipeline only while it is open: open it for a command not finished yet (a new command, not the last one's state).
+          const state = readManagerTranscriptState();
+          if (state?.id !== command.id || !['analysis', 'done', 'error'].includes(state.stage)) setActiveMenu(0);
         }
         if (reply?.renames && typeof reply.renames === 'object') applyManagerRenames(reply.renames as Record<string, unknown>);
       }).catch(() => {});
