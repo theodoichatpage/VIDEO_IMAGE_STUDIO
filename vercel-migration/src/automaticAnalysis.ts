@@ -23,7 +23,7 @@ export type Run = {
   manualCriterion?: number;
   managerReviewId?: string; pipelineId?: string;
   manualBatch?: boolean;
-  pending?: { id: string; deadline: number; sectionId?: string }; notice: string;
+  pending?: { id: string; deadline: number; sectionId?: string; extended?: number }; notice: string;
   // ChatGPT replies rejected by the strict check in a row, and why the last one was rejected (told to ChatGPT on the next try).
   invalid?: number; lastInvalid?: string;
 };

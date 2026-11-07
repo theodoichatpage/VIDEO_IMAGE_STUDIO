@@ -122,7 +122,10 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
     const recover = () => change(current => {
       if (!current.pending || !live.current.connected) return;
       if (current.mode === 'running' && current.pending.deadline <= Date.now()) {
-        save({ ...current, mode: 'error', notice: 'Quá thời gian chờ. Tiếp tục để đồng bộ lệnh hiện tại hoặc Dừng để gửi lại công đoạn này.' });
+        // A long repair (whole part, sources looked up on the web) can take more than 10 minutes: wait twice more, reading the reply each time, before stopping.
+        const extended = current.pending.extended || 0;
+        if (extended < 2) save({ ...current, pending: { ...current.pending, deadline: Date.now() + 600_000, extended: extended + 1 }, notice: 'ChatGPT trả lời lâu · chờ thêm (' + (extended + 1) + '/2)' });
+        else save({ ...current, mode: 'error', notice: 'Quá thời gian chờ. Tiếp tục để đồng bộ lệnh hiện tại hoặc Dừng để gửi lại công đoạn này.' });
       }
       if (live.current.connected) send('studio-capture-result', { jobId: current.pending.id });
     });
