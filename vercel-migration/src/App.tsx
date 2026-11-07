@@ -304,6 +304,8 @@ function App() {
   };
   // Latest content state for the Manager signal: counts only, never the script text itself.
   const [managerReview, setManagerReview] = useState<{ id: string; source: 'transcript' | 'script' }>();
+  // A Manager command opens its tab once; the presence reply repeats every few seconds and must not pull the user back.
+  const menuSwitchedFor = useRef('');
   const managerContent = useRef({ script, session });
   managerContent.current = { script, session };
   useEffect(() => {
@@ -350,11 +352,11 @@ function App() {
         const command = reply?.command;
         if (command?.type === 'analysis_review' && !managerLaunch.lane && /^[A-Za-z0-9_-]{8,64}$/.test(command.id)) {
           setManagerReview(current => current?.id === command.id ? current : { id: command.id, source: command.source === 'transcript' ? 'transcript' : 'script' });
-          if (readAnalysisRun(sessionId)?.managerReviewId !== command.id) setActiveMenu(1);
+          if (readAnalysisRun(sessionId)?.managerReviewId !== command.id && menuSwitchedFor.current !== command.id) { menuSwitchedFor.current = command.id; setActiveMenu(1); }
         } else if (command && !managerLaunch.lane && acceptManagerTranscript(command, sessionId)) {
           // The Get Transcript tab runs the pipeline only while it is open: open it for a command not finished yet (a new command, not the last one's state).
           const state = readManagerTranscriptState();
-          if (!state || state.id !== command.id || !['analysis', 'done', 'error'].includes(state.stage)) setActiveMenu(0);
+          if ((!state || state.id !== command.id || !['analysis', 'done', 'error'].includes(state.stage)) && menuSwitchedFor.current !== command.id) { menuSwitchedFor.current = command.id; setActiveMenu(0); }
         }
         if (reply?.renames && typeof reply.renames === 'object') applyManagerRenames(reply.renames as Record<string, unknown>);
       }).catch(() => {});
