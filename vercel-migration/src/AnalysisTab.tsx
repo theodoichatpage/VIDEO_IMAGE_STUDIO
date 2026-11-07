@@ -111,7 +111,7 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
           const reason = caught instanceof Error ? caught.message : 'Phản hồi không hợp lệ.';
           // A reply that fails the strict check (a quote not word for word, a missing fix) is asked again twice, with the reason, before stopping.
           const tries = (current.invalid || 0) + 1;
-          next = data.state !== 'error' && tries <= 2 && current.mode === 'running'
+          next = (data.state !== 'error' || /quá thời gian|timeout|không nhận được phản hồi/i.test(reason)) && tries <= 2 && current.mode === 'running'
             ? { ...current, pending: undefined, invalid: tries, lastInvalid: reason, notice: 'ChatGPT trả kết quả chưa hợp lệ (' + reason + ') · gửi lại lần ' + tries + '/2' }
             : { ...current, pending: undefined, mode: 'error', notice: reason };
         }
