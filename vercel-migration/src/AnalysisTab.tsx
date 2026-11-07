@@ -228,6 +228,14 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
     });
   }, [sourceInfo.text, sourceInfo.style, enabled, ready, projectId, workEpoch, run.mode]);
 
+  // AI MANAGER started a new transcript/rewrite for this project: the review of the old script is stopped, the new script gets its own.
+  useEffect(() => {
+    if (!enabled || !(run.mode === 'running' || run.pending)) return;
+    const command = readManagerTranscript(); const pipeline = readManagerTranscriptState();
+    if (command?.sessionId !== projectId || pipeline?.id !== command.id || !['start', 'fetch', 'partition', 'rewrite'].includes(pipeline.stage) || run.pipelineId === command.id) return;
+    change(current => { if (current.mode === 'running' || current.pending) stop(current); });
+  }, [tick, run.mode, run.pending, run.pipelineId, projectId, enabled]);
+
   useEffect(() => {
     if (!enabled || !ready || !managerReview || run.managerReviewId === managerReview.id) return;
     change(current => {
