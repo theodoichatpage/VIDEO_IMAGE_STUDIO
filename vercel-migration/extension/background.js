@@ -236,7 +236,7 @@ async function persistAndDeliver(payload,token) {
   if(token!==stopGeneration||stopDepth||cancelledJobs.has(payload.jobId))return;
   const events = Array.isArray(stored.pendingChatEvents) ? stored.pendingChatEvents.filter(item => item?.jobId !== payload.jobId) : [];
   events.push({ ...payload, _sessionId: stored.pairCode });
-  await chrome.storage.local.set({ pendingChatEvents: events.slice(-10) });
+  await chrome.storage.local.set({ pendingChatEvents: events });
   if(token!==stopGeneration||stopDepth)return;
   await deliverPending();
   if(token!==stopGeneration||stopDepth)return;
