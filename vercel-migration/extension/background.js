@@ -427,9 +427,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
     if (message?.type === 'vis-event-ack') {
+      if (typeof message.jobId !== 'string' || !message.jobId) { sendResponse({ ok: false, error: 'Missing jobId' }); return; }
       const stored = await chrome.storage.local.get(['pendingChatEvents']);
-      if(token!==stopGeneration||stopDepth||cancelledJobs.has(payload.jobId))return;
-  const events = Array.isArray(stored.pendingChatEvents) ? stored.pendingChatEvents.filter(item => item?.jobId !== message.jobId) : [];
+      if (token !== stopGeneration || stopDepth || cancelledJobs.has(message.jobId)) { sendResponse({ ok: false, error: 'Delivery interrupted' }); return; }
+      const events = Array.isArray(stored.pendingChatEvents) ? stored.pendingChatEvents.filter(item => item?.jobId !== message.jobId) : [];
       await chrome.storage.local.set({ pendingChatEvents: events });
       if (!events.some(item => item?.jobId === message.jobId)) {
         const active = await chrome.storage.local.get(['activeJobId']);
