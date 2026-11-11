@@ -44,6 +44,11 @@ function harness(){
  h=harness();h.job.type='image_generation';h.pong=null;
  for(let t=0;t<=900000;t+=30000)await h.c.watch(t);
  assert.equal(h.reloads,2);assert.equal(h.events[0]?.state,'error');assert.deepEqual(h.updates,[]);
+ // ChatGPT shows its image limit notice: no reload, one error carrying ChatGPT's words (the Manager rests the tab).
+ h=harness();h.job.type='image_generation';h.pong={ready:true,generating:false,limit:"You've hit the Plus plan limit for image generations requests. You can create more images when the limit resets in 5 hours."};
+ for(let t=0;t<=900000;t+=30000)await h.c.watch(t);
+ assert.equal(h.reloads,0,'a limit is not cured by reloading');assert.equal(h.events.length,1);assert.equal(h.events[0].state,'error');
+ assert.match(h.events[0].text,/giới hạn.*resets in 5 hours/);assert.deepEqual(h.updates,[]);
  // STOP ALL in progress: no action.
  h=harness();h.pong=null;h.c.stopDepth=1;for(let t=0;t<=300000;t+=30000)await h.c.watch(t);assert.equal(h.reloads,0);
  console.log('test_watchdog PASS');

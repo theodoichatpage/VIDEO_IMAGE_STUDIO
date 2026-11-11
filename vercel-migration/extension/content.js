@@ -395,6 +395,17 @@ async function chatAccountInfo(){
   }catch{}
   return accountInfo;
 }
+// ChatGPT's own "limit reached" notice, read only from what follows the latest user turn so an old notice
+// from an earlier turn is not taken for a new one. Returns the short notice text or null.
+const CHAT_LIMIT=/you['’]ve (?:hit|reached) the [^.\n]{0,60}limit[^\n]{0,160}|[^.\n]{0,80}limit resets in [^.\n]{0,40}|[^.\n]{0,60}usage (?:cap|limit)[^\n]{0,120}/i;
+function chatLimitNotice(){
+  try{
+    const main=document.querySelector('main');const text=(main?.innerText||document.body?.innerText||'');
+    const turns=document.querySelectorAll('[data-message-author-role="user"]');const last=turns[turns.length-1]?.innerText||'';
+    const at=last?text.lastIndexOf(last):-1;const tail=at>=0?text.slice(at+last.length):text.slice(-2000);
+    const hit=tail.match(CHAT_LIMIT);return hit?hit[0].replace(/\s+/g,' ').trim().slice(0,240):null;
+  }catch{return null;}
+}
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === 'MGR_FP') {
       const messages = document.querySelectorAll('[data-message-author-role="assistant"]');
@@ -417,8 +428,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const marker=st.activeJobId && ((last && (last.innerText||'').includes('[VIS_JOB_ID:'+st.activeJobId+']')) || (document.querySelector('main')?.textContent||'').includes('[VIS_JOB_ID:'+st.activeJobId+']'));
         const imagePrompt=st.activeCommand?.type==='image_generation' && st.activeCommand?.id===st.activeJobId && typeof st.activeCommand.prompt==='string' && st.activeCommand.prompt.length>0 && last && (last.innerText||'').includes(st.activeCommand.prompt);
         const verified=currentJobId===st.activeJobId && !!currentJobId || Boolean((marker||imagePrompt) && st.identityJobId===st.activeJobId && st.conversationUrl===url);
-        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.5.19',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now(),account});
-      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.5.19',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
+        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.5.20',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now(),account,limit:chatLimitNotice()});
+      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.5.20',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
       return true;
     }
     if (message?.type === 'vis-restore-draft') {
