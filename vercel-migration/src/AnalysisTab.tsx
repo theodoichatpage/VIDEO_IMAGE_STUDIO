@@ -2,7 +2,7 @@ import { FileText } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { emptyAnalysis, loadAnalysis } from './analysisWorkspace';
 import { loadTranscriptWorkspace, preparedAnalysisSource } from './transcriptWorkspace';
-import { acceptResponse, approvedRun, criteriaWithSource, emptyRun, promptFor, reviewPartsFromScript, reviewQuality, restoreRun, scriptOf, threshold, type Mode, type Run } from './automaticAnalysis';
+import { acceptResponse, approvedRun, criteriaWithSource, emptyRun, promptFor, reviewPartsFromScript, reviewQuality, reviewSteps, restoreRun, scriptOf, threshold, type Mode, type Run } from './automaticAnalysis';
 import './analysisTab.css';
 import { readManagerTranscript, readManagerTranscriptState } from './managerTranscript';
 
@@ -12,6 +12,8 @@ type Props = {
   onCheckpoint: (run: Run) => Promise<void>;
   managerReview?: { id: string; source: 'transcript' | 'script' };
   managerScript?: string;
+  // The script saved on the Studio server and whether it already has parts: the report must say when it graded another version.
+  serverScript?: string; serverHasParts?: boolean;
   onTransfer: (draft: ReturnType<typeof emptyAnalysis>, automatic: boolean, managed?: boolean) => string;
 };
 
@@ -21,17 +23,23 @@ const labels: Record<Mode, string> = {
   limited: 'Lỗi: đã hết số vòng sửa tự động · còn tiêu chí dưới 8/10, chờ xử lý',
   missing: 'Các tiêu chuẩn chấm được đã đạt · còn tiêu chuẩn chưa đủ dữ liệu',
   passed: 'Mọi tiêu chuẩn chấm được từ kịch bản đã đạt', transferred: 'Đã chuyển bản thảo sang Phân tách',
+  checked: 'Đã chấm lại kịch bản hiện tại',
 };
 
 function progress(run: Run) {
   if (run.mode !== 'running') return labels[run.mode];
   if (run.phase === 'plan') return 'Đang đọc toàn bộ nguồn và lập cấu trúc';
-  if (run.phase === 'review') return 'Đang đối chiếu toàn bộ kịch bản';
+  if (run.phase === 'review') {
+    const steps = reviewSteps(run), at = Math.min(run.reviewStep || 0, steps.length - 1);
+    if (steps.length < 2) return 'Đang đối chiếu toàn bộ kịch bản';
+    const key = steps[at].key;
+    return `Đang chấm bước ${at + 1}/${steps.length} · ${key === 'open' ? 'mở đầu' : key === 'end' ? 'kết' : 'thân bài đoạn ' + key.slice(4)}`;
+  }
   const part = `phần ${run.index + 1}/${run.parts.length} · ${run.parts[run.index]?.title}`;
   return run.phase === 'write' ? 'Đang viết ' + part : `Đang sửa lần ${run.rounds + 1}/${run.limit} · ${part}`;
 }
 
-export default function AnalysisTab({ projectId, projectName, connected, otherWork, bridgeJob, active, ready, enabled = true, workEpoch = 0, managerReview, managerScript, onCheckpoint, onTransfer }: Props) {
+export default function AnalysisTab({ projectId, projectName, connected, otherWork, bridgeJob, active, ready, enabled = true, workEpoch = 0, managerReview, managerScript, serverScript, serverHasParts, onCheckpoint, onTransfer }: Props) {
   const key = 'vis-automatic-analysis-v2-' + projectId;
   // The browser keeps about 5 MB per site. A long script is stored once (the original text of a prepared part equals its text) and the latest state also lives in memory.
   const latest = useRef<Run | null>(null);
@@ -127,6 +135,13 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
         // A long repair (whole part, sources looked up on the web) can take more than 10 minutes: wait twice more, reading the reply each time, before stopping.
         const extended = current.pending.extended || 0;
         if (extended < 2) save({ ...current, pending: { ...current.pending, deadline: Date.now() + 600_000, extended: extended + 1 }, notice: 'ChatGPT trả lời lâu · chờ thêm (' + (extended + 1) + '/2)' });
+        else if ((current.invalid || 0) < 2) {
+          // No reply after 30 minutes: send this step again (a fresh, short job) twice before stopping.
+          const tries = (current.invalid || 0) + 1;
+          send('studio-transcript-ack', { jobId: current.pending.id });
+          save({ ...current, pending: undefined, invalid: tries, lastInvalid: 'không trả lời trong 30 phút', notice: 'ChatGPT không trả lời sau 30 phút · gửi lại bước này (' + tries + '/2)' });
+          return;
+        }
         else save({ ...current, mode: 'error', notice: 'Quá thời gian chờ. Tiếp tục để đồng bộ lệnh hiện tại hoặc Dừng để gửi lại công đoạn này.' });
       }
       if (live.current.connected) send('studio-capture-result', { jobId: current.pending.id });
@@ -221,7 +236,7 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   useEffect(() => {
     if (!enabled || !ready || !sourceInfo.text) return;
     change(current => {
-      if (current.source === sourceInfo.text || current.pending || !['idle', 'transferred', 'limited', 'error', 'stopped'].includes(current.mode)) return;
+      if (current.source === sourceInfo.text || current.pending || !['idle', 'transferred', 'limited', 'error', 'stopped', 'checked'].includes(current.mode)) return;
       if (current.source && current.source !== sourceInfo.text) localStorage.setItem(key + '-previous', JSON.stringify(current));
       const command = readManagerTranscript(); const pipeline = readManagerTranscriptState();
       const managerReviewId = command?.sessionId === projectId && command.rewrite && command.id === pipeline?.id ? command.id : undefined;
@@ -278,9 +293,22 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
 
   const working = run.mode === 'running' || !!run.pending;
   const canResume = ['paused', 'stopped', 'error'].includes(run.mode);
-  const hasCurrentReview = !working && ['missing', 'passed', 'limited', 'transferred'].includes(run.mode);
+  const hasCurrentReview = !working && ['missing', 'passed', 'limited', 'transferred', 'checked'].includes(run.mode);
   const quality = reviewQuality(run.rows);
-  const canRepairAll = run.rows.length > 0 && quality.needsWork > 0;
+  const canRepairAll = run.rows.length > 0 && quality.needsWork > 0 && !run.reviewOnly;
+  // Criteria graded from the script (the cover and the cut are graded later): the honest denominator.
+  const gradable = criteriaWithSource.filter(c => !c.visual).length;
+  // The report graded another script than the one saved on the server (e.g. AI MANAGER rewrote and saved it after this review).
+  const flat = (text: string) => text.replace(/\s+/gu, ' ').trim();
+  const stale = !working && !run.needsSave && run.rows.length > 0 && Boolean(serverScript?.trim()) && flat(scriptOf(run)) !== flat(serverScript!);
+  const recheck = () => change(current => {
+    const script = serverScript?.trim();
+    if (!script || current.pending || current.mode === 'running') return;
+    if (current.parts.length) localStorage.setItem(key + '-previous', JSON.stringify(current));
+    // Parts and scenes already exist: grade only, never rewrite the saved script.
+    save({ ...emptyRun(), runId: crypto.randomUUID(), revision: 1, workEpoch, source: script, style: readSource().style, parts: reviewPartsFromScript(script),
+      plan: outlinePlan() || current.plan, phase: 'review', mode: 'running', reviewOnly: Boolean(serverHasParts), needsSave: !serverHasParts });
+  });
   const repairAll = () => change(current => {
     if (current.pending || !['missing', 'passed', 'limited', 'transferred'].includes(current.mode)) return;
     const repairParts = [...new Set(current.rows.filter(row => row.score !== null && row.score < threshold && row.part !== null)
@@ -300,13 +328,16 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
       {run.rows.length > 0 && <p>Điểm tham khảo dựa trên kịch bản. Các mục cần ảnh bìa hoặc video thực tế được đánh dấu riêng.</p>}
       {run.rows.length > 0 && (run.phase === 'repair' || run.phase === 'review') && ['running', 'paused', 'stopped', 'error'].includes(run.mode)
         && <p>Đang hiển thị báo cáo của lần chấm trước. Studio sẽ cập nhật sau khi chấm lại bản sửa.</p>}
+      {stale && <div className="analysis-controls" role="alert"><p>Báo cáo này chấm một bản kịch bản khác ({run.parts.length} phần, {scriptOf(run).length.toLocaleString('vi-VN')} ký tự) với kịch bản đang lưu trong dự án ({serverScript!.trim().length.toLocaleString('vi-VN')} ký tự). Điểm dưới đây không phải của kịch bản hiện tại.</p>
+        <button className="outline" disabled={!connected} onClick={recheck}>{serverHasParts ? 'Chấm lại kịch bản hiện tại (chỉ xem)' : 'Chấm và sửa kịch bản hiện tại'}</button></div>}
+      {(run.history?.length || 0) > 1 && <p>Điểm qua các lượt: {run.history!.map(h => h.passed + '/' + gradable).join(' → ')}{run.best && ' · bản đang giữ: ' + run.best.passed + '/' + gradable}</p>}
 
       <section className="auto-quality" aria-label="Chất lượng kịch bản">
-        <strong>Ngưỡng đạt {threshold}/10 · Đang đạt {quality.passed}/{criteriaWithSource.length} · {hasCurrentReview
+        <strong>Ngưỡng đạt {threshold}/10 cho mỗi tiêu chí · Đang đạt {quality.passed}/{gradable} tiêu chí chấm từ kịch bản · {hasCurrentReview
           ? quality.needsWork ? 'Chưa đạt' : quality.unscored ? 'Đạt tiêu chí kịch bản · mục hình ảnh chờ bước sau' : 'Đạt'
           : run.rows.length ? 'Kết quả lần chấm trước' : 'Chưa chấm'}</strong>
-        <meter min={0} max={criteriaWithSource.length} value={quality.passed} aria-label="Số tiêu chí đạt từ 8 điểm"/>
-        {run.rows.length > 0 && <small>{quality.passed}/{criteriaWithSource.length} đạt · {quality.needsWork} cần sửa · {quality.unscored} chưa đủ dữ liệu</small>}
+        <meter min={0} max={gradable} value={quality.passed} aria-label="Số tiêu chí đạt từ 8 điểm"/>
+        {run.rows.length > 0 && <small>{quality.passed}/{gradable} đạt · {quality.needsWork} cần sửa · {quality.unscored} mục chờ ảnh bìa/bản dựng (chấm ở bước sau)</small>}
       </section>
       <div className="auto-review-columns">
         {[visibleCriteria.slice(0, middle), visibleCriteria.slice(middle)].map((column, index) =>
@@ -317,7 +348,8 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
               const score = row?.score;
               return <tr key={criterion.id}>
                 <th scope="row"><details><summary>{criterion.name}{criterion.timing && ' (' + criterion.timing + ')'}</summary>
-                  {row ? <>{row.evidence && <blockquote>{row.evidence}</blockquote>}<p>{row.reason}</p>{row.fix && <p>{row.fix}</p>}</>
+                  {row ? <>{row.evidence && <blockquote>{row.evidence}</blockquote>}<p>{row.reason}</p>{row.fix && <p>Cách sửa{row.part ? ' (phần ' + row.part + ')' : ''}: {row.fix}</p>}
+                    {(run.findings || []).filter(f => f.id === row.id).map((f, i) => <p key={i}>Cũng cần sửa phần {f.part} ({f.score?.toFixed(1)}): {f.fix}</p>)}</>
                     : <blockquote>{criterion.excerpt.replace(/^\[\d+:\d+\]\s*/gm, '')}</blockquote>}
                 </details></th>
                 <td>{typeof score === 'number' ? <strong className={score >= threshold ? 'score-pass' : 'score-low'}>{score.toFixed(1)}</strong>
