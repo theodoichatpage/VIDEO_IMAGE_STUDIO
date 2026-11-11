@@ -2,7 +2,7 @@ import { FileText } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { emptyAnalysis, loadAnalysis } from './analysisWorkspace';
 import { loadTranscriptWorkspace, preparedAnalysisSource } from './transcriptWorkspace';
-import { acceptResponse, approvedRun, criteriaWithSource, emptyRun, promptFor, reviewPartsFromScript, reviewQuality, reviewSteps, restoreRun, scriptOf, threshold, type Mode, type Run } from './automaticAnalysis';
+import { acceptResponse, approvedRun, criteriaWithSource, emptyRun, promptFor, reviewPartsFromScript, MAX_ROUNDS, reviewQuality, reviewSteps, restoreRun, staleReport, scriptOf, threshold, type Mode, type Run } from './automaticAnalysis';
 import './analysisTab.css';
 import { readManagerTranscript, readManagerTranscriptState } from './managerTranscript';
 
@@ -36,7 +36,7 @@ function progress(run: Run) {
     return `Đang chấm bước ${at + 1}/${steps.length} · ${key === 'open' ? 'mở đầu' : key === 'end' ? 'kết' : 'thân bài đoạn ' + key.slice(4)}`;
   }
   const part = `phần ${run.index + 1}/${run.parts.length} · ${run.parts[run.index]?.title}`;
-  return run.phase === 'write' ? 'Đang viết ' + part : `Đang sửa lần ${run.rounds + 1}/${run.limit} · ${part}`;
+  return run.phase === 'write' ? 'Đang viết ' + part : `Đang sửa lần ${run.rounds + 1}/${run.rounds >= run.limit ? MAX_ROUNDS : run.limit} · ${part}`;
 }
 
 export default function AnalysisTab({ projectId, projectName, connected, otherWork, bridgeJob, active, ready, enabled = true, workEpoch = 0, managerReview, managerScript, serverScript, serverHasParts, onCheckpoint, onTransfer }: Props) {
@@ -299,16 +299,26 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   // Criteria graded from the script (the cover and the cut are graded later): the honest denominator.
   const gradable = criteriaWithSource.filter(c => !c.visual).length;
   // The report graded another script than the one saved on the server (e.g. AI MANAGER rewrote and saved it after this review).
-  const flat = (text: string) => text.replace(/\s+/gu, ' ').trim();
-  const stale = !working && !run.needsSave && run.rows.length > 0 && Boolean(serverScript?.trim()) && flat(scriptOf(run)) !== flat(serverScript!);
+  const stale = staleReport(run, serverScript);
   const recheck = () => change(current => {
     const script = serverScript?.trim();
-    if (!script || current.pending || current.mode === 'running') return;
+    if (!script || !staleReport(current, script)) return;
+    // A run stopped on an error can still hold the ChatGPT job that never answered: release it before grading the current script.
+    if (current.pending) send('studio-transcript-ack', { jobId: current.pending.id });
     if (current.parts.length) localStorage.setItem(key + '-previous', JSON.stringify(current));
     // Parts and scenes already exist: grade only, never rewrite the saved script.
     save({ ...emptyRun(), runId: crypto.randomUUID(), revision: 1, workEpoch, source: script, style: readSource().style, parts: reviewPartsFromScript(script),
       plan: outlinePlan() || current.plan, phase: 'review', mode: 'running', reviewOnly: Boolean(serverHasParts), needsSave: !serverHasParts });
   });
+  // A stale report is replaced by itself: the current script is graded (and repaired when it has no parts yet), once per saved script so a failing save cannot loop.
+  useEffect(() => {
+    if (!enabled || !ready || !connected || otherWork || bridgeJob || !stale || !serverScript) return;
+    const flat = serverScript.replace(/\s+/gu, ' ').trim();
+    let hash = 0; for (let i = 0; i < flat.length; i++) hash = (hash * 31 + flat.charCodeAt(i)) | 0;
+    const mark = key + '-auto-recheck', fingerprint = flat.length + ':' + hash;
+    try { if (localStorage.getItem(mark) === fingerprint) return; localStorage.setItem(mark, fingerprint); } catch { return; }
+    recheck();
+  }, [stale, serverScript, enabled, ready, connected, otherWork, bridgeJob]);
   const repairAll = () => change(current => {
     if (current.pending || !['missing', 'passed', 'limited', 'transferred'].includes(current.mode)) return;
     const repairParts = [...new Set(current.rows.filter(row => row.score !== null && row.score < threshold && row.part !== null)
@@ -322,14 +332,12 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   return <section className="workspace auto-analysis">
     <section className="panel">
       <div className="panel-heading"><FileText/><div><h1>Công thức Aprilynne</h1><p>Dự án: {projectName}</p></div></div>
-      {canResume && <div className="analysis-controls"><button className="outline" onClick={resume}>Tiếp tục</button></div>}
-      <p className="script-meta" role="status">{run.mode === 'running' && !run.pending ? run.needsSave ? 'Đang lưu kịch bản và kết quả vào dự án' : !connected ? 'Đang xếp hàng · chờ kết nối ChatGPT' : otherWork || bridgeJob ? 'Đang xếp hàng · chờ tác vụ ChatGPT hiện tại hoàn tất' : progress(run) : run.mode === 'idle' ? 'Đang chờ bản viết lại từ Get Transcript' : progress(run)}{run.rounds > 0 && ` · Đã sửa ${run.rounds}/${run.limit} lượt`}{run.notice && ' · ' + run.notice}</p>
+      {canResume && !stale && <div className="analysis-controls"><button className="outline" onClick={resume}>Tiếp tục</button></div>}
+      <p className="script-meta" role="status">{stale ? 'Đang chờ chấm lại kịch bản hiện tại của dự án' : run.mode === 'running' && !run.pending ? run.needsSave ? 'Đang lưu kịch bản và kết quả vào dự án' : !connected ? 'Đang xếp hàng · chờ kết nối ChatGPT' : otherWork || bridgeJob ? 'Đang xếp hàng · chờ tác vụ ChatGPT hiện tại hoàn tất' : progress(run) : run.mode === 'idle' ? 'Đang chờ bản viết lại từ Get Transcript' : progress(run)}{run.rounds > 0 && ` · Đã sửa ${run.rounds}/${run.rounds >= run.limit ? MAX_ROUNDS : run.limit} lượt`}{run.notice && ' · ' + run.notice}</p>
       {error && <p role="alert">{error}</p>}
       {run.rows.length > 0 && <p>Điểm tham khảo dựa trên kịch bản. Các mục cần ảnh bìa hoặc video thực tế được đánh dấu riêng.</p>}
-      {run.rows.length > 0 && (run.phase === 'repair' || run.phase === 'review') && ['running', 'paused', 'stopped', 'error'].includes(run.mode)
+      {run.rows.length > 0 && !stale && (run.phase === 'repair' || run.phase === 'review') && ['running', 'paused', 'stopped', 'error'].includes(run.mode)
         && <p>Đang hiển thị báo cáo của lần chấm trước. Studio sẽ cập nhật sau khi chấm lại bản sửa.</p>}
-      {stale && <div className="analysis-controls" role="alert"><p>Báo cáo này chấm một bản kịch bản khác ({run.parts.length} phần, {scriptOf(run).length.toLocaleString('vi-VN')} ký tự) với kịch bản đang lưu trong dự án ({serverScript!.trim().length.toLocaleString('vi-VN')} ký tự). Điểm dưới đây không phải của kịch bản hiện tại.</p>
-        <button className="outline" disabled={!connected} onClick={recheck}>{serverHasParts ? 'Chấm lại kịch bản hiện tại (chỉ xem)' : 'Chấm và sửa kịch bản hiện tại'}</button></div>}
       {(run.history?.length || 0) > 1 && <p>Điểm qua các lượt: {run.history!.map(h => h.passed + '/' + gradable).join(' → ')}{run.best && ' · bản đang giữ: ' + run.best.passed + '/' + gradable}</p>}
 
       <section className="auto-quality" aria-label="Chất lượng kịch bản">

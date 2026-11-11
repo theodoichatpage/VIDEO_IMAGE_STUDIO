@@ -2,6 +2,7 @@ import { criteria, originalExcerpt } from './analysisPrompts';
 import { partitionBranches, transcriptUnits } from './transcriptPartition';
 
 export const threshold = 8;
+export const MAX_ROUNDS = 6;
 export const visualCriteria = new Set([1, 8]);
 export const criteriaWithSource = criteria.map((criterion, id) => ({
   ...criterion, id, visual: visualCriteria.has(id), excerpt: originalExcerpt(criterion.start, criterion.end),
@@ -65,7 +66,15 @@ export function reviewQuality(rows: Row[]) {
   const needsWork = rows.filter(row => row.score !== null && row.score < threshold).length;
   return { passed, needsWork, unscored: criteria.length - passed - needsWork };
 }
-export const totalScore = (rows: Row[]) => rows.reduce((sum, row) => sum + (row.score ?? 0), 0);
+// The report graded another script than the one saved on the server (e.g. AI MANAGER rewrote and saved it after this review).
+// A run stopped on an error may still hold its unanswered ChatGPT job: that does not count as working.
+export function staleReport(run: Run, serverScript?: string) {
+  const flat = (text: string) => text.replace(/\s+/gu, ' ').trim();
+  const halted = ['error', 'stopped', 'paused'].includes(run.mode);
+  if (run.mode === 'running' || (run.pending && !halted) || (run.needsSave && !halted)) return false;
+  return run.rows.length > 0 && Boolean(serverScript?.trim()) && flat(scriptOf(run)) !== flat(serverScript!);
+}
+export const totalScore =(rows: Row[]) => rows.reduce((sum, row) => sum + (row.score ?? 0), 0);
 // Not worse than the best so far: more criteria passed, or as many with at least the same total (a repair lifting 6 to 7.5 counts; a tie keeps the newer text).
 const beats = (rows: Row[], best: Run['best']) => !best
   || reviewQuality(rows).passed > best.passed
@@ -249,7 +258,9 @@ export function acceptResponse(run: Run, text: unknown): Run {
     const done = (extra: Partial<Run>) => ({ ...next, manualCriterion: undefined, manualBatch: undefined, ...extra });
     if (run.reviewOnly) return done({ rows, findings, repairParts: [], mode: 'checked', notice: 'Đã chấm lại kịch bản hiện tại (chỉ xem, không sửa vì dự án đã phân cảnh).' });
     let repairParts = weakParts(rows, findings);
-    const limited = run.manualCriterion !== undefined || run.manualBatch || run.rounds >= run.limit;
+    // The aim is every criterion at 8: after the planned rounds, keep repairing while each round still raises the score, up to MAX_ROUNDS.
+    const rising = Boolean(run.best) && (passed > run.best!.passed || (passed === run.best!.passed && total > (run.best!.total ?? totalScore(run.best!.rows))));
+    const limited = run.manualCriterion !== undefined || run.manualBatch || (run.rounds >= run.limit && !(rising && run.rounds < MAX_ROUNDS));
     if (repairParts.length && !improved && run.best) {
       const best = run.best;
       if (limited) return done({ parts: best.parts, rows: best.rows, findings: best.findings || [], plan: best.plan ?? next.plan, repairParts: [], phase: 'review', mode: 'limited',

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { acceptResponse, BODY_CHUNK, emptyRun, promptFor, reviewQuality, reviewSteps, scriptOf, type Row, type Run } from './automaticAnalysis';
+import { acceptResponse, BODY_CHUNK, emptyRun, promptFor, reviewQuality, reviewSteps, scriptOf, staleReport, type Row, type Run } from './automaticAnalysis';
 
 // A long script like Thái sư (55 parts of about 1,000 characters).
 const parts = Array.from({ length: 55 }, (_, i) => ({ title: 'Phần ' + (i + 1), source: '', text: `Câu mở phần ${i + 1}. ` + 'Nội dung kể chuyện. '.repeat(48) + `Câu cuối phần ${i + 1}.` }));
@@ -74,6 +74,19 @@ describe('Aprilynne review of a long script', () => {
     expect(scriptOf(run)).toContain('Đã sửa vòng 2.');
   });
 
+  it('keeps repairing past 3 rounds while the score still rises, until every criterion reaches 8 (at most 6 rounds)', () => {
+    let run = long();
+    // One more criterion passes each round: 7 → 8 → … → 12 of 12 needs 5 repair rounds.
+    const low = [6, 9, 10, 12, 13];
+    for (let round = 0; round < 8 && run.mode === 'running'; round++) {
+      run = review({ ...run, reviewStep: 0 }, id => low.slice(round).includes(id) ? 6 : 9);
+      while (run.phase === 'repair' && run.mode === 'running') run = reply(run, { text: run.parts[run.index].text + ' Sửa ' + round + '.' });
+    }
+    expect(run.history?.map(h => h.passed)).toEqual([7, 8, 9, 10, 11, 12]);
+    expect(run.rounds).toBe(5);
+    expect(run.mode).toBe('passed');
+  });
+
   it('repairs again from the best version when a round makes the script worse', () => {
     let run = review(long(), id => id === 13 ? 6 : 9);
     const bestText = scriptOf(run);
@@ -91,6 +104,17 @@ describe('Aprilynne review of a long script', () => {
     expect(run.phase).toBe('review');
     expect(run.repairParts).toEqual([]);
     expect(scriptOf(run)).toBe(scriptOf(long()));
+  });
+
+  it('flags a report of another script even when it stopped on a timeout with its job still pending (Thái sư)', () => {
+    const old = review(long(), () => 9);
+    const server = 'Kịch bản mới do AI MANAGER lưu.';
+    const timedOut: Run = { ...old, mode: 'error', phase: 'review', pending: { id: 'transcript-x', deadline: 0, extended: 2 } };
+    expect(staleReport(timedOut, server)).toBe(true);
+    expect(staleReport({ ...timedOut, needsSave: true }, server)).toBe(true);
+    expect(staleReport({ ...timedOut, mode: 'running' }, server)).toBe(false);
+    expect(staleReport({ ...timedOut, mode: 'passed' }, server)).toBe(false);
+    expect(staleReport(timedOut, scriptOf(old) + '\n')).toBe(false);
   });
 
   it('rejects a low score without a fix or with invented evidence in a step', () => {
