@@ -1,402 +1,83 @@
 import { FileText } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import { emptyAnalysis, loadAnalysis } from './analysisWorkspace';
+import { useEffect, useState } from 'react';
+import { emptyAnalysis } from './analysisWorkspace';
 import { loadTranscriptWorkspace, preparedAnalysisSource } from './transcriptWorkspace';
-import { acceptResponse, approvedRun, criteriaWithSource, emptyRun, promptFor, reviewPartsFromScript, MAX_ROUNDS, managerStoryStatus, reviewQuality, type ManagerStory, reviewSteps, restoreRun, staleReport, scriptOf, threshold, type Mode, type Run } from './automaticAnalysis';
+import { criteriaWithSource, managerStoryStatus, readAnalysisRun, reviewQuality, type ManagerStory } from './automaticAnalysis';
 import './analysisTab.css';
-import { readManagerTranscript, readManagerTranscriptState } from './managerTranscript';
 
+// One route: AI MANAGER runs the Aprilynne line (outline → rewrite in the saved style → grade → rewrite what is weak → grade;
+// approved at 8 of 12 criteria scoring 8). This tab only shows it; Studio grades nothing on its own.
 type Props = {
-  projectId: string; projectName: string; connected: boolean; otherWork: boolean; bridgeJob?: string;
-  active: boolean; ready: boolean; enabled?: boolean; workEpoch?: number;
-  onCheckpoint: (run: Run) => Promise<void>;
-  managerReview?: { id: string; source: 'transcript' | 'script' };
-  managerScript?: string;
-  // The script saved on the Studio server and whether it already has parts: the report must say when it graded another version.
-  serverScript?: string; serverHasParts?: boolean;
-  // AI MANAGER's Aprilynne review of this project: the one route; the tab shows it and runs no review of its own.
+  projectId: string; projectName: string; active: boolean;
   managerStory?: ManagerStory | null;
   onTransfer: (draft: ReturnType<typeof emptyAnalysis>, automatic: boolean, managed?: boolean) => string;
 };
 
 const send = (type: string, data = {}) => window.postMessage({ source: 'vis-web', type, ...data }, location.origin);
-const labels: Record<Mode, string> = {
-  idle: 'Sẵn sàng', running: 'Đang xử lý', paused: 'Đã tạm dừng', stopped: 'Đã dừng', error: 'Gặp lỗi',
-  limited: 'Lỗi: đã hết số vòng sửa tự động · còn tiêu chí dưới 8/10, chờ xử lý',
-  missing: 'Các tiêu chuẩn chấm được đã đạt · còn tiêu chuẩn chưa đủ dữ liệu',
-  passed: 'Mọi tiêu chuẩn chấm được từ kịch bản đã đạt', transferred: 'Đã chuyển bản thảo sang Phân tách',
-  checked: 'Đã chấm lại kịch bản hiện tại',
-};
 
-function progress(run: Run) {
-  if (run.mode !== 'running') return labels[run.mode];
-  if (run.phase === 'plan') return 'Đang đọc toàn bộ nguồn và lập cấu trúc';
-  if (run.phase === 'review') {
-    const steps = reviewSteps(run), at = Math.min(run.reviewStep || 0, steps.length - 1);
-    if (steps.length < 2) return 'Đang đối chiếu toàn bộ kịch bản';
-    const key = steps[at].key;
-    return `Đang chấm bước ${at + 1}/${steps.length} · ${key === 'open' ? 'mở đầu' : key === 'end' ? 'kết' : 'thân bài đoạn ' + key.slice(4)}`;
-  }
-  const part = `phần ${run.index + 1}/${run.parts.length} · ${run.parts[run.index]?.title}`;
-  return run.phase === 'write' ? 'Đang viết ' + part : `Đang sửa lần ${run.rounds + 1}/${run.rounds >= run.limit ? MAX_ROUNDS : run.limit} · ${part}`;
-}
+export default function AnalysisTab({ projectId, projectName, active, managerStory, onTransfer }: Props) {
+  // A review this tab ran before (older Studio) may still be marked running with a ChatGPT job: stop it once so nothing waits on it.
+  useEffect(() => {
+    const key = 'vis-automatic-analysis-v2-' + projectId;
+    const old = readAnalysisRun(projectId);
+    if (!old || !(old.mode === 'running' || old.pending)) return;
+    if (old.pending?.id) send('studio-transcript-ack', { jobId: old.pending.id });
+    try { localStorage.setItem(key, JSON.stringify({ ...old, mode: 'stopped', pending: undefined, notice: 'AI MANAGER chạy phần chấm Aprilynne' })); } catch { /* storage full: nothing else depends on it */ }
+  }, [projectId]);
 
-export default function AnalysisTab({ projectId, projectName, connected, otherWork, bridgeJob, active, ready, enabled = true, workEpoch = 0, managerReview, managerScript, serverScript, serverHasParts, managerStory, onCheckpoint, onTransfer }: Props) {
-  const key = 'vis-automatic-analysis-v2-' + projectId;
-  // The browser keeps about 5 MB per site. A long script is stored once (the original text of a prepared part equals its text) and the latest state also lives in memory.
-  const latest = useRef<Run | null>(null);
-  const slim = (value: Run): Run => ({ ...value, parts: value.parts.map(part => part.source === part.text ? { ...part, source: '' } : part) });
-  const full = (value: Run): Run => ({ ...value, parts: value.parts.map(part => part.source ? part : { ...part, source: part.text }) });
-  const read = (): Run => {
-    if (latest.current) return latest.current;
-    try {
-      const raw = localStorage.getItem(key);
-      if (raw) return full(restoreRun(JSON.parse(raw), projectId, workEpoch));
-      const legacy = loadAnalysis(projectId);
-      return { ...emptyRun(), input: legacy.input || legacy.script || '' };
-    } catch { return emptyRun(); }
-  };
-  const [run, setRun] = useState(read);
-  const [error, setError] = useState('');
-  const live = useRef({ connected, otherWork, bridgeJob, onTransfer, onCheckpoint });
-  live.current = { connected, otherWork, bridgeJob, onTransfer, onCheckpoint };
-  const checkpointing = useRef(false);
-  const [tick, setTick] = useState(0);
-  useEffect(() => { const timer = setInterval(() => setTick(value => value + 1), 2000); return () => clearInterval(timer); }, []);
-
-  const save = (next: Run) => {
-    latest.current = next;
-    const text = JSON.stringify(slim(next));
-    try { localStorage.setItem(key, text); setError(''); } catch {
-      // Out of room: drop the old copies of this analysis, then try once more.
-      try {
-        for (let i = localStorage.length - 1; i >= 0; i--) { const name = localStorage.key(i) || ''; if (name.startsWith(key + '-')) localStorage.removeItem(name); }
-        localStorage.setItem(key, text); setError('');
-      } catch { setError('Bộ nhớ trình duyệt đầy: kết quả chỉ giữ trong tab này, đừng tải lại trang.'); }
-    }
-    setRun(next);
-  };
-  const change = (action: (current: Run) => void | Promise<void>) => {
-    if (!navigator.locks) { setError('Hãy dùng Chrome hoặc Edge qua HTTPS để chạy một tác vụ tại một thời điểm.'); return; }
-    void navigator.locks.request(key, () => action(read())).catch(caught => setError(caught instanceof Error ? caught.message : 'Không lưu được trạng thái.'));
-  };
-  const stop = (current: Run, localOnly = false) => {
-    if (!current.pending && !['running', 'paused'].includes(current.mode)) return;
-    save({ ...current, mode: 'stopped', pending: undefined, notice: 'Các phần đã hoàn thành được giữ lại.' });
-    if (!localOnly && current.pending) {
-      if (!live.current.otherWork && (!live.current.bridgeJob || live.current.bridgeJob === current.pending.id)) {
-        send('studio-stop', { cancelledJobIds: [current.pending.id] });
-      }
-      send('studio-transcript-ack', { jobId: current.pending.id });
-    }
+  const [prepared, setPrepared] = useState(() => preparedAnalysisSource(loadTranscriptWorkspace(projectId)));
+  useEffect(() => { setPrepared(preparedAnalysisSource(loadTranscriptWorkspace(projectId))); }, [projectId, active]);
+  const [notice, setNotice] = useState('');
+  const transfer = () => {
+    if (!prepared.text) return;
+    const draft = { ...emptyAnalysis(), input: prepared.text, script: prepared.text, status: 'transferred' as const,
+      parts: prepared.parts.map((part, i) => ({ id: String(i + 1), title: part.title, text: part.text, status: 'done' as const })) };
+    try { setNotice(onTransfer(draft, false)); } catch (caught) { setNotice(caught instanceof Error ? caught.message : 'Chưa chuyển được kịch bản.'); }
   };
 
-  useEffect(() => {
-    const sync = (event: StorageEvent) => { if (event.key === key) { latest.current = null; setRun(read()); } };
-    const receive = (event: MessageEvent) => {
-      if (event.source !== window) return;
-      const data = event.data;
-      if (data?.source === 'vis-web' && data.type === 'studio-stop-all-local') { change(current => stop(current, true)); return; }
-      // Get Transcript needs ChatGPT for a new Manager rewrite: this review stops and cancels its ChatGPT job.
-      if (data?.source === 'vis-web' && data.type === 'studio-stop-analysis') { change(current => stop(current)); return; }
-      if (data?.source !== 'vis-extension' || data.type !== 'studio-transcript-ai-result' || data.kind !== 'rewrite') return;
-      change(current => {
-        const pending = current.pending;
-        if (!pending || pending.id !== data.jobId || data.sectionId !== (pending.sectionId || 'automatic-analysis')) return;
-        if (['accepted', 'sent'].includes(data.state)) {
-          save({ ...current, pending: { ...pending, deadline: Date.now() + 600_000 } });
-          return;
-        }
-        if (!['completed', 'error'].includes(data.state)) return;
-        let next: Run;
-        try {
-          if (data.state === 'error') {
-            const message = String(data.message || data.text || 'ChatGPT không xử lý được tác vụ.');
-            if (/đang (xử lý|bận)|tác vụ khác|chưa kết nối|mất kết nối|chưa sẵn sàng|không tìm thấy.*ChatGPT/i.test(message)) {
-              save({ ...current, pending: undefined, notice: 'Đang xếp hàng · chờ ChatGPT sẵn sàng.' });
-              send('studio-transcript-ack', { jobId: data.jobId }); return;
-            }
-            throw new Error(message);
-          }
-          next = { ...acceptResponse(current, data.text), needsSave: true, revision: (current.revision || 0) + 1, invalid: 0, lastInvalid: undefined };
-        } catch (caught) {
-          const reason = caught instanceof Error ? caught.message : 'Phản hồi không hợp lệ.';
-          // A reply that fails the strict check (a quote not word for word, a missing fix) is asked again twice, with the reason, before stopping.
-          const tries = (current.invalid || 0) + 1;
-          next = (data.state !== 'error' || /quá thời gian|timeout|không nhận được phản hồi/i.test(reason)) && tries <= 2 && current.mode === 'running'
-            ? { ...current, pending: undefined, invalid: tries, lastInvalid: reason, notice: 'ChatGPT trả kết quả chưa hợp lệ (' + reason + ') · gửi lại lần ' + tries + '/2' }
-            : { ...current, pending: undefined, mode: 'error', notice: reason };
-        }
-        save(next);
-        send('studio-transcript-ack', { jobId: data.jobId });
-      });
-    };
-    const recover = () => change(current => {
-      if (!current.pending || !live.current.connected) return;
-      if (current.mode === 'running' && current.pending.deadline <= Date.now()) {
-        // A long repair (whole part, sources looked up on the web) can take more than 10 minutes: wait twice more, reading the reply each time, before stopping.
-        const extended = current.pending.extended || 0;
-        if (extended < 2) save({ ...current, pending: { ...current.pending, deadline: Date.now() + 600_000, extended: extended + 1 }, notice: 'ChatGPT trả lời lâu · chờ thêm (' + (extended + 1) + '/2)' });
-        else if ((current.invalid || 0) < 2) {
-          // No reply after 30 minutes: send this step again (a fresh, short job) twice before stopping.
-          const tries = (current.invalid || 0) + 1;
-          send('studio-transcript-ack', { jobId: current.pending.id });
-          save({ ...current, pending: undefined, invalid: tries, lastInvalid: 'không trả lời trong 30 phút', notice: 'ChatGPT không trả lời sau 30 phút · gửi lại bước này (' + tries + '/2)' });
-          return;
-        }
-        else save({ ...current, mode: 'error', notice: 'Quá thời gian chờ. Tiếp tục để đồng bộ lệnh hiện tại hoặc Dừng để gửi lại công đoạn này.' });
-      }
-      if (live.current.connected) send('studio-capture-result', { jobId: current.pending.id });
-    });
-    window.addEventListener('message', receive);
-    window.addEventListener('storage', sync);
-    const timer = window.setInterval(recover, 8000);
-    return () => { clearInterval(timer); window.removeEventListener('message', receive); window.removeEventListener('storage', sync); };
-  }, [key]);
-
-  const disconnectedAt = useRef<number | undefined>(undefined);
-  useEffect(() => {
-    if (!connected && disconnectedAt.current === undefined) disconnectedAt.current = Date.now();
-    if (connected && disconnectedAt.current !== undefined) {
-      const elapsed = Date.now() - disconnectedAt.current; disconnectedAt.current = undefined;
-      change(current => { if (current.pending) {
-        save({ ...current, pending: { ...current.pending, deadline: current.pending.deadline + elapsed } });
-        send('studio-capture-result', { jobId: current.pending.id });
-      } });
-    }
-  }, [connected]);
-
-  const transfer = (current: Run, automatic: boolean) => {
-    if (!approvedRun(current) || current.needsSave) return;
-    const plan = current.plan;
-    const handoff = {
-      ...emptyAnalysis(), input: current.source, script: scriptOf(current), status: 'transferred' as const,
-      title: plan?.title || '', cover: plan?.cover || '', openingScene: plan?.opening || '',
-      direction: [plan?.question, plan?.promise].filter(Boolean).join('\n'),
-      routes: plan?.tracks.join('\n') || '', research: plan?.sourceNote || '',
-      outline: [plan?.transitions, plan?.payoff, plan?.ending].filter(Boolean).join('\n'),
-      parts: current.parts.map((part, i) => ({ id: String(i + 1), title: part.title, text: part.text, status: 'done' as const })),
-    };
-    const notice = live.current.onTransfer(handoff, automatic, Boolean(current.managerReviewId));
-    save({ ...current, mode: 'transferred', notice });
-  };
-
-  useEffect(() => {
-    if (!enabled || !ready || checkpointing.current) return;
-    if (run.needsSave && !run.pending && !otherWork && ['running', 'passed', 'limited'].includes(run.mode)) {
-      checkpointing.current = true;
-      change(async current => {
-        try {
-          if (!current.needsSave || !['running', 'passed', 'limited'].includes(current.mode)) return;
-          await live.current.onCheckpoint(current);
-          save({ ...current, needsSave: false, mode: current.restoreTransferred ? 'transferred' : current.mode, restoreTransferred: undefined });
-        } catch (caught) {
-          const message = caught instanceof Error ? caught.message : 'lỗi máy chủ';
-          save(/tác vụ khác/i.test(message) ? { ...current, notice: 'Đang xếp hàng · chờ tác vụ hiện tại trước khi lưu.' }
-            : { ...current, mode: 'error', notice: 'Chưa lưu dự án: ' + message });
-        } finally { checkpointing.current = false; }
-      });
-      return;
-    }
-    if (run.mode === 'passed' && !run.needsSave) { change(current => {
-      if (current.mode !== 'passed' || current.needsSave) return;
-      try { transfer(current, true); } catch (caught) {
-        save({ ...current, mode: 'error', notice: caught instanceof Error ? caught.message : 'Chưa chuyển được kịch bản.' });
-      }
-    }); return; }
-    if (run.mode !== 'running' || run.needsSave || run.pending || !connected || otherWork || bridgeJob) return;
-    const timer = window.setTimeout(() => change(current => {
-      if (current.mode !== 'running' || current.pending || current.needsSave || !live.current.connected || live.current.otherWork || live.current.bridgeJob) return;
-      const legacyPending = loadAnalysis(projectId).pending;
-      const transcriptPending = JSON.parse(localStorage.getItem('vis-transcript-pending-' + projectId) || 'null');
-      if (transcriptPending?.expires > Date.now() || (legacyPending && legacyPending.expires > Date.now())) return;
-      const id = 'transcript-' + crypto.randomUUID();
-      const sectionId = `automatic-analysis:${current.phase}:${current.index + 1}`;
-      save({ ...current, pending: { id, sectionId, deadline: Date.now() + 25_000 }, notice: '' });
-      send('studio-transcript-ai', { pairCode: projectId, command: { id, type: 'transcript_rewrite', kind: 'rewrite', sectionId, prompt: promptFor(current) + (current.lastInvalid ? ' LƯU Ý: lần trả lời trước bị từ chối vì: ' + current.lastInvalid + ' Trả đúng JSON, evidence trích NGUYÊN VĂN từ đoạn script đã gửi của đúng phần đó, và có fix khi điểm dưới 8.' : '') } });
-    }), 400);
-    return () => clearTimeout(timer);
-  }, [run, connected, otherWork, bridgeJob, projectId, enabled, ready, tick]);
-
-  // The Aprilynne outline made before the rewrite (Get Transcript): the review checks the script against it.
-  const outlinePlan = () => {
-    const plan = loadTranscriptWorkspace(projectId).plan;
-    return plan ? { title: plan.title, question: plan.question, promise: plan.promise, tracks: plan.tracks, opening: plan.hook,
-      transitions: plan.turns, payoff: plan.payoff, ending: plan.ending, sourceNote: plan.sources, cover: plan.cover } : undefined;
-  };
-  const readSource = () => preparedAnalysisSource(loadTranscriptWorkspace(projectId));
-  const [sourceInfo, setSourceInfo] = useState(readSource);
-  useEffect(() => {
-    const sync = () => setSourceInfo(readSource());
-    const onWorkspace = (event: Event) => { if ((event as CustomEvent).detail?.projectId === projectId) sync(); };
-    sync();
-    window.addEventListener('storage', sync);
-    window.addEventListener('vis-transcript-workspace-updated', onWorkspace);
-    return () => { window.removeEventListener('storage', sync); window.removeEventListener('vis-transcript-workspace-updated', onWorkspace); };
-  }, [active, projectId]);
-
-  useEffect(() => {
-    // The project is already split into parts: a review of the transcript could never be saved over it (the server refuses), so none is started.
-    if (!enabled || !ready || !sourceInfo.text || serverHasParts !== false || managerStory) return;
-    change(current => {
-      if (current.source === sourceInfo.text || current.pending || !['idle', 'transferred', 'limited', 'error', 'stopped'].includes(current.mode)) return;
-      if (current.source && current.source !== sourceInfo.text) localStorage.setItem(key + '-previous', JSON.stringify(current));
-      const command = readManagerTranscript(); const pipeline = readManagerTranscriptState();
-      const managerReviewId = command?.sessionId === projectId && command.rewrite && command.id === pipeline?.id ? command.id : undefined;
-      save({ ...emptyRun(), runId: crypto.randomUUID(), revision: 1, needsSave: true, workEpoch,
-        source: sourceInfo.text, style: sourceInfo.style, parts: sourceInfo.parts, plan: outlinePlan(), phase: 'review', mode: 'running', managerReviewId, pipelineId: managerReviewId });
-    });
-  }, [sourceInfo.text, sourceInfo.style, enabled, ready, projectId, workEpoch, run.mode, serverHasParts, managerStory]);
-  // AI MANAGER runs this project's review: a review the tab started on its own is stopped (its ChatGPT job released) so only one route works.
-  useEffect(() => {
-    if (!managerStory || !(run.mode === 'running' || run.pending)) return;
-    change(current => { if (current.mode === 'running' || current.pending) stop(current); });
-  }, [Boolean(managerStory), run.mode, run.pending]);
-
-  // AI MANAGER started a new transcript/rewrite for this project: the review of the old script is stopped, the new script gets its own.
-  useEffect(() => {
-    if (!enabled || !(run.mode === 'running' || run.pending)) return;
-    const command = readManagerTranscript(); const pipeline = readManagerTranscriptState();
-    if (command?.sessionId !== projectId || pipeline?.id !== command.id || !['start', 'fetch', 'partition', 'rewrite'].includes(pipeline.stage) || run.pipelineId === command.id) return;
-    change(current => { if (current.mode === 'running' || current.pending) stop(current); });
-  }, [tick, run.mode, run.pending, run.pipelineId, projectId, enabled]);
-
-  useEffect(() => {
-    if (!enabled || !ready || !managerReview || run.managerReviewId === managerReview.id) return;
-    change(current => {
-      if (current.managerReviewId === managerReview.id) return;
-      if (current.mode === 'running' || current.pending) { save({ ...current, managerReviewId: managerReview.id }); return; }
-      const prepared = readSource();
-      const workspace = loadTranscriptWorkspace(projectId);
-      const source = managerReview.source === 'script' ? managerScript?.trim() : prepared.text || workspace.transcript?.text.trim();
-      if (!source) return;
-      if (current.mode === 'transferred' && !current.needsSave && approvedRun(current) && (source === current.source || source === scriptOf(current))) {
-        save({ ...current, managerReviewId: managerReview.id }); return;
-      }
-      const parts = managerReview.source === 'transcript' && prepared.text ? prepared.parts : reviewPartsFromScript(source);
-      if (current.parts.length) localStorage.setItem(key + '-previous', JSON.stringify(current));
-      save({ ...emptyRun(), runId: crypto.randomUUID(), revision: 1, needsSave: true, workEpoch, source, style: prepared.style, parts, plan: outlinePlan(), phase: 'review', mode: 'running', managerReviewId: managerReview.id });
-    });
-  }, [managerReview, managerScript, connected, otherWork, run.mode, run.pending, projectId, ready, enabled]);
-
-  const resume = () => change(current => {
-    if (!['paused', 'stopped', 'error'].includes(current.mode)) return;
-    save({ ...current, workEpoch, mode: 'running', notice: '', pending: current.pending && { ...current.pending, deadline: Date.now() + 600_000 } });
-    if (current.pending) send('studio-capture-result', { jobId: current.pending.id });
-  });
-  // A run AI MANAGER asked for carries on by itself after an error (a lost or slow ChatGPT reply): one minute later the step is sent again, up to 5 times.
-  const autoResumes = useRef<Record<string, number>>({});
-  useEffect(() => {
-    if (!enabled || run.mode !== 'error' || !managerReview || run.managerReviewId !== managerReview.id || !connected) return;
-    const used = autoResumes.current[managerReview.id] || 0;
-    if (used >= 5) return;
-    const timer = window.setTimeout(() => change(current => {
-      if (current.mode !== 'error' || current.managerReviewId !== managerReview.id) return;
-      autoResumes.current[managerReview.id] = used + 1;
-      if (current.pending) send('studio-transcript-ack', { jobId: current.pending.id });
-      save({ ...current, workEpoch, mode: 'running', pending: undefined, notice: 'Tự chạy tiếp sau lỗi (' + (used + 1) + '/5)' });
-    }), 60_000);
-    return () => clearTimeout(timer);
-  }, [run.mode, run.managerReviewId, managerReview, connected, enabled]);
-
-  const working = run.mode === 'running' || !!run.pending;
-  const canResume = ['paused', 'stopped', 'error'].includes(run.mode);
-  const hasCurrentReview = !working && ['missing', 'passed', 'limited', 'transferred', 'checked'].includes(run.mode);
-  const quality = reviewQuality(managerStory ? managerStory.rows : run.rows);
-  const canRepairAll = !managerStory && run.rows.length > 0 && quality.needsWork > 0 && !run.reviewOnly;
-  // Criteria graded from the script (the cover and the cut are graded later): the honest denominator.
+  const story = managerStory;
   const gradable = criteriaWithSource.filter(c => !c.visual).length;
-  // The report graded another script than the one saved on the server (e.g. AI MANAGER rewrote and saved it after this review).
-  const stale = staleReport(run, serverScript);
-  const recheck = () => change(current => {
-    const script = serverScript?.trim();
-    if (!script || !staleReport(current, script)) return;
-    // A run stopped on an error can still hold the ChatGPT job that never answered: release it before grading the current script.
-    if (current.pending) send('studio-transcript-ack', { jobId: current.pending.id });
-    // The current script was already graded (kept as the previous run when something replaced it): show that report again, no new ChatGPT work.
-    let previous: Run | null = null;
-    try { previous = JSON.parse(localStorage.getItem(key + '-previous') || 'null'); } catch { previous = null; }
-    if (previous && previous.mode === 'checked' && previous.rows?.length && !staleReport(full(restoreRun(previous, projectId, workEpoch)), script)) {
-      localStorage.setItem(key + '-previous', JSON.stringify(current));
-      save({ ...full(restoreRun(previous, projectId, workEpoch)), pending: undefined, needsSave: false }); return;
-    }
-    if (current.parts.length) localStorage.setItem(key + '-previous', JSON.stringify(current));
-    // Parts and scenes already exist: grade only, never rewrite the saved script.
-    save({ ...emptyRun(), runId: crypto.randomUUID(), revision: 1, workEpoch, source: script, style: readSource().style, parts: reviewPartsFromScript(script),
-      plan: outlinePlan() || current.plan, phase: 'review', mode: 'running', reviewOnly: Boolean(serverHasParts), needsSave: !serverHasParts });
-  });
-  // A stale report is replaced by itself: the current script is graded (and repaired when it has no parts yet), once per saved script so a failing save cannot loop.
-  useEffect(() => {
-    if (!enabled || !ready || !connected || otherWork || bridgeJob || !stale || !serverScript || managerStory) return;
-    const flat = serverScript.replace(/\s+/gu, ' ').trim();
-    let hash = 0; for (let i = 0; i < flat.length; i++) hash = (hash * 31 + flat.charCodeAt(i)) | 0;
-    const mark = key + '-auto-recheck-v2', fingerprint = flat.length + ':' + hash;
-    try { if (localStorage.getItem(mark) === fingerprint) return; localStorage.setItem(mark, fingerprint); } catch { return; }
-    recheck();
-  }, [stale, serverScript, serverHasParts, enabled, ready, connected, otherWork, bridgeJob, managerStory]);
-  const repairAll = () => change(current => {
-    if (current.pending || !['missing', 'passed', 'limited', 'transferred'].includes(current.mode)) return;
-    const repairParts = [...new Set(current.rows.filter(row => row.score !== null && row.score < threshold && row.part !== null)
-      .map(row => row.part! - 1))].sort((a, b) => a - b);
-    if (!repairParts.length) return;
-    save({ ...current, phase: 'repair', mode: 'running', index: repairParts[0], repairParts,
-      manualCriterion: undefined, manualBatch: true, notice: '' });
-  });
-  const visibleCriteria = criteriaWithSource;
-  const middle = Math.ceil(visibleCriteria.length / 2);
+  const quality = reviewQuality(story?.rows || []);
+  const middle = Math.ceil(criteriaWithSource.length / 2);
   return <section className="workspace auto-analysis">
     <section className="panel">
       <div className="panel-heading"><FileText/><div><h1>Công thức Aprilynne</h1><p>Dự án: {projectName}</p></div></div>
-      {managerStory && <>
-        <p className="script-meta" role="status">{managerStoryStatus(managerStory)}{managerStory.error && ['plan', 'write', 'review', 'repair'].includes(managerStory.stage) ? ' · lần trước: ' + managerStory.error : ''}</p>
-        {managerStory.title && <p>Tiêu đề: {managerStory.title} · {managerStory.sections} phần</p>}
-        {managerStory.history.length > 0 && <p>Điểm qua các lượt chấm: {managerStory.history.map(h => h.passed + '/' + gradable).join(' → ')}</p>}
+      {story ? <>
+        <p className="script-meta" role="status">{managerStoryStatus(story)}{story.error && ['plan', 'write', 'review', 'repair'].includes(story.stage) ? ' · lần trước: ' + story.error : ''}</p>
+        {story.title && <p>Tiêu đề: {story.title} · {story.sections} phần</p>}
+        {story.history.length > 0 && <p>Điểm qua các lượt chấm: {story.history.map(h => h.passed + '/' + gradable).join(' → ')}</p>}
         <section className="auto-quality" aria-label="Chất lượng kịch bản">
-          <strong>Duyệt khi {managerStory.needed}/{gradable} tiêu chí đạt từ {managerStory.threshold} điểm · Đang đạt {quality.passed}/{gradable} · {managerStory.rows.length
-            ? quality.passed >= managerStory.needed ? 'Đã duyệt' : 'Chưa đạt, đang viết lại phần chưa chặt' : 'Chưa chấm'}</strong>
+          <strong>Duyệt khi {story.needed}/{gradable} tiêu chí đạt từ {story.threshold} điểm · Đang đạt {quality.passed}/{gradable} · {story.rows.length
+            ? quality.passed >= story.needed ? 'Đã duyệt' : 'Chưa đạt, đang viết lại phần chưa chặt' : 'Chưa chấm'}</strong>
           <meter min={0} max={gradable} value={quality.passed} aria-label="Số tiêu chí đạt từ 8 điểm"/>
-          {managerStory.rows.length > 0 && <small>{quality.passed}/{gradable} đạt · {quality.needsWork} dưới 8 · {quality.unscored} mục chờ ảnh bìa/bản dựng (chấm ở bước sau)</small>}
+          {story.rows.length > 0 && <small>{quality.passed}/{gradable} đạt · {quality.needsWork} dưới 8 · {quality.unscored} mục chờ ảnh bìa/bản dựng (chấm ở bước sau)</small>}
         </section>
-      </>}
-      {!managerStory && <>
-      {canResume && !stale && <div className="analysis-controls"><button className="outline" onClick={resume}>Tiếp tục</button></div>}
-      <p className="script-meta" role="status">{stale ? 'Đang chờ chấm lại kịch bản hiện tại của dự án' : run.mode === 'running' && !run.pending ? run.needsSave ? 'Đang lưu kịch bản và kết quả vào dự án' : !connected ? 'Đang xếp hàng · chờ kết nối ChatGPT' : otherWork || bridgeJob ? 'Đang xếp hàng · chờ tác vụ ChatGPT hiện tại hoàn tất' : progress(run) : run.mode === 'idle' ? 'Đang chờ bản viết lại từ Get Transcript' : progress(run)}{run.rounds > 0 && ` · Đã sửa ${run.rounds}/${run.rounds >= run.limit ? MAX_ROUNDS : run.limit} lượt`}{run.notice && ' · ' + run.notice}</p>
-      {error && <p role="alert">{error}</p>}
-      {run.rows.length > 0 && <p>Điểm tham khảo dựa trên kịch bản. Các mục cần ảnh bìa hoặc video thực tế được đánh dấu riêng.</p>}
-      {run.rows.length > 0 && !stale && (run.phase === 'repair' || run.phase === 'review') && ['running', 'paused', 'stopped', 'error'].includes(run.mode)
-        && <p>Đang hiển thị báo cáo của lần chấm trước. Studio sẽ cập nhật sau khi chấm lại bản sửa.</p>}
-      {(run.history?.length || 0) > 1 && <p>Điểm qua các lượt: {run.history!.map(h => h.passed + '/' + gradable).join(' → ')}{run.best && ' · bản đang giữ: ' + run.best.passed + '/' + gradable}</p>}
-
-      <section className="auto-quality" aria-label="Chất lượng kịch bản">
-        <strong>Ngưỡng đạt {threshold}/10 cho mỗi tiêu chí · Đang đạt {quality.passed}/{gradable} tiêu chí chấm từ kịch bản · {hasCurrentReview
-          ? quality.needsWork ? 'Chưa đạt' : quality.unscored ? 'Đạt tiêu chí kịch bản · mục hình ảnh chờ bước sau' : 'Đạt'
-          : run.rows.length ? 'Kết quả lần chấm trước' : 'Chưa chấm'}</strong>
-        <meter min={0} max={gradable} value={quality.passed} aria-label="Số tiêu chí đạt từ 8 điểm"/>
-        {run.rows.length > 0 && <small>{quality.passed}/{gradable} đạt · {quality.needsWork} cần sửa · {quality.unscored} mục chờ ảnh bìa/bản dựng (chấm ở bước sau)</small>}
-      </section>
+      </> : <>
+        <p className="script-meta" role="status">Phần chấm Aprilynne do AI MANAGER chạy (dàn ý → viết lại theo văn phong → chấm → viết lại phần chưa chặt → chấm lại). Dự án này chưa có kết quả từ AI MANAGER.</p>
+        {prepared.text && <div className="analysis-controls">
+          <button className="outline" onClick={transfer}>Chuyển kịch bản đã viết lại sang Phân tách (không chấm)</button>
+        </div>}
+        {notice && <p role="status">{notice}</p>}
       </>}
       <div className="auto-review-columns">
-        {[visibleCriteria.slice(0, middle), visibleCriteria.slice(middle)].map((column, index) =>
+        {[criteriaWithSource.slice(0, middle), criteriaWithSource.slice(middle)].map((column, index) =>
           <div className="auto-review-scroll" key={index}><table className="auto-review" aria-label={`Tiêu chí Aprilynne, bảng ${index + 1}`}>
-            <thead><tr><th scope="col">Tiêu chí</th><th scope="col">Điểm / Thao tác</th></tr></thead>
+            <thead><tr><th scope="col">Tiêu chí</th><th scope="col">Điểm</th></tr></thead>
             <tbody>{column.map(criterion => {
-              const row = (managerStory ? managerStory.rows : run.rows).find(item => item.id === criterion.id);
+              const row = story?.rows.find(item => item.id === criterion.id);
               const score = row?.score;
               return <tr key={criterion.id}>
                 <th scope="row"><details><summary>{criterion.name}{criterion.timing && ' (' + criterion.timing + ')'}</summary>
                   {row ? <>{row.evidence && <blockquote>{row.evidence}</blockquote>}<p>{row.reason}</p>{row.fix && <p>Cách sửa{row.part ? ' (phần ' + row.part + ')' : ''}: {row.fix}</p>}
-                    {((managerStory ? managerStory.findings : run.findings) || []).filter(f => f.id === row.id).map((f, i) => <p key={i}>Cũng cần sửa phần {f.part} ({f.score?.toFixed(1)}): {f.fix}</p>)}</>
+                    {(story?.findings || []).filter(f => f.id === row.id).map((f, i) => <p key={i}>Cũng cần sửa phần {f.part} ({f.score?.toFixed(1)}): {f.fix}</p>)}</>
                     : <blockquote>{criterion.excerpt.replace(/^\[\d+:\d+\]\s*/gm, '')}</blockquote>}
                 </details></th>
-                <td>{typeof score === 'number' ? <strong className={score >= threshold ? 'score-pass' : 'score-low'}>{score.toFixed(1)}</strong>
-                  : <span title={criterion.visual || score === null ? 'Chưa đủ dữ liệu' : 'Chưa chấm'}>—</span>}</td>
+                <td>{typeof score === 'number' ? <strong className={score >= (story?.threshold ?? 8) ? 'score-pass' : 'score-low'}>{score.toFixed(1)}</strong>
+                  : <span title={criterion.visual ? 'Chấm ở bước ảnh bìa/bản dựng' : 'Chưa chấm'}>—</span>}</td>
               </tr>;
             })}</tbody>
           </table></div>)}
       </div>
-      {canRepairAll && <div className="analysis-controls">
-        <button className="analyze-all split-button" disabled={working} onClick={repairAll}>Viết lại tất cả phần chưa đạt</button>
-      </div>}
     </section>
   </section>;
 }

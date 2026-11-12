@@ -1,7 +1,7 @@
 import SceneMaterialEditor from './SceneMaterialEditor';
 import {makeHandoff,saveHandoff,loadHandoff} from './analysisHandoff';
 import AnalysisTab from './AnalysisTab';
-import { approvedRun, readAnalysisRun, readManagerStory, scriptOf, type ManagerStory, type Run } from './automaticAnalysis';
+import { approvedRun, readAnalysisRun, readManagerStory, scriptOf, type ManagerStory } from './automaticAnalysis';
 import type { AnalysisState } from './analysisWorkspace';
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
@@ -303,7 +303,6 @@ function App() {
     laneDispatcher.current = true; return true;
   };
   // Latest content state for the Manager signal: counts only, never the script text itself.
-  const [managerReview, setManagerReview] = useState<{ id: string; source: 'transcript' | 'script' }>();
   // AI MANAGER's own Aprilynne review of this project (one route): shown by the Analysis tab.
   const [managerStory, setManagerStory] = useState<ManagerStory | null>(null);
   // A Manager command opens its tab once; the presence reply repeats every few seconds and must not pull the user back.
@@ -352,10 +351,7 @@ function App() {
       }).then(response => response.json()).then(reply => {
         // AI MANAGER may ask this project's tab to get the transcript and rewrite it (Get Transcript tab).
         const command = reply?.command;
-        if (command?.type === 'analysis_review' && !managerLaunch.lane && /^[A-Za-z0-9_-]{8,64}$/.test(command.id)) {
-          setManagerReview(current => current?.id === command.id ? current : { id: command.id, source: command.source === 'transcript' ? 'transcript' : 'script' });
-          if (readAnalysisRun(sessionId)?.managerReviewId !== command.id && menuSwitchedFor.current !== command.id) { menuSwitchedFor.current = command.id; setActiveMenu(1); }
-        } else if (command && !managerLaunch.lane && acceptManagerTranscript(command, sessionId)) {
+        if (command && !managerLaunch.lane && acceptManagerTranscript(command, sessionId)) {
           // The Get Transcript tab runs the pipeline only while it is open: open it for a command not finished yet (a new command, not the last one's state).
           const state = readManagerTranscriptState();
           if ((!state || state.id !== command.id || !['analysis', 'done', 'error'].includes(state.stage)) && menuSwitchedFor.current !== command.id) { menuSwitchedFor.current = command.id; setActiveMenu(0); }
@@ -716,7 +712,7 @@ function App() {
     return false;
   };
   const staleSince = useRef<{ id: string; at: number }>({ id: '', at: 0 });
-  const [staleJob, setStaleJob] = useState('');
+  const [, setStaleJob] = useState('');
   useEffect(() => {
     const check = () => {
       if (!bridgeJobId || knownJob(bridgeJobId)) { staleSince.current = { id: '', at: 0 }; setStaleJob(''); return; }
@@ -727,8 +723,6 @@ function App() {
     };
     check(); const timer = window.setInterval(check, 15_000); return () => clearInterval(timer);
   }, [bridgeJobId, session?.activeJob?.id, session?.laneJobs, sessionId]);
-  // Only a job the server or this tab still waits for holds the analysis back; the extension itself refuses a second command while a real one runs.
-  const liveBridgeJob = bridgeJobId && knownJob(bridgeJobId) && staleJob !== bridgeJobId ? bridgeJobId : undefined;
   const projectName = (() => {
     try {
       const projects = JSON.parse(localStorage.getItem('vis-project-meta') || '[]') as { id: string; name: string }[];
@@ -744,19 +738,6 @@ function App() {
     changeScript(handoff.script);
     localStorage.removeItem(incomingKey);
     setIncoming(null);
-  };
-  const saveAnalysisCheckpoint = async (run: Run) => {
-    if (!serverReady || stopGate.current) throw new Error('Máy chủ chưa sẵn sàng hoặc tác vụ đã dừng.');
-    const generation = workGeneration.current;
-    const stage = run.mode === 'passed' ? 'approved' : run.mode === 'limited' ? 'limited' : run.phase === 'repair' ? 'repairing' : 'reviewing';
-    const { data } = await api.post('/api/sessions/' + sessionId + '/analysis-review', {
-      runId: run.runId, revision: run.revision, script: scriptOf(run), stage, rows: run.rows, rounds: run.rounds,
-      hasTitle: Boolean(run.plan?.title), expectedWorkEpoch: run.workEpoch || 0,
-    }, AbortSignal.timeout(15000));
-    if (generation !== workGeneration.current || stopGate.current) throw new Error('Đã dừng tác vụ; không xác nhận bản lưu cũ.');
-    const saved = data.session as Session;
-    if (!saved?.analysisReview || saved.analysisReview.runId !== run.runId || saved.analysisReview.revision !== run.revision || saved.script !== scriptOf(run).trim()) throw new Error('Máy chủ chưa xác nhận đúng phiên bản kịch bản.');
-    setSession(saved); changeScript(saved.script);
   };
   const transferAnalysis = (draft: AnalysisState, automatic: boolean, managed = false) => {
     const handoff = makeHandoff(draft, stylePrompt);
@@ -789,9 +770,7 @@ function App() {
     {showConnection && <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Kết nối ChatGPT"><section className="connection-dialog"><button type="button" className="modal-close" onClick={() => setShowConnection(false)} aria-label="Đóng">×</button><h2>Kết nối ChatGPT</h2><p className={bridgeConnected ? 'modal-status online' : 'modal-status offline'}>{bridgeConnected ? '● Đã kết nối ChatGPT · Extension v' + extensionVersion : '● Chưa kết nối ChatGPT'}</p>{conversationLabel && <p className="modal-help"><b>Hội thoại đang khóa:</b> {conversationLabel}</p>}<p className="modal-help">Mở đúng hội thoại ChatGPT bạn muốn dùng rồi bấm Kết nối hội thoại đang mở.</p><button type="button" className="analyze-all modal-copy" onClick={bindCurrentConversation}>Kết nối hội thoại đang mở</button>{!bridgeConnected && bridgeMessage && <p className="modal-help"><b>Lý do:</b> {bridgeMessage}</p>}{extensionVersion && extensionVersion !== EXTENSION_VERSION && <p className="modal-help"><b>Extension hiện tại: v{extensionVersion} — cần cài v{EXTENSION_VERSION}.</b></p>}<button type="button" className="outline modal-install" onClick={() => setManagerWatch(current => { const next = !current; localStorage.setItem('vis-manager-watch', next ? '1' : '0'); return next; })}>{managerWatch ? 'Tắt báo trạng thái AI MANAGER' : 'Bật báo trạng thái AI MANAGER'}</button><p className="modal-help">Chỉ gửi trạng thái kết nối đến AI MANAGER trên máy này; không gửi lệnh ChatGPT.</p><label>Mã kết nối<code>{sessionId}</code></label><button type="button" className="analyze-all modal-copy" onClick={() => copyPrompt(sessionId)}><Copy size={16} /> Sao chép mã kết nối</button><a className="outline modal-install" href={EXTENSION_DOWNLOAD_URL} download>Tải Extension v{EXTENSION_VERSION}</a></section></div>}
     {showSettings && <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Cài đặt"><section className="connection-dialog settings-dialog"><button type="button" className="modal-close" onClick={() => setShowSettings(false)} aria-label="Đóng">×</button><h2>Cài đặt</h2><h3>Tách ảnh Image Studio</h3><p className="modal-help">Local Engine chạy SAM2 trực tiếp trên máy Windows để Tab Tách ảnh hoạt động.</p><a className="analyze-all modal-copy local-engine-download" href="/resources/VIDEO_IMAGE_STUDIO_Local_Engine_Setup.bat" download><Download size={16}/> Tải / Cập nhật Local Engine</a><div className="settings-divider"></div><h3>Lấy thoại Youtube Transcripts</h3><p className={transcriptEngineStatus === 'online' ? 'modal-status online' : 'modal-status offline'}>{transcriptEngineStatus === 'online' ? '● Đang chạy · 127.0.0.1:8000' : transcriptEngineStatus === 'checking' ? '● Đang kiểm tra…' : '● Chưa kết nối'}</p><p className="modal-help">Engine lấy transcript YouTube trực tiếp qua mạng máy tính của bạn, tránh phụ thuộc IP Vercel.</p><div className="settings-actions"><a className="analyze-all modal-copy" href="/resources/YOUTUBE_TRANSCRIPT_ENGINE_Setup.bat" download><Download size={16}/> Cài Transcript Engine</a></div></section></div>}
     {showResultImport && <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Dán JSON kết quả"><section className="connection-dialog json-import-dialog"><button type="button" className="modal-close" disabled={importBusy} onClick={() => setShowResultImport(false)} aria-label="Đóng">×</button><h2>Dán JSON kết quả</h2><p className="modal-help">Sao chép toàn bộ câu trả lời JSON của ChatGPT và dán vào đây. Lưu thành công sẽ chuyển phần này sang Hoàn tất để tiếp tục phần kế tiếp.</p><label>Lưu vào phần<select value={importPartId} disabled={importBusy} onChange={event => selectImportPart(event.target.value)}>{session?.parts?.map(part => <option key={part.id} value={part.id} disabled={part.status === 'complete' && part.scenes.length > 0}>{part.title}{part.status === 'complete' ? ' — Đã có kết quả' : ''}</option>)}</select></label><div className="import-clipboard"><button type="button" className="outline" disabled={importBusy} onClick={pasteResult}>Dán từ clipboard</button><span>Hoặc nhấn Ctrl + V trong ô bên dưới</span></div><textarea aria-label="JSON kết quả phân cảnh" value={importText} disabled={importBusy} onChange={event => setImportText(event.target.value)} placeholder={'Dán toàn bộ JSON: {"scenes":[…]}'} spellCheck={false} />{importError && <p className="import-error" role="alert">{importError}</p>}<button type="button" className="analyze-all modal-copy" disabled={importBusy || !importPartId || !importText.trim()} onClick={saveImportedResult}>{importBusy ? 'Đang lưu kết quả…' : 'Lưu kết quả vào phần đã chọn'}</button></section></div>}
-    <div hidden={activeMenu !== 1}><AnalysisTab projectId={sessionId} projectName={projectName}
-      connected={bridgeConnected} otherWork={Boolean(busy || stopping || session?.activeJob || session?.laneJobs?.some(Boolean))}
-      bridgeJob={liveBridgeJob} active={activeMenu === 1} enabled={!managerLaunch.lane} ready={serverReady} workEpoch={session?.workEpoch || 0} onCheckpoint={saveAnalysisCheckpoint} managerReview={managerReview} managerScript={session?.script || script} serverScript={session?.script} serverHasParts={Boolean(session?.parts?.length)} managerStory={managerStory} onTransfer={transferAnalysis} /></div>
+    <div hidden={activeMenu !== 1}><AnalysisTab projectId={sessionId} projectName={projectName} active={activeMenu === 1} managerStory={managerStory} onTransfer={transferAnalysis} /></div>
     {activeMenu === 1 ? null : activeMenu === 0 ? <TranscriptTab projectId={sessionId} onUseTranscript={useTranscript} /> : activeMenu === 2 ? <div className="workspace">
       <section className="left-column panel"><div className="panel-heading"><FileText /><div><h1>Dự án: {(() => { try { const items = JSON.parse(localStorage.getItem('vis-project-meta') || '[]') as Array<{id:string;name:string}>; return items.find(item => item.id === sessionId)?.name || 'Dự án VIDEO IMAGE STUDIO'; } catch { return 'Dự án VIDEO IMAGE STUDIO'; } })()}</h1></div><button type="button" className="outline result-import-launch" disabled={!session?.parts?.length} onClick={openResultImport}>Dán JSON kết quả</button></div>
         {incoming && <section className="script-box">
