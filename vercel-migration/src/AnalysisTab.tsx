@@ -234,16 +234,17 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   }, [active, projectId]);
 
   useEffect(() => {
-    if (!enabled || !ready || !sourceInfo.text) return;
+    // The project is already split into parts: a review of the transcript could never be saved over it (the server refuses), so none is started.
+    if (!enabled || !ready || !sourceInfo.text || serverHasParts !== false) return;
     change(current => {
-      if (current.source === sourceInfo.text || current.pending || !['idle', 'transferred', 'limited', 'error', 'stopped', 'checked'].includes(current.mode)) return;
+      if (current.source === sourceInfo.text || current.pending || !['idle', 'transferred', 'limited', 'error', 'stopped'].includes(current.mode)) return;
       if (current.source && current.source !== sourceInfo.text) localStorage.setItem(key + '-previous', JSON.stringify(current));
       const command = readManagerTranscript(); const pipeline = readManagerTranscriptState();
       const managerReviewId = command?.sessionId === projectId && command.rewrite && command.id === pipeline?.id ? command.id : undefined;
       save({ ...emptyRun(), runId: crypto.randomUUID(), revision: 1, needsSave: true, workEpoch,
         source: sourceInfo.text, style: sourceInfo.style, parts: sourceInfo.parts, plan: outlinePlan(), phase: 'review', mode: 'running', managerReviewId, pipelineId: managerReviewId });
     });
-  }, [sourceInfo.text, sourceInfo.style, enabled, ready, projectId, workEpoch, run.mode]);
+  }, [sourceInfo.text, sourceInfo.style, enabled, ready, projectId, workEpoch, run.mode, serverHasParts]);
 
   // AI MANAGER started a new transcript/rewrite for this project: the review of the old script is stopped, the new script gets its own.
   useEffect(() => {
@@ -305,6 +306,13 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
     if (!script || !staleReport(current, script)) return;
     // A run stopped on an error can still hold the ChatGPT job that never answered: release it before grading the current script.
     if (current.pending) send('studio-transcript-ack', { jobId: current.pending.id });
+    // The current script was already graded (kept as the previous run when something replaced it): show that report again, no new ChatGPT work.
+    let previous: Run | null = null;
+    try { previous = JSON.parse(localStorage.getItem(key + '-previous') || 'null'); } catch { previous = null; }
+    if (previous && previous.mode === 'checked' && previous.rows?.length && !staleReport(full(restoreRun(previous, projectId, workEpoch)), script)) {
+      localStorage.setItem(key + '-previous', JSON.stringify(current));
+      save({ ...full(restoreRun(previous, projectId, workEpoch)), pending: undefined, needsSave: false }); return;
+    }
     if (current.parts.length) localStorage.setItem(key + '-previous', JSON.stringify(current));
     // Parts and scenes already exist: grade only, never rewrite the saved script.
     save({ ...emptyRun(), runId: crypto.randomUUID(), revision: 1, workEpoch, source: script, style: readSource().style, parts: reviewPartsFromScript(script),
@@ -315,10 +323,10 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
     if (!enabled || !ready || !connected || otherWork || bridgeJob || !stale || !serverScript) return;
     const flat = serverScript.replace(/\s+/gu, ' ').trim();
     let hash = 0; for (let i = 0; i < flat.length; i++) hash = (hash * 31 + flat.charCodeAt(i)) | 0;
-    const mark = key + '-auto-recheck', fingerprint = flat.length + ':' + hash;
+    const mark = key + '-auto-recheck-v2', fingerprint = flat.length + ':' + hash;
     try { if (localStorage.getItem(mark) === fingerprint) return; localStorage.setItem(mark, fingerprint); } catch { return; }
     recheck();
-  }, [stale, serverScript, enabled, ready, connected, otherWork, bridgeJob]);
+  }, [stale, serverScript, serverHasParts, enabled, ready, connected, otherWork, bridgeJob]);
   const repairAll = () => change(current => {
     if (current.pending || !['missing', 'passed', 'limited', 'transferred'].includes(current.mode)) return;
     const repairParts = [...new Set(current.rows.filter(row => row.score !== null && row.score < threshold && row.part !== null)
