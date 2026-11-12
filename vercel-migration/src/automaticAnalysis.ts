@@ -72,7 +72,8 @@ export function staleReport(run: Run, serverScript?: string) {
   const flat = (text: string) => text.replace(/\s+/gu, ' ').trim();
   const halted = ['error', 'stopped', 'paused'].includes(run.mode);
   if (run.mode === 'running' || (run.pending && !halted) || (run.needsSave && !halted)) return false;
-  return run.rows.length > 0 && Boolean(serverScript?.trim()) && flat(scriptOf(run)) !== flat(serverScript!);
+  // A run stopped on an error before any score (e.g. its save was refused) is stale too.
+  return (run.rows.length > 0 || (halted && run.parts.length > 0)) && Boolean(serverScript?.trim()) && flat(scriptOf(run)) !== flat(serverScript!);
 }
 export const totalScore =(rows: Row[]) => rows.reduce((sum, row) => sum + (row.score ?? 0), 0);
 // Not worse than the best so far: more criteria passed, or as many with at least the same total (a repair lifting 6 to 7.5 counts; a tie keeps the newer text).

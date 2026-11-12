@@ -115,6 +115,11 @@ describe('Aprilynne review of a long script', () => {
     expect(staleReport({ ...timedOut, mode: 'running' }, server)).toBe(false);
     expect(staleReport({ ...timedOut, mode: 'passed' }, server)).toBe(false);
     expect(staleReport(timedOut, scriptOf(old) + '\n')).toBe(false);
+    // A transcript review whose save was refused stopped before any score: still replaced.
+    const refused: Run = { ...long(), mode: 'error', needsSave: true, notice: 'Chưa lưu dự án: Phân tách đã có kết quả' };
+    expect(refused.rows).toEqual([]);
+    expect(staleReport(refused, server)).toBe(true);
+    expect(staleReport({ ...refused, mode: 'idle' }, server)).toBe(false);
   });
 
   it('rejects a low score without a fix or with invented evidence in a step', () => {
