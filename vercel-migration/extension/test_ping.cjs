@@ -13,4 +13,7 @@ const notice="You've hit the Plus plan limit for image generations requests. You
 assert.match(limitOf('Vẽ cảnh 7\n'+notice,'Vẽ cảnh 7'),/hit the Plus plan limit.*resets in 5 hours/);
 assert.equal(limitOf('Vẽ cảnh 6\n'+notice+'\nVẽ cảnh 7\nĐây là ảnh của bạn','Vẽ cảnh 7'),null,'an older notice is ignored');
 assert.equal(limitOf('Vẽ cảnh 7\nĐây là ảnh của bạn','Vẽ cảnh 7'),null);
+// The "out of images" card (seen 2026-11-12) keeps its "Try again at" time for the Manager.
+assert.equal(limitOf("Vẽ cảnh 8\nYou’re out of images\nYou’re out of image creations for now. Try again at 10:46 PM.",'Vẽ cảnh 8'),"You’re out of images You’re out of image creations for now. Try again at 10:46 PM.");
+assert.match(limitOf("Vẽ cảnh 8\nYou're out of images",'Vẽ cảnh 8'),/out of images/);
 (async()=>{let p=await ping();assert.equal(p.pairCode,null);assert.equal(p.activeJobId,null);assert.equal(p.chatTabId,23);assert.equal(p.conversationUrl,'https://chatgpt.com/c/abc');assert.equal(typeof p.lastHeartbeatAt,'number');assert.equal(p.generating,true,'ping reports whether ChatGPT is answering');st={pairCode:'p',activeJobId:'j',identityJobId:'j',conversationUrl:'https://chatgpt.com/c/abc'};text='[VIS_JOB_ID:j]';p=await ping();assert.equal(p.activeJobId,'j');text='[VIS_JOB_ID:other]';p=await ping();assert.equal(p.activeJobId,null);console.log('content ping PASS')})().catch(e=>{console.error(e);process.exit(1)});

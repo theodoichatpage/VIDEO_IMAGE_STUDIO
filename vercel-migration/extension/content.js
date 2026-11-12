@@ -397,7 +397,9 @@ async function chatAccountInfo(){
 }
 // ChatGPT's own "limit reached" notice, read only from what follows the latest user turn so an old notice
 // from an earlier turn is not taken for a new one. Returns the short notice text or null.
-const CHAT_LIMIT=/you['’]ve (?:hit|reached) the [^.\n]{0,60}limit[^\n]{0,160}|[^.\n]{0,80}limit resets in [^.\n]{0,40}|[^.\n]{0,60}usage (?:cap|limit)[^\n]{0,120}/i;
+// Two wordings seen: "You've hit the Plus plan limit ... resets in 5 hours" and the card "You're out of images /
+// You're out of image creations for now. Try again at 10:46 PM." (the time is kept so the Manager knows when to go on).
+const CHAT_LIMIT=/you['’]re out of image[\s\S]{0,200}?try again at \d{1,2}[:.]\d{2}\s*(?:[AP]\.?M\.?)?|you['’]re out of image[^\n]{0,160}|you['’]ve (?:hit|reached) the [^.\n]{0,60}limit[^\n]{0,160}|[^.\n]{0,80}limit resets in [^.\n]{0,40}|[^.\n]{0,60}usage (?:cap|limit)[^\n]{0,120}/i;
 function chatLimitNotice(){
   try{
     const main=document.querySelector('main');const text=(main?.innerText||document.body?.innerText||'');
@@ -428,8 +430,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const marker=st.activeJobId && ((last && (last.innerText||'').includes('[VIS_JOB_ID:'+st.activeJobId+']')) || (document.querySelector('main')?.textContent||'').includes('[VIS_JOB_ID:'+st.activeJobId+']'));
         const imagePrompt=st.activeCommand?.type==='image_generation' && st.activeCommand?.id===st.activeJobId && typeof st.activeCommand.prompt==='string' && st.activeCommand.prompt.length>0 && last && (last.innerText||'').includes(st.activeCommand.prompt);
         const verified=currentJobId===st.activeJobId && !!currentJobId || Boolean((marker||imagePrompt) && st.identityJobId===st.activeJobId && st.conversationUrl===url);
-        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.5.20',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now(),account,limit:chatLimitNotice()});
-      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.5.20',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
+        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.5.21',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now(),account,limit:chatLimitNotice()});
+      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.5.21',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
       return true;
     }
     if (message?.type === 'vis-restore-draft') {
