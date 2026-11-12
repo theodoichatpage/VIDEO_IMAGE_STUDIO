@@ -75,6 +75,35 @@ export function staleReport(run: Run, serverScript?: string) {
   // A run stopped on an error before any score (e.g. its save was refused) is stale too.
   return (run.rows.length > 0 || (halted && run.parts.length > 0)) && Boolean(serverScript?.trim()) && flat(scriptOf(run)) !== flat(serverScript!);
 }
+// The Aprilynne review AI MANAGER runs for its projects (outline → rewrite → grade → repair → grade), sent with the presence reply.
+// One route: when it exists, the Analysis tab shows it and runs no review of its own.
+export type ManagerStory = {
+  stage: string; round: number; rounds: number; maxRounds: number; needed: number; threshold: number; title: string; sections: number;
+  passed: number | null; note: string; error: string; rows: Row[]; findings: { id: number; score: number | null; part: number | null; fix: string }[];
+  history: { round: number; passed: number }[];
+};
+export function readManagerStory(value: unknown): ManagerStory | null {
+  if (!value || typeof value !== 'object') return null;
+  const v = value as Partial<ManagerStory>;
+  if (typeof v.stage !== 'string' || !Array.isArray(v.rows)) return null;
+  const num = (x: unknown) => typeof x === 'number' && Number.isFinite(x) ? x : null;
+  return {
+    stage: v.stage, round: num(v.round) ?? 0, rounds: num(v.rounds) ?? 3, maxRounds: num(v.maxRounds) ?? 6, needed: num(v.needed) ?? 8, threshold: num(v.threshold) ?? threshold,
+    title: String(v.title || ''), sections: num(v.sections) ?? 0, passed: num(v.passed), note: String(v.note || ''), error: String(v.error || ''),
+    rows: v.rows.filter(r => r && typeof r.id === 'number').map(r => ({ id: r.id, score: num(r.score), part: num(r.part), evidence: String(r.evidence || ''), reason: String(r.reason || ''), fix: String(r.fix || '') })),
+    findings: Array.isArray(v.findings) ? v.findings.map(f => ({ id: f.id, score: num(f.score), part: num(f.part), fix: String(f.fix || '') })) : [],
+    history: Array.isArray(v.history) ? v.history.map(h => ({ round: num(h.round) ?? 0, passed: num(h.passed) ?? 0 })) : [],
+  };
+}
+export function managerStoryStatus(story: ManagerStory) {
+  const round = `vòng ${story.round + 1}`;
+  const label: Record<string, string> = {
+    fetch: 'AI MANAGER đang lấy transcript', plan: 'ChatGPT đang lập dàn ý Aprilynne', write: 'ChatGPT đang viết lại kịch bản theo văn phong',
+    review: `ChatGPT đang chấm kịch bản (${round})`, repair: `ChatGPT đang viết lại các phần chưa chặt (${round})`,
+    done: 'Đã duyệt phân tích · đang lưu kịch bản', saved: 'Đã duyệt phân tích · chuyển sang phân cảnh',
+  };
+  return (label[story.stage] || 'AI MANAGER: ' + story.stage) + (story.note ? ' · ' + story.note : '');
+}
 export const totalScore =(rows: Row[]) => rows.reduce((sum, row) => sum + (row.score ?? 0), 0);
 // Not worse than the best so far: more criteria passed, or as many with at least the same total (a repair lifting 6 to 7.5 counts; a tie keeps the newer text).
 const beats = (rows: Row[], best: Run['best']) => !best

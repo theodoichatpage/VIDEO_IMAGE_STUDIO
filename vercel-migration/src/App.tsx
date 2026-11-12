@@ -1,7 +1,7 @@
 import SceneMaterialEditor from './SceneMaterialEditor';
 import {makeHandoff,saveHandoff,loadHandoff} from './analysisHandoff';
 import AnalysisTab from './AnalysisTab';
-import { approvedRun, readAnalysisRun, scriptOf, type Run } from './automaticAnalysis';
+import { approvedRun, readAnalysisRun, readManagerStory, scriptOf, type ManagerStory, type Run } from './automaticAnalysis';
 import type { AnalysisState } from './analysisWorkspace';
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
@@ -304,6 +304,8 @@ function App() {
   };
   // Latest content state for the Manager signal: counts only, never the script text itself.
   const [managerReview, setManagerReview] = useState<{ id: string; source: 'transcript' | 'script' }>();
+  // AI MANAGER's own Aprilynne review of this project (one route): shown by the Analysis tab.
+  const [managerStory, setManagerStory] = useState<ManagerStory | null>(null);
   // A Manager command opens its tab once; the presence reply repeats every few seconds and must not pull the user back.
   const menuSwitchedFor = useRef('');
   const managerContent = useRef({ script, session });
@@ -358,6 +360,7 @@ function App() {
           const state = readManagerTranscriptState();
           if ((!state || state.id !== command.id || !['analysis', 'done', 'error'].includes(state.stage)) && menuSwitchedFor.current !== command.id) { menuSwitchedFor.current = command.id; setActiveMenu(0); }
         }
+        if (reply && 'storyReview' in reply) setManagerStory(readManagerStory(reply.storyReview));
         if (reply?.renames && typeof reply.renames === 'object') applyManagerRenames(reply.renames as Record<string, unknown>);
       }).catch(() => {});
     };
@@ -788,7 +791,7 @@ function App() {
     {showResultImport && <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Dán JSON kết quả"><section className="connection-dialog json-import-dialog"><button type="button" className="modal-close" disabled={importBusy} onClick={() => setShowResultImport(false)} aria-label="Đóng">×</button><h2>Dán JSON kết quả</h2><p className="modal-help">Sao chép toàn bộ câu trả lời JSON của ChatGPT và dán vào đây. Lưu thành công sẽ chuyển phần này sang Hoàn tất để tiếp tục phần kế tiếp.</p><label>Lưu vào phần<select value={importPartId} disabled={importBusy} onChange={event => selectImportPart(event.target.value)}>{session?.parts?.map(part => <option key={part.id} value={part.id} disabled={part.status === 'complete' && part.scenes.length > 0}>{part.title}{part.status === 'complete' ? ' — Đã có kết quả' : ''}</option>)}</select></label><div className="import-clipboard"><button type="button" className="outline" disabled={importBusy} onClick={pasteResult}>Dán từ clipboard</button><span>Hoặc nhấn Ctrl + V trong ô bên dưới</span></div><textarea aria-label="JSON kết quả phân cảnh" value={importText} disabled={importBusy} onChange={event => setImportText(event.target.value)} placeholder={'Dán toàn bộ JSON: {"scenes":[…]}'} spellCheck={false} />{importError && <p className="import-error" role="alert">{importError}</p>}<button type="button" className="analyze-all modal-copy" disabled={importBusy || !importPartId || !importText.trim()} onClick={saveImportedResult}>{importBusy ? 'Đang lưu kết quả…' : 'Lưu kết quả vào phần đã chọn'}</button></section></div>}
     <div hidden={activeMenu !== 1}><AnalysisTab projectId={sessionId} projectName={projectName}
       connected={bridgeConnected} otherWork={Boolean(busy || stopping || session?.activeJob || session?.laneJobs?.some(Boolean))}
-      bridgeJob={liveBridgeJob} active={activeMenu === 1} enabled={!managerLaunch.lane} ready={serverReady} workEpoch={session?.workEpoch || 0} onCheckpoint={saveAnalysisCheckpoint} managerReview={managerReview} managerScript={session?.script || script} serverScript={session?.script} serverHasParts={Boolean(session?.parts?.length)} onTransfer={transferAnalysis} /></div>
+      bridgeJob={liveBridgeJob} active={activeMenu === 1} enabled={!managerLaunch.lane} ready={serverReady} workEpoch={session?.workEpoch || 0} onCheckpoint={saveAnalysisCheckpoint} managerReview={managerReview} managerScript={session?.script || script} serverScript={session?.script} serverHasParts={Boolean(session?.parts?.length)} managerStory={managerStory} onTransfer={transferAnalysis} /></div>
     {activeMenu === 1 ? null : activeMenu === 0 ? <TranscriptTab projectId={sessionId} onUseTranscript={useTranscript} /> : activeMenu === 2 ? <div className="workspace">
       <section className="left-column panel"><div className="panel-heading"><FileText /><div><h1>Dự án: {(() => { try { const items = JSON.parse(localStorage.getItem('vis-project-meta') || '[]') as Array<{id:string;name:string}>; return items.find(item => item.id === sessionId)?.name || 'Dự án VIDEO IMAGE STUDIO'; } catch { return 'Dự án VIDEO IMAGE STUDIO'; } })()}</h1></div><button type="button" className="outline result-import-launch" disabled={!session?.parts?.length} onClick={openResultImport}>Dán JSON kết quả</button></div>
         {incoming && <section className="script-box">

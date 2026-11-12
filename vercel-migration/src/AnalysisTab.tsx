@@ -2,7 +2,7 @@ import { FileText } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { emptyAnalysis, loadAnalysis } from './analysisWorkspace';
 import { loadTranscriptWorkspace, preparedAnalysisSource } from './transcriptWorkspace';
-import { acceptResponse, approvedRun, criteriaWithSource, emptyRun, promptFor, reviewPartsFromScript, MAX_ROUNDS, reviewQuality, reviewSteps, restoreRun, staleReport, scriptOf, threshold, type Mode, type Run } from './automaticAnalysis';
+import { acceptResponse, approvedRun, criteriaWithSource, emptyRun, promptFor, reviewPartsFromScript, MAX_ROUNDS, managerStoryStatus, reviewQuality, type ManagerStory, reviewSteps, restoreRun, staleReport, scriptOf, threshold, type Mode, type Run } from './automaticAnalysis';
 import './analysisTab.css';
 import { readManagerTranscript, readManagerTranscriptState } from './managerTranscript';
 
@@ -14,6 +14,8 @@ type Props = {
   managerScript?: string;
   // The script saved on the Studio server and whether it already has parts: the report must say when it graded another version.
   serverScript?: string; serverHasParts?: boolean;
+  // AI MANAGER's Aprilynne review of this project: the one route; the tab shows it and runs no review of its own.
+  managerStory?: ManagerStory | null;
   onTransfer: (draft: ReturnType<typeof emptyAnalysis>, automatic: boolean, managed?: boolean) => string;
 };
 
@@ -39,7 +41,7 @@ function progress(run: Run) {
   return run.phase === 'write' ? 'Đang viết ' + part : `Đang sửa lần ${run.rounds + 1}/${run.rounds >= run.limit ? MAX_ROUNDS : run.limit} · ${part}`;
 }
 
-export default function AnalysisTab({ projectId, projectName, connected, otherWork, bridgeJob, active, ready, enabled = true, workEpoch = 0, managerReview, managerScript, serverScript, serverHasParts, onCheckpoint, onTransfer }: Props) {
+export default function AnalysisTab({ projectId, projectName, connected, otherWork, bridgeJob, active, ready, enabled = true, workEpoch = 0, managerReview, managerScript, serverScript, serverHasParts, managerStory, onCheckpoint, onTransfer }: Props) {
   const key = 'vis-automatic-analysis-v2-' + projectId;
   // The browser keeps about 5 MB per site. A long script is stored once (the original text of a prepared part equals its text) and the latest state also lives in memory.
   const latest = useRef<Run | null>(null);
@@ -235,7 +237,7 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
 
   useEffect(() => {
     // The project is already split into parts: a review of the transcript could never be saved over it (the server refuses), so none is started.
-    if (!enabled || !ready || !sourceInfo.text || serverHasParts !== false) return;
+    if (!enabled || !ready || !sourceInfo.text || serverHasParts !== false || managerStory) return;
     change(current => {
       if (current.source === sourceInfo.text || current.pending || !['idle', 'transferred', 'limited', 'error', 'stopped'].includes(current.mode)) return;
       if (current.source && current.source !== sourceInfo.text) localStorage.setItem(key + '-previous', JSON.stringify(current));
@@ -244,7 +246,12 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
       save({ ...emptyRun(), runId: crypto.randomUUID(), revision: 1, needsSave: true, workEpoch,
         source: sourceInfo.text, style: sourceInfo.style, parts: sourceInfo.parts, plan: outlinePlan(), phase: 'review', mode: 'running', managerReviewId, pipelineId: managerReviewId });
     });
-  }, [sourceInfo.text, sourceInfo.style, enabled, ready, projectId, workEpoch, run.mode, serverHasParts]);
+  }, [sourceInfo.text, sourceInfo.style, enabled, ready, projectId, workEpoch, run.mode, serverHasParts, managerStory]);
+  // AI MANAGER runs this project's review: a review the tab started on its own is stopped (its ChatGPT job released) so only one route works.
+  useEffect(() => {
+    if (!managerStory || !(run.mode === 'running' || run.pending)) return;
+    change(current => { if (current.mode === 'running' || current.pending) stop(current); });
+  }, [Boolean(managerStory), run.mode, run.pending]);
 
   // AI MANAGER started a new transcript/rewrite for this project: the review of the old script is stopped, the new script gets its own.
   useEffect(() => {
@@ -295,8 +302,8 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   const working = run.mode === 'running' || !!run.pending;
   const canResume = ['paused', 'stopped', 'error'].includes(run.mode);
   const hasCurrentReview = !working && ['missing', 'passed', 'limited', 'transferred', 'checked'].includes(run.mode);
-  const quality = reviewQuality(run.rows);
-  const canRepairAll = run.rows.length > 0 && quality.needsWork > 0 && !run.reviewOnly;
+  const quality = reviewQuality(managerStory ? managerStory.rows : run.rows);
+  const canRepairAll = !managerStory && run.rows.length > 0 && quality.needsWork > 0 && !run.reviewOnly;
   // Criteria graded from the script (the cover and the cut are graded later): the honest denominator.
   const gradable = criteriaWithSource.filter(c => !c.visual).length;
   // The report graded another script than the one saved on the server (e.g. AI MANAGER rewrote and saved it after this review).
@@ -320,13 +327,13 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   });
   // A stale report is replaced by itself: the current script is graded (and repaired when it has no parts yet), once per saved script so a failing save cannot loop.
   useEffect(() => {
-    if (!enabled || !ready || !connected || otherWork || bridgeJob || !stale || !serverScript) return;
+    if (!enabled || !ready || !connected || otherWork || bridgeJob || !stale || !serverScript || managerStory) return;
     const flat = serverScript.replace(/\s+/gu, ' ').trim();
     let hash = 0; for (let i = 0; i < flat.length; i++) hash = (hash * 31 + flat.charCodeAt(i)) | 0;
     const mark = key + '-auto-recheck-v2', fingerprint = flat.length + ':' + hash;
     try { if (localStorage.getItem(mark) === fingerprint) return; localStorage.setItem(mark, fingerprint); } catch { return; }
     recheck();
-  }, [stale, serverScript, serverHasParts, enabled, ready, connected, otherWork, bridgeJob]);
+  }, [stale, serverScript, serverHasParts, enabled, ready, connected, otherWork, bridgeJob, managerStory]);
   const repairAll = () => change(current => {
     if (current.pending || !['missing', 'passed', 'limited', 'transferred'].includes(current.mode)) return;
     const repairParts = [...new Set(current.rows.filter(row => row.score !== null && row.score < threshold && row.part !== null)
@@ -340,6 +347,18 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
   return <section className="workspace auto-analysis">
     <section className="panel">
       <div className="panel-heading"><FileText/><div><h1>Công thức Aprilynne</h1><p>Dự án: {projectName}</p></div></div>
+      {managerStory && <>
+        <p className="script-meta" role="status">{managerStoryStatus(managerStory)}{managerStory.error && ['plan', 'write', 'review', 'repair'].includes(managerStory.stage) ? ' · lần trước: ' + managerStory.error : ''}</p>
+        {managerStory.title && <p>Tiêu đề: {managerStory.title} · {managerStory.sections} phần</p>}
+        {managerStory.history.length > 0 && <p>Điểm qua các lượt chấm: {managerStory.history.map(h => h.passed + '/' + gradable).join(' → ')}</p>}
+        <section className="auto-quality" aria-label="Chất lượng kịch bản">
+          <strong>Duyệt khi {managerStory.needed}/{gradable} tiêu chí đạt từ {managerStory.threshold} điểm · Đang đạt {quality.passed}/{gradable} · {managerStory.rows.length
+            ? quality.passed >= managerStory.needed ? 'Đã duyệt' : 'Chưa đạt, đang viết lại phần chưa chặt' : 'Chưa chấm'}</strong>
+          <meter min={0} max={gradable} value={quality.passed} aria-label="Số tiêu chí đạt từ 8 điểm"/>
+          {managerStory.rows.length > 0 && <small>{quality.passed}/{gradable} đạt · {quality.needsWork} dưới 8 · {quality.unscored} mục chờ ảnh bìa/bản dựng (chấm ở bước sau)</small>}
+        </section>
+      </>}
+      {!managerStory && <>
       {canResume && !stale && <div className="analysis-controls"><button className="outline" onClick={resume}>Tiếp tục</button></div>}
       <p className="script-meta" role="status">{stale ? 'Đang chờ chấm lại kịch bản hiện tại của dự án' : run.mode === 'running' && !run.pending ? run.needsSave ? 'Đang lưu kịch bản và kết quả vào dự án' : !connected ? 'Đang xếp hàng · chờ kết nối ChatGPT' : otherWork || bridgeJob ? 'Đang xếp hàng · chờ tác vụ ChatGPT hiện tại hoàn tất' : progress(run) : run.mode === 'idle' ? 'Đang chờ bản viết lại từ Get Transcript' : progress(run)}{run.rounds > 0 && ` · Đã sửa ${run.rounds}/${run.rounds >= run.limit ? MAX_ROUNDS : run.limit} lượt`}{run.notice && ' · ' + run.notice}</p>
       {error && <p role="alert">{error}</p>}
@@ -355,17 +374,18 @@ export default function AnalysisTab({ projectId, projectName, connected, otherWo
         <meter min={0} max={gradable} value={quality.passed} aria-label="Số tiêu chí đạt từ 8 điểm"/>
         {run.rows.length > 0 && <small>{quality.passed}/{gradable} đạt · {quality.needsWork} cần sửa · {quality.unscored} mục chờ ảnh bìa/bản dựng (chấm ở bước sau)</small>}
       </section>
+      </>}
       <div className="auto-review-columns">
         {[visibleCriteria.slice(0, middle), visibleCriteria.slice(middle)].map((column, index) =>
           <div className="auto-review-scroll" key={index}><table className="auto-review" aria-label={`Tiêu chí Aprilynne, bảng ${index + 1}`}>
             <thead><tr><th scope="col">Tiêu chí</th><th scope="col">Điểm / Thao tác</th></tr></thead>
             <tbody>{column.map(criterion => {
-              const row = run.rows.find(item => item.id === criterion.id);
+              const row = (managerStory ? managerStory.rows : run.rows).find(item => item.id === criterion.id);
               const score = row?.score;
               return <tr key={criterion.id}>
                 <th scope="row"><details><summary>{criterion.name}{criterion.timing && ' (' + criterion.timing + ')'}</summary>
                   {row ? <>{row.evidence && <blockquote>{row.evidence}</blockquote>}<p>{row.reason}</p>{row.fix && <p>Cách sửa{row.part ? ' (phần ' + row.part + ')' : ''}: {row.fix}</p>}
-                    {(run.findings || []).filter(f => f.id === row.id).map((f, i) => <p key={i}>Cũng cần sửa phần {f.part} ({f.score?.toFixed(1)}): {f.fix}</p>)}</>
+                    {((managerStory ? managerStory.findings : run.findings) || []).filter(f => f.id === row.id).map((f, i) => <p key={i}>Cũng cần sửa phần {f.part} ({f.score?.toFixed(1)}): {f.fix}</p>)}</>
                     : <blockquote>{criterion.excerpt.replace(/^\[\d+:\d+\]\s*/gm, '')}</blockquote>}
                 </details></th>
                 <td>{typeof score === 'number' ? <strong className={score >= threshold ? 'score-pass' : 'score-low'}>{score.toFixed(1)}</strong>
