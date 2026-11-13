@@ -81,6 +81,9 @@ export type ManagerStory = {
   stage: string; round: number; rounds: number; maxRounds: number; needed: number; threshold: number; title: string; sections: number;
   passed: number | null; note: string; error: string; rows: Row[]; findings: { id: number; score: number | null; part: number | null; fix: string }[];
   history: { round: number; passed: number }[];
+  // Machine check of the script (repetition, notes read aloud…), notes taken out of the narration, doubtful facts the grader listed.
+  clean: { kind: string; part: number | null; detail: string }[]; notes: { part: number | null; note: string }[];
+  facts: { part: number | null; claim: string; fix: string }[];
 };
 export function readManagerStory(value: unknown): ManagerStory | null {
   if (!value || typeof value !== 'object') return null;
@@ -93,6 +96,9 @@ export function readManagerStory(value: unknown): ManagerStory | null {
     rows: v.rows.filter(r => r && typeof r.id === 'number').map(r => ({ id: r.id, score: num(r.score), part: num(r.part), evidence: String(r.evidence || ''), reason: String(r.reason || ''), fix: String(r.fix || '') })),
     findings: Array.isArray(v.findings) ? v.findings.map(f => ({ id: f.id, score: num(f.score), part: num(f.part), fix: String(f.fix || '') })) : [],
     history: Array.isArray(v.history) ? v.history.map(h => ({ round: num(h.round) ?? 0, passed: num(h.passed) ?? 0 })) : [],
+    clean: Array.isArray(v.clean) ? v.clean.map(x => ({ kind: String(x?.kind || ''), part: num(x?.part), detail: String(x?.detail || '') })) : [],
+    notes: Array.isArray(v.notes) ? v.notes.map(x => ({ part: num(x?.part), note: String(x?.note || '') })) : [],
+    facts: Array.isArray(v.facts) ? v.facts.map(x => ({ part: num(x?.part), claim: String(x?.claim || ''), fix: String(x?.fix || '') })) : [],
   };
 }
 export function managerStoryStatus(story: ManagerStory) {

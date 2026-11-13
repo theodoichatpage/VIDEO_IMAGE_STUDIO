@@ -22,6 +22,11 @@ describe("AI MANAGER's review shown by the Analysis tab", () => {
     expect(managerStoryStatus(readManagerStory({ ...thaiSu, stage: 'repair', round: 1, note: '' })!)).toBe('ChatGPT đang viết lại các phần chưa chặt (vòng 2)');
     expect(managerStoryStatus(readManagerStory({ ...thaiSu, stage: 'plan', note: '' })!)).toContain('dàn ý Aprilynne');
   });
+  it('reads the machine check, the notes taken out and the doubtful facts', () => {
+    const story = readManagerStory({ ...thaiSu, clean: [{ kind: 'opening', part: 3, detail: 'Phần mở lại bằng "Các bác ạ"' }], notes: [{ part: 2, note: 'Ông sinh năm 1194.' }], facts: [{ part: 5, claim: 'Trần Nhật Hạo', fix: 'Trần Nhật Hiệu' }] })!;
+    expect(story.clean[0].kind).toBe('opening'); expect(story.notes[0].part).toBe(2); expect(story.facts[0].fix).toBe('Trần Nhật Hiệu');
+    expect(readManagerStory(thaiSu)!.clean).toEqual([]);
+  });
   it('ignores a missing or malformed report (the tab then works as before)', () => {
     expect(readManagerStory(null)).toBeNull();
     expect(readManagerStory({ stage: 'saved' })).toBeNull();

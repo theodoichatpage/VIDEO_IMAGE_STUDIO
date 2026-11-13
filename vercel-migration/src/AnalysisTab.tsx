@@ -13,6 +13,7 @@ type Props = {
   onTransfer: (draft: ReturnType<typeof emptyAnalysis>, automatic: boolean, managed?: boolean) => string;
 };
 
+const CLEAN_LABELS: Record<string, string> = { note: 'ghi chú biên tập trong lời đọc', greeting: 'lời chào lặp', lets_go: '"Vào video thôi" lặp', call: 'kêu gọi đăng ký ở giữa', duplicate: 'câu lặp', retold: 'đoạn kể lại', catchphrase: 'câu cửa miệng quá nhiều', hedge: 'câu rào đón lặp', opening: 'phần mở lại bằng "Các bác ạ"', questions: 'quá nhiều câu hỏi' };
 const send = (type: string, data = {}) => window.postMessage({ source: 'vis-web', type, ...data }, location.origin);
 
 export default function AnalysisTab({ projectId, projectName, active, managerStory, onTransfer }: Props) {
@@ -46,6 +47,10 @@ export default function AnalysisTab({ projectId, projectName, active, managerSto
         <p className="script-meta" role="status">{managerStoryStatus(story)}{story.error && ['plan', 'write', 'review', 'repair'].includes(story.stage) ? ' · lần trước: ' + story.error : ''}</p>
         {story.title && <p>Tiêu đề: {story.title} · {story.sections} phần</p>}
         {story.history.length > 0 && <p>Điểm qua các lượt chấm: {story.history.map(h => h.passed + '/' + gradable).join(' → ')}</p>}
+        <p>Kiểm tra liền mạch bằng máy: {story.clean.length ? <strong className="score-low">{story.clean.length} lỗi · {Object.entries(story.clean.reduce<Record<string, number>>((a, x) => ({ ...a, [x.kind]: (a[x.kind] || 0) + 1 }), {})).map(([k, n]) => (CLEAN_LABELS[k] || k) + ' ' + n).join(', ')}</strong> : <strong className="score-pass">sạch</strong>} · duyệt cần sạch và đạt {story.needed}/{gradable}</p>
+        {story.clean.length > 0 && <details><summary>Chi tiết lỗi liền mạch</summary><ul>{story.clean.map((x, i) => <li key={i}>Phần {x.part}: {x.detail}</li>)}</ul></details>}
+        {story.facts.length > 0 && <details><summary>Khẳng định cần sửa cho đúng sự thật ({story.facts.length})</summary><ul>{story.facts.map((x, i) => <li key={i}>{x.part ? 'Phần ' + x.part + ': ' : ''}{x.claim} → {x.fix}</li>)}</ul></details>}
+        {story.notes.length > 0 && <details><summary>Ghi chú biên tập đã gỡ khỏi lời đọc ({story.notes.length})</summary><ul>{story.notes.map((x, i) => <li key={i}>{x.part ? 'Phần ' + x.part + ': ' : ''}{x.note}</li>)}</ul></details>}
         <section className="auto-quality" aria-label="Chất lượng kịch bản">
           <strong>Duyệt khi {story.needed}/{gradable} tiêu chí đạt từ {story.threshold} điểm · Đang đạt {quality.passed}/{gradable} · {story.rows.length
             ? quality.passed >= story.needed ? 'Đã duyệt' : 'Chưa đạt, đang viết lại phần chưa chặt' : 'Chưa chấm'}</strong>
