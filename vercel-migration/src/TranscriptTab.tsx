@@ -185,7 +185,9 @@ export default function TranscriptTab({onUseTranscript,projectId=localStorage.ge
   void pull();const t=window.setInterval(()=>void pull(),8000);return()=>window.clearInterval(t);
  },[mgr?.id,mgr?.parallel,projectId]);
  // Saving the final rewritten section wakes the always-mounted Aprilynne controller, without a button.
- const notifiedRewrite = useRef('');
+ // Only a rewrite finished while this tab is open moves on: opening the tab on a project already rewritten stays here
+ // (before, every visit jumped to Analysis whenever its reviewed text differed, e.g. after Aprilynne's repairs).
+ const notifiedRewrite = useRef(preparedAnalysisSource(ws).text);
  useEffect(()=>{
   const prepared=preparedAnalysisSource(ws);
   if(!prepared.text||pending.current||batchRunning||notifiedRewrite.current===prepared.text)return;
