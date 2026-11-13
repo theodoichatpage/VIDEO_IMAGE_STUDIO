@@ -50,3 +50,5 @@
 
 .transcript-page .yt-row>input.project-name{flex:1 1 220px;min-width:160px;max-width:340px}
 .transcript-page .yt-row>input.youtube-link{flex:2 1 320px}
+.transcript-panel header .fetch-status{font-size:12px;color:#087bea;display:inline-flex;align-items:center;gap:5px}
+.transcript-panel header .danger{color:#e22929;border-color:#ef8b8b}
