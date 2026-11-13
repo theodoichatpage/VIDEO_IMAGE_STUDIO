@@ -17,14 +17,20 @@ if exist "%ZIP%" del /q "%ZIP%"
 mkdir "%SRC%" >nul 2>nul
 mkdir "%DEST%" >nul 2>nul
 
-echo Dang tai YouTube Transcript Engine...
+echo Dang tai Transcript Engine (YouTube + link Facebook/TikTok)...
 curl.exe -fL --retry 3 "https://github.com/theodoichatpage/YOUTUBE_TRANSCRIPT/archive/refs/heads/feature/transcript-service.zip" -o "%ZIP%" || goto :error
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath '%ZIP%' -DestinationPath '%SRC%' -Force" || goto :error
+rem Ban cu dang chay giu cong 8000 va chay ma cu: dung no truoc khi thay ban moi.
+echo Dang dung Transcript Engine cu (neu dang chay)...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"
+timeout /t 2 /nobreak >nul
 xcopy "%SRC%\YOUTUBE_TRANSCRIPT-feature-transcript-service\*" "%DEST%\" /E /I /Y >nul || goto :error
 cd /d "%DEST%"
 if not exist ".venv\Scripts\python.exe" python -m venv .venv || goto :error
 call .venv\Scripts\python.exe -m pip install --upgrade pip || goto :error
 call .venv\Scripts\python.exe -m pip install -r requirements.txt || goto :error
+rem Trang video doi cach chong tai thuong xuyen: luon lay yt-dlp moi nhat.
+call .venv\Scripts\python.exe -m pip install -U yt-dlp || goto :error
 (
  echo @echo off
  echo cd /d "%DEST%"
