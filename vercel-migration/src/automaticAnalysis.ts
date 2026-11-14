@@ -84,6 +84,8 @@ export type ManagerStory = {
   // Machine check of the script (repetition, notes read aloud…), notes taken out of the narration, doubtful facts the grader listed.
   clean: { kind: string; part: number | null; detail: string }[]; notes: { part: number | null; note: string }[];
   facts: { part: number | null; claim: string; fix: string }[];
+  // The two story lines told side by side: the main one and the parallel one (side story or opposing force), and what each act tells of them.
+  tracks: string[]; acts: { title: string; a: string; b: string }[];
 };
 export function readManagerStory(value: unknown): ManagerStory | null {
   if (!value || typeof value !== 'object') return null;
@@ -99,6 +101,8 @@ export function readManagerStory(value: unknown): ManagerStory | null {
     clean: Array.isArray(v.clean) ? v.clean.map(x => ({ kind: String(x?.kind || ''), part: num(x?.part), detail: String(x?.detail || '') })) : [],
     notes: Array.isArray(v.notes) ? v.notes.map(x => ({ part: num(x?.part), note: String(x?.note || '') })) : [],
     facts: Array.isArray(v.facts) ? v.facts.map(x => ({ part: num(x?.part), claim: String(x?.claim || ''), fix: String(x?.fix || '') })) : [],
+    tracks: Array.isArray(v.tracks) ? v.tracks.map(x => String(x || '')).filter(Boolean).slice(0, 2) : [],
+    acts: Array.isArray(v.acts) ? v.acts.map(x => ({ title: String(x?.title || ''), a: String(x?.a || ''), b: String(x?.b || '') })) : [],
   };
 }
 export function managerStoryStatus(story: ManagerStory) {

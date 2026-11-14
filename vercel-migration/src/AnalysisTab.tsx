@@ -13,7 +13,7 @@ type Props = {
   onTransfer: (draft: ReturnType<typeof emptyAnalysis>, automatic: boolean, managed?: boolean) => string;
 };
 
-const CLEAN_LABELS: Record<string, string> = { note: 'ghi chú biên tập trong lời đọc', greeting: 'lời chào lặp', lets_go: '"Vào video thôi" lặp', call: 'kêu gọi đăng ký ở giữa', duplicate: 'câu lặp', retold: 'đoạn kể lại', catchphrase: 'câu cửa miệng quá nhiều', hedge: 'câu rào đón lặp', opening: 'phần mở lại bằng "Các bác ạ"', questions: 'quá nhiều câu hỏi' };
+const CLEAN_LABELS: Record<string, string> = { note: 'ghi chú biên tập trong lời đọc', greeting: 'lời chào lặp', lets_go: '"Vào video thôi" lặp', call: 'kêu gọi đăng ký ở giữa', duplicate: 'câu lặp', retold: 'đoạn kể lại', catchphrase: 'câu cửa miệng quá nhiều', hedge: 'câu rào đón lặp', opening: 'phần mở lại bằng "Các bác ạ"', questions: 'quá nhiều câu hỏi', track: 'hồi thiếu tuyến 2', research_time: 'thời gian tra cứu tự thêm' };
 const send = (type: string, data = {}) => window.postMessage({ source: 'vis-web', type, ...data }, location.origin);
 
 export default function AnalysisTab({ projectId, projectName, active, managerStory, onTransfer }: Props) {
@@ -46,6 +46,9 @@ export default function AnalysisTab({ projectId, projectName, active, managerSto
       {story ? <>
         <p className="script-meta" role="status">{managerStoryStatus(story)}{story.error && ['plan', 'write', 'review', 'repair'].includes(story.stage) ? ' · lần trước: ' + story.error : ''}</p>
         {story.title && <p>Tiêu đề: {story.title} · {story.sections} phần</p>}
+        {story.tracks.length === 2 && <details><summary>Hai tuyến song song: tuyến 2 có trong {story.acts.length}/{story.sections} hồi</summary>
+          <p>Tuyến 1: {story.tracks[0]}</p><p>Tuyến 2: {story.tracks[1]}</p>
+          <ol>{story.acts.map((x, i) => <li key={i}>{x.title}: {x.a && <>tuyến 1 · {x.a}; </>}tuyến 2 · {x.b}</li>)}</ol></details>}
         {story.history.length > 0 && <p>Điểm qua các lượt chấm: {story.history.map(h => h.passed + '/' + gradable).join(' → ')}</p>}
         <p>Kiểm tra liền mạch bằng máy: {story.clean.length ? <strong className="score-low">{story.clean.length} lỗi · {Object.entries(story.clean.reduce<Record<string, number>>((a, x) => ({ ...a, [x.kind]: (a[x.kind] || 0) + 1 }), {})).map(([k, n]) => (CLEAN_LABELS[k] || k) + ' ' + n).join(', ')}</strong> : <strong className="score-pass">sạch</strong>} · duyệt cần sạch và đạt {story.needed}/{gradable}</p>
         {story.clean.length > 0 && <details><summary>Chi tiết lỗi liền mạch</summary><ul>{story.clean.map((x, i) => <li key={i}>Phần {x.part}: {x.detail}</li>)}</ul></details>}

@@ -27,6 +27,11 @@ describe("AI MANAGER's review shown by the Analysis tab", () => {
     expect(story.clean[0].kind).toBe('opening'); expect(story.notes[0].part).toBe(2); expect(story.facts[0].fix).toBe('Trần Nhật Hiệu');
     expect(readManagerStory(thaiSu)!.clean).toEqual([]);
   });
+  it('reads the two story lines and what each act tells of them', () => {
+    const story = readManagerStory({ ...thaiSu, tracks: ['Tuyến chính', 'Ngoại truyện', 'thừa'], acts: [{ title: 'Hồi 1', a: 'đoạt quyền', b: 'Trần Thị Dung' }] })!;
+    expect(story.tracks).toEqual(['Tuyến chính', 'Ngoại truyện']); expect(story.acts[0].b).toBe('Trần Thị Dung');
+    expect(readManagerStory(thaiSu)!.tracks).toEqual([]);
+  });
   it('ignores a missing or malformed report (the tab then works as before)', () => {
     expect(readManagerStory(null)).toBeNull();
     expect(readManagerStory({ stage: 'saved' })).toBeNull();
