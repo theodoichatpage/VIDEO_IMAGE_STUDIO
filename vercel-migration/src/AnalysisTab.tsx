@@ -4,19 +4,28 @@ import { emptyAnalysis } from './analysisWorkspace';
 import { loadTranscriptWorkspace, preparedAnalysisSource } from './transcriptWorkspace';
 import { criteriaWithSource, managerStoryStatus, readAnalysisRun, reviewQuality, type ManagerStory } from './automaticAnalysis';
 import './analysisTab.css';
+import AprilinneReview from './AprilinneReview';
+import type { AprilinneReport } from './aprilinneData';
 
 // One route: AI MANAGER runs the Aprilynne line (outline → rewrite in the saved style → grade → rewrite what is weak → grade;
 // approved at 8 of 12 criteria scoring 8). This tab only shows it; Studio grades nothing on its own.
 type Props = {
   projectId: string; projectName: string; active: boolean;
   managerStory?: ManagerStory | null;
+  // Dự án chạy bằng Claude (Aprilinne): có thì thẻ này hiện giao diện mới thay cho bảng 12 tiêu chí cũ.
+  aprilinne?: AprilinneReport | null;
   onTransfer: (draft: ReturnType<typeof emptyAnalysis>, automatic: boolean, managed?: boolean) => string;
 };
 
 const CLEAN_LABELS: Record<string, string> = { note: 'ghi chú biên tập trong lời đọc', greeting: 'lời chào lặp', lets_go: '"Vào video thôi" lặp', call: 'kêu gọi đăng ký ở giữa', duplicate: 'câu lặp', retold: 'đoạn kể lại', catchphrase: 'câu cửa miệng quá nhiều', hedge: 'câu rào đón lặp', opening: 'phần mở lại bằng "Các bác ạ"', questions: 'quá nhiều câu hỏi' };
 const send = (type: string, data = {}) => window.postMessage({ source: 'vis-web', type, ...data }, location.origin);
 
-export default function AnalysisTab({ projectId, projectName, active, managerStory, onTransfer }: Props) {
+export default function AnalysisTab(props: Props) {
+  if (props.aprilinne) return <AprilinneReview report={props.aprilinne} projectName={props.projectName}/>;
+  return <ChatGptAnalysis {...props}/>;
+}
+
+function ChatGptAnalysis({ projectId, projectName, active, managerStory, onTransfer }: Props) {
   // A review this tab ran before (older Studio) may still be marked running with a ChatGPT job: stop it once so nothing waits on it.
   useEffect(() => {
     const key = 'vis-automatic-analysis-v2-' + projectId;
