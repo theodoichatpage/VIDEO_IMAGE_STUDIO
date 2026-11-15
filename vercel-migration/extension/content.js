@@ -345,6 +345,8 @@
         finished.add(command.id);
         return;
       }
+      // Studio refuses a scene split with more than 30 scenes; say so in the prompt (project 035, 2026-11-15).
+      const sceneCap = job => job.type === 'part_analysis' && !/Tối đa 30 cảnh/.test(String(job.prompt || '')) ? 'Tối đa 30 cảnh (Studio không nhận quá 30): nếu nội dung dài, gộp các câu liền ý vào cùng một cảnh, giữ đủ lời đọc nguyên văn, không bỏ câu nào.' + String.fromCharCode(10) : '';
       const answerOnly = command.type === 'transcript_rewrite' ? 'Follow the output format specified in the prompt.' : 'Return only the requested JSON.';
       let text = '';
       // If ChatGPT draws a picture instead of answering, stop it and ask once more, more firmly, in the same chat
@@ -352,7 +354,7 @@
       for (let attempt = 1; ; attempt += 1) {
         const warning = attempt === 1 ? '' : 'YOUR PREVIOUS ANSWER WRONGLY CREATED AN IMAGE. LẦN TRƯỚC BẠN ĐÃ TẠO ẢNH - SAI. Answer again with plain text only. ';
         const before = assistantText(currentJobType);
-        await fillComposer('[VIS_JOB_ID:' + command.id + ']\nTEXT ANALYSIS ONLY. ' + warning + 'DO NOT GENERATE IMAGES, DO NOT CALL ANY IMAGE OR DRAWING TOOL; every "prompt" below is text to write, not a picture to make. KHÔNG TẠO ẢNH. ' + answerOnly + '\n' + command.prompt);
+        await fillComposer('[VIS_JOB_ID:' + command.id + ']\nTEXT ANALYSIS ONLY. ' + warning + 'DO NOT GENERATE IMAGES, DO NOT CALL ANY IMAGE OR DRAWING TOOL; every "prompt" below is text to write, not a picture to make. KHÔNG TẠO ẢNH. ' + answerOnly + '\n' + sceneCap(command) + command.prompt);
         if (token !== generation || cancelled) return;
         if (activeImageMode()) throw new Error('Chế độ Tạo ảnh vẫn bật. Chưa gửi lệnh phân tích.');
         await submit(token);
@@ -430,8 +432,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const marker=st.activeJobId && ((last && (last.innerText||'').includes('[VIS_JOB_ID:'+st.activeJobId+']')) || (document.querySelector('main')?.textContent||'').includes('[VIS_JOB_ID:'+st.activeJobId+']'));
         const imagePrompt=st.activeCommand?.type==='image_generation' && st.activeCommand?.id===st.activeJobId && typeof st.activeCommand.prompt==='string' && st.activeCommand.prompt.length>0 && last && (last.innerText||'').includes(st.activeCommand.prompt);
         const verified=currentJobId===st.activeJobId && !!currentJobId || Boolean((marker||imagePrompt) && st.identityJobId===st.activeJobId && st.conversationUrl===url);
-        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.5.21',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now(),account,limit:chatLimitNotice()});
-      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.5.21',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
+        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.5.22',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now(),account,limit:chatLimitNotice()});
+      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.5.22',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
       return true;
     }
     if (message?.type === 'vis-restore-draft') {
