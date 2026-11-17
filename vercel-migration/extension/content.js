@@ -99,6 +99,20 @@
     const fromReply = finishedUrls([...(VISReplyReader.sources(document, context).node?.querySelectorAll('img') || [])]);
     return fromReply.length ? fromReply : finishedUrls(pictureNodesAfterPrompt(context));
   };
+  // In a background tab Edge does not load a lazy picture until it is scrolled into view, so a finished picture
+  // stayed "not complete" and the job waited until it timed out (seen 15-16/11: the picture loaded the moment the
+  // user opened the tab). Ask the newest picture of this job to load now and give it a few seconds.
+  const pictureLoaded = image => image.complete && image.naturalWidth >= 256 && image.naturalHeight >= 256;
+  async function loadPictures(context = replyContext) {
+    const last = pictureNodesAfterPrompt(context).at(-1);
+    if (!last || pictureLoaded(last)) return last || null;
+    try { last.loading = 'eager'; last.scrollIntoView?.({ block: 'center' }); } catch {}
+    for (let i = 0; i < 20 && !pictureLoaded(last); i += 1) await sleep(300);
+    return last;
+  }
+  // Once ChatGPT has finished (never while it is drawing, when a picture can be a blurred preview), a picture that
+  // still has not rendered is read from its own address: the file on ChatGPT's server is the finished picture.
+  const unrenderedUrl = image => image && !pictureLoaded(image) && !isGenerating() ? String(image.currentSrc || image.src || '').match(/^(https?:|blob:)\S+/)?.[0] || '' : '';
   const expandedImagePrompts = new WeakSet();
   async function expandImagePrompts(context) {
     // Long ChatGPT prompts can contain only the preview until Show more is clicked.
@@ -127,7 +141,8 @@
   async function imagePayload(context) {
     await resolveComparison();
     await expandImagePrompts(context);
-    const imageUrl = imageUrls(context).at(-1);
+    const lastPicture = await loadPictures(context);
+    const imageUrl = imageUrls(context).at(-1) || unrenderedUrl(lastPicture);
     if (!imageUrl) throw new Error('Chưa tìm thấy ảnh hoàn tất đúng lệnh của cảnh này. Mở đúng hội thoại và cuộn tới ảnh. [' + VISReplyReader.sources(document, context).reason + ']');
     const controller=new AbortController();downloads.add(controller);
     try{
@@ -170,6 +185,11 @@
       const busy = isGenerating();
       if (busy) busyAt = Date.now();
       if (!busy && await resolveComparison()) continue;
+      if (!busy && !imageUrls().length && pictureNodesAfterPrompt().length) {
+        await loadPictures();
+        // Still not rendered 10 s after ChatGPT stopped: read it from its address instead of waiting for the timeout.
+        if (!imageUrls().length && !isGenerating() && Date.now() - busyAt >= 10000) return imagePayload(replyContext);
+      }
       if (imageUrls().length && !busy) return imagePayload(replyContext);
       if (!busy && nudges < MAX_NUDGES && Date.now() - lastSentAt >= NUDGE_AFTER_MS && Date.now() - busyAt >= NUDGE_AFTER_MS && !imageUrls().length) {
         nudges += 1;
@@ -432,8 +452,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const marker=st.activeJobId && ((last && (last.innerText||'').includes('[VIS_JOB_ID:'+st.activeJobId+']')) || (document.querySelector('main')?.textContent||'').includes('[VIS_JOB_ID:'+st.activeJobId+']'));
         const imagePrompt=st.activeCommand?.type==='image_generation' && st.activeCommand?.id===st.activeJobId && typeof st.activeCommand.prompt==='string' && st.activeCommand.prompt.length>0 && last && (last.innerText||'').includes(st.activeCommand.prompt);
         const verified=currentJobId===st.activeJobId && !!currentJobId || Boolean((marker||imagePrompt) && st.identityJobId===st.activeJobId && st.conversationUrl===url);
-        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.5.23',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now(),account,limit:chatLimitNotice()});
-      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.5.23',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
+        sendResponse({ready:Boolean(composer()),generating:isGenerating(),version:'0.5.24',conversationLabel:location.pathname,pairCode:st.pairCode||null,activeJobId:verified?st.activeJobId:null,chatTabId:tabId,conversationUrl:url,lastHeartbeatAt:Date.now(),account,limit:chatLimitNotice()});
+      })().catch(()=>sendResponse({ready:Boolean(composer()),version:'0.5.24',conversationLabel:location.pathname,pairCode:null,activeJobId:null,chatTabId:null,conversationUrl:null,lastHeartbeatAt:null}));
       return true;
     }
     if (message?.type === 'vis-restore-draft') {

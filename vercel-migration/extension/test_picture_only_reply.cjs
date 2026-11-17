@@ -21,4 +21,20 @@ assert.deepEqual(run([i('https://x/old.png'),u('[VIS_JOB_ID:job7] vẽ'),i('http
 assert.deepEqual(run([u('[VIS_JOB_ID:job7] vẽ')]),[],'no picture yet: nothing to read, the nudge logic still applies');
 const unfinished=pic('https://x/2.png');unfinished.complete=false;
 assert.deepEqual(run([u('[VIS_JOB_ID:job7] vẽ'),{kind:'img',n:unfinished}]),[],'a picture still loading is not taken');
-console.log('test_picture_only_reply PASS');
+// A background tab leaves a finished picture unloaded (lazy): it is asked to load, and once ChatGPT has stopped an
+// unrendered picture is read from its address; while ChatGPT is still drawing it is never taken.
+function lazy(generating,loadsWhenAsked){
+ const users=[user('[VIS_JOB_ID:job7] vẽ')];const img=node({alt:'Generated image',src:'https://x/lazy.png',currentSrc:'',complete:false,
+  scrollIntoView(){if(loadsWhenAsked){this.complete=true;this.naturalWidth=this.naturalHeight=1024;this.currentSrc=this.src}}});
+ const document={querySelectorAll:sel=>sel.includes('author-role')?users:sel==='main img'?[img]:[]};
+ const c={document,replyContext:{id:'job7'},VISReplyReader:{sources:()=>({node:null,reason:'no-new-answer'})},Number,String,sleep:async()=>{},isGenerating:()=>generating};
+ vm.createContext(c);vm.runInContext(a+b+';globalThis.t={imageUrls,loadPictures,unrenderedUrl};',c);return {c,img};
+}
+(async()=>{
+ let {c,img}=lazy(false,true);await c.t.loadPictures();
+ assert.equal(img.loading,'eager');assert.deepEqual([...c.t.imageUrls()],['https://x/lazy.png'],'a lazy picture loads when asked');
+ ({c}=lazy(false,false));let last=await c.t.loadPictures();
+ assert.deepEqual([...c.t.imageUrls()],[],'still unrendered');assert.equal(c.t.unrenderedUrl(last),'https://x/lazy.png','read from its address once ChatGPT stopped');
+ ({c}=lazy(true,false));last=await c.t.loadPictures();assert.equal(c.t.unrenderedUrl(last),'','never while ChatGPT is drawing');
+ console.log('test_picture_only_reply PASS');
+})().catch(e=>{console.error(e);process.exit(1);});
