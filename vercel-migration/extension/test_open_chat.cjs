@@ -17,5 +17,12 @@ function harness(){
  // Login redirect: the tab is not a chatgpt.com tab; no second tab within 2 minutes.
  h=harness();h.c.chrome.tabs.create=async()=>{h.created++;return {id:5,url:'https://auth.openai.com/'};};h.c.chrome.tabs.get=async()=>({id:5,status:'complete',url:'https://auth.openai.com/'});
  await assert.rejects(h.c.ensure(),/Không mở được tab ChatGPT/);await assert.rejects(h.c.ensure());assert.equal(h.created,1);
+ // After a self-update the tab still runs the old bridge, holding a job it can no longer finish: reloaded unless
+ // ChatGPT is still writing or drawing (then the tab is left alone until it finishes).
+ for(const [generating,reloads] of [[false,1],[true,0]]){
+  h=harness();h.tabs.push({id:4,url:'https://chatgpt.com/c/x',status:'complete',active:false});h.pong={ready:true,version:'0.5.8',activeJobId:'job1',generating};
+  let n=0;h.c.chrome.tabs.reload=async()=>{n++;};h.c.newerVersion=()=>false;
+  await assert.rejects(h.c.ensure(),generating?/ChatGPT đang trả lời/:/Đang tải lại tab ChatGPT/);assert.equal(n,reloads);
+ }
  console.log('test_open_chat PASS');
 })().catch(e=>{console.error(e);process.exit(1);});
